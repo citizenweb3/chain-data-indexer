@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres:${PG_VERSION:-16}
+    container_name: cosmosindexer
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      # Official postgres envs used by the image during init:
+      # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD are REQUIRED to create the DB and user.
+      # POSTGRES_INITDB_ARGS is optional (e.g. "--locale=C --encoding=UTF8").
+      POSTGRES_DB: ${PG_DB}
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_INITDB_ARGS: ${PG_INITDB_ARGS}
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata_cosmosindexer:/var/lib/postgresql/data
+
+volumes:
+  pgdata_cosmosindexer:

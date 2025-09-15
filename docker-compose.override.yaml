@@ -1,0 +1,9 @@
+services:
+  db:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro

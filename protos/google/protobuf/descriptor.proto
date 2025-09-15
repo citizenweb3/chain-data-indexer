@@ -1,0 +1,29 @@
+syntax = "proto3";
+package google.protobuf;
+
+// minimal stub to satisfy import in Cosmos protos
+
+message FileDescriptorSet {
+  repeated FileDescriptorProto file = 1;
+}
+
+message FileDescriptorProto {
+  repeated DescriptorProto message_type = 4;
+}
+
+message DescriptorProto {}
+message EnumDescriptorProto {}
+message FieldDescriptorProto {}
+message OneofDescriptorProto {}
+message ServiceDescriptorProto {}
+message MethodDescriptorProto {}
+
+// empty options to swallow any option references
+message FileOptions {}
+message MessageOptions {}
+message FieldOptions {}
+message OneofOptions {}
+message EnumOptions {}
+message EnumValueOptions {}
+message ServiceOptions {}
+message MethodOptions {}
