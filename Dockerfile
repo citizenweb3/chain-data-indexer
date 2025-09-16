@@ -27,6 +27,9 @@ COPY . .
 # Ensure entrypoint is executable
 RUN chmod +x ./docker-entrypoint.sh
 
+# Generate TypeScript artifacts required at runtime (knownMsgs.ts)
+RUN npx tsx scripts/gen-known-msgs.ts || true
+
 # Build typescript (if project uses tsc build script)
 RUN npm run build || true
 
