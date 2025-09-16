@@ -21,5 +21,36 @@ services:
     volumes:
       - pgdata_cosmosindexer:/var/lib/postgresql/data
 
+  indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cosmos-indexer-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Ensure the indexer writes to Postgres and will try to resume from progress
+      SINK: postgres
+      RESUME: 'true'
+      PG_HOST: ${PG_HOST:-db}
+      # use container internal Postgres port (5432) for inter-container networking
+      PG_PORT: 5432
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
+      PG_DB: ${PG_DB}
+      # Optional: override RPC_URL if you want the indexer to target a remote node
+      RPC_URL: ${RPC_URL}
+      # Node memory default (can be overridden at compose run time)
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=24576}
+    # In production, do not bind-mount the host project directory — that can overwrite
+    # container-installed node_modules (causing esbuild platform mismatch). The image
+    # already contains the app and dependencies.
+    # For development you can create a separate docker-compose.override.dev.yml that
+    # mounts the source and sets up an anonymous volume for /usr/src/app/node_modules.
+    working_dir: /usr/src/app
+
+
 volumes:
   pgdata_cosmosindexer:
