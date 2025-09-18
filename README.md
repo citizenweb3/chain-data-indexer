@@ -1,16 +1,39 @@
 # Cosmos Indexer
 
-## Project Description
+## 🌌 Project Description
 
-Indexer for the Cosmos Hub network. Note: the project generates a runtime file `src/generated/knownMsgs.ts` required by the decoder; Docker image build runs this generator automatically.
+**Cosmos Indexer** is a high-performance blockchain data indexer specifically designed for the Cosmos ecosystem. Our solution efficiently extracts, processes, and stores blockchain data from Cosmos-based networks into a PostgreSQL database, enabling fast queries and comprehensive data analysis.
 
-...existing code...
+### ✨ Key Features
+
+- 🚀 **High Performance**: Built with TypeScript and optimized for handling large volumes of blockchain data.
+- 🔄 **Resume Capability**: Smart resumption from the last indexed block, preventing data loss during restarts.
+- 🐳 **Docker Ready**: Fully containerized with Docker Compose for easy deployment and scaling.
+- 🗄️ **PostgreSQL Integration**: Robust data storage with automatic table partitioning and indexing.
+- 📊 **Message Decoding**: Advanced Cosmos message type detection and decoding capabilities.
+- ⚡ **Real-time Processing**: Efficient block-by-block processing with configurable concurrency limits.
+
+### 🏗️ Architecture
+
+- **RPC Client**: Connects to Cosmos RPC endpoints using CosmJS libraries.
+- **Message Decoder**: Dynamically generates and uses message type definitions.
+- **Database Layer**: Optimized PostgreSQL schema with automatic partitioning.
+- **Configuration System**: Flexible environment-based configuration with validation.
+
+### 🎯 Use Cases
+
+- **Analytics Platforms**: Power blockchain analytics dashboards and reports.
+- **DeFi Applications**: Track transactions, token transfers, and protocol interactions.
+- **Compliance & Auditing**: Maintain comprehensive transaction records for regulatory compliance.
+- **Research & Development**: Enable blockchain research with structured, queryable data.
+- **Block Explorers**: Provide fast data access for blockchain exploration tools.
 
 ## Requirements
 
 - Node.js
 - npm
 - yarn
+- Docker && docker-compose
 
 ## Running with Docker
 

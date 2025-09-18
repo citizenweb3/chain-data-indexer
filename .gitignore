@@ -3,3 +3,4 @@
 .data
 .env
 src/generated/
+node_modules/
