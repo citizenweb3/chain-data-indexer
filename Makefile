@@ -3,7 +3,7 @@ SHELL := /bin/bash
 .PHONY: up down logs psql psql-file status
 
 up:
-	docker compose --env-file .env up -d
+	docker compose --env-file .env up -d db
 
 down:
 	docker compose --env-file .env down

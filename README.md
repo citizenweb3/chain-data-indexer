@@ -1,80 +1,110 @@
-# Cosmos Indexer DB (Dockerized)
+# Cosmos Indexer
 
 ## Project Description
 
-**Cosmos Indexer DB** is a ready-to-use Postgres database for storing and analyzing data from blockchains in the Cosmos ecosystem. The project provides infrastructure for quickly deploying a structured database that can store blocks, transactions, events, and other data from various Cosmos-compatible networks.
+Indexer for the Cosmos Hub network. Note: the project generates a runtime file `src/generated/knownMsgs.ts` required by the decoder; Docker image build runs this generator automatically.
 
-As a result, you get a containerized environment with a configured schema, partitions, and indexes, allowing efficient storage and analysis of large volumes of blockchain data.
+...existing code...
 
-## Why You Need This
+## Requirements
 
-- **For Developers:** quick deployment of a database to store data from Cosmos networks, creation of custom indexers, services, backends, and integrations.
-- **For Analysts:** a convenient structure for writing SQL queries, building reports and dashboards, analyzing transactions, address activity, and more.
+- Node.js
+- npm
+- yarn
 
-## Architecture
+## Running with Docker
 
-- Uses `docker-compose` to deploy Postgres in a container.
-- Initialization scripts (`initdb/*.sql`) are automatically applied on the first cluster startup:
-  - creating extensions and parameters,
-  - creating the main schema of tables,
-  - adding indexes and patches,
-  - auxiliary partitions and utilities.
-- All parameters (versions, ports, credentials) are placed in `.env`.
+1. Create `.env` with required variables (PG_*, RPC_URL, NODE_OPTIONS if needed).
 
-## How to Use
+```bash
+cp .env.example .env
+```
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/your-org/cosmos-indexer-db.git
-   cd cosmos-indexer-db
-   ```
+2. Build and start all services:
 
-2. **Configure parameters in the `.env` file:**
-   - Specify versions, ports, logins, and passwords for Postgres.
+```bash
+docker compose --env-file .env up --build -d
+```
 
-3. **(Optional) Insert your own schema:**
-   - If needed, replace the contents of `initdb/010-indexer-schema.sql` with your schema.
+3. View indexer logs:
 
-4. **Start the database:**
-   ```bash
-   make up
-   ```
+```bash
+docker compose logs -f indexer
+```
 
-5. **View logs:**
-   ```bash
-   make logs
-   ```
+Notes:
+- The indexer container defaults to `SINK=postgres` and `RESUME=true` so it will try to resume from last saved progress when restarted.
+- To force a fresh DB init, remove the Postgres volume from the host and bring the DB up again:
 
-6. **Connect to the database via psql:**
-   ```bash
-   make psql
-   ```
+```bash
+docker compose down -v
+docker compose --env-file .env up -d db
+```
 
-7. **Execute an arbitrary SQL script:**
-   ```bash
-   make psql-file FILE=path/to/script.sql
-   ```
+Behavior details:
+- On first start (fresh Postgres volume) the `initdb/*.sql` scripts are executed by the Postgres image. The indexer waits for Postgres to be healthy and checks for the `progress` table; if missing it logs that a fresh DB init is expected.
+- When `RESUME=true` the indexer reads last saved progress from Postgres and continues indexing from the next block.
 
-> **Important:** Scripts from `initdb/*.sql` are executed **only on the first cluster startup**. If you modify them after the first run, recreate the volume using `docker compose down -v` or run the required scripts manually via `make psql-file`.
+## Running locally (without Docker)
 
-## Repository Structure
+This project supports running the indexer locally using Node.
 
-- `docker-compose.yaml` — main service (Postgres, volume).
-- `docker-compose.override.yaml` — mounts `./initdb`, adds healthcheck.
-- `.env` — environment variables: versions, credentials, port.
-- `Makefile` — convenient commands for managing containers and the database.
+Local startup steps (macOS / bash):
 
-## How This Can Be Used
+1. Install deps:
 
-- **Creating Custom Indexers:** populate the database with data from Cosmos networks using your own ETL scripts or ready-made solutions (e.g., substreams, indexers).
-- **Analytics and Reporting:** write SQL queries to analyze transactions, addresses, events, and other entities.
-- **Dashboards and BI:** connect BI tools (Metabase, Grafana, Superset) directly to the database to visualize data.
-- **Service Backends:** use the database as a data source for your APIs, services, Telegram bots, and other applications.
+```bash
+yarn
+```
 
-## Open Source
+2. Create a `.env` file with the required variables:
 
-This project is open-source and available for the community to use, contribute, and extend.
+```bash
+cp .env.example .env
+```
+
+3. Generate runtime artifacts required by the indexer:
+
+```bash
+npx tsx scripts/gen-known-msgs.ts
+```
+
+4. Run Postgres:
+
+```bash
+make up
+```
+
+5. Run the indexer:
+
+```bash
+npm run start
+```
+
+Notes about NODE_OPTIONS / memory:
+- If the indexer needs more memory, set NODE_OPTIONS before running: `export NODE_OPTIONS=--max-old-space-size=24576`.
+
+If you prefer Makefile shortcuts that target Docker, see the `Makefile` in the repo. The Makefile uses `docker compose --env-file .env` for container operations.
+
+## Useful Makefile targets
+
+- `make up` — start db via docker-compose
+- `make down` — stop services
+- `make reset` — remove volumes and bring DB up again
+- `make logs` — show DB logs (`docker compose --env-file .env logs -f db`)
+- `make psql` — exec `psql` inside the Postgres container (container name: `cosmosindexer`)
+- `make psql-file FILE=path/to/script.sql` — copy and run a SQL file inside the DB container
+
+## Troubleshooting
+
+- If the indexer fails to start due to memory, increase `NODE_OPTIONS` in your environment (see note above).
+- Ensure `.env` contains correct Postgres connection details and `RPC_URL` for the chain you want to index.
+
+## Development notes
+
+- The code uses `tsx` to run TypeScript directly during development. Production runs can use `npm run build` and run the compiled output with `node` if desired.
+- Tests are not included by default; add small smoke tests if you change core logic.
 
 ## License
 
-MIT License.# indexer
+MIT
