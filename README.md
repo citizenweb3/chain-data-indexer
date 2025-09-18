@@ -1,6 +1,16 @@
-# Cosmos Indexer
+# Indexer Monorepository
 
-## 🌌 Project Description
+## 📚 Repository Overview
+
+**Indexer Monorepository** is a hub for high-performance blockchain data indexers tailored for various blockchain networks. Each indexer is maintained in a separate branch, allowing for network-specific configurations and optimizations while sharing a common codebase foundation. This structure enables efficient development, maintenance, and deployment of indexers for different blockchain networks (e.g., `cosmos`, `ethereum`, `polkadot`, etc.).
+
+### 🌌 About the Indexers
+
+Each indexer in this monorepository is designed to extract, process, and store blockchain data from a specific network into a PostgreSQL database, enabling fast queries and comprehensive data analysis. Navigate to the appropriate branch for the network you want to index.
+
+## Cosmos Indexer
+
+### 🌌 Project Description
 
 **Cosmos Indexer** is a high-performance blockchain data indexer specifically designed for the Cosmos ecosystem. Our solution efficiently extracts, processes, and stores blockchain data from Cosmos-based networks into a PostgreSQL database, enabling fast queries and comprehensive data analysis.
 
@@ -10,13 +20,13 @@
 - 🔄 **Resume Capability**: Smart resumption from the last indexed block, preventing data loss during restarts.
 - 🐳 **Docker Ready**: Fully containerized with Docker Compose for easy deployment and scaling.
 - 🗄️ **PostgreSQL Integration**: Robust data storage with automatic table partitioning and indexing.
-- 📊 **Message Decoding**: Advanced Cosmos message type detection and decoding capabilities.
+- 📊 **Message Decoding**: Advanced message type detection and decoding capabilities for blockchain transactions.
 - ⚡ **Real-time Processing**: Efficient block-by-block processing with configurable concurrency limits.
 
 ### 🏗️ Architecture
 
-- **RPC Client**: Connects to Cosmos RPC endpoints using CosmJS libraries.
-- **Message Decoder**: Dynamically generates and uses message type definitions.
+- **RPC Client**: Connects to blockchain RPC endpoints using appropriate libraries for each network.
+- **Message Decoder**: Dynamically generates and uses message type definitions specific to each blockchain.
 - **Database Layer**: Optimized PostgreSQL schema with automatic partitioning.
 - **Configuration System**: Flexible environment-based configuration with validation.
 
@@ -115,7 +125,7 @@ If you prefer Makefile shortcuts that target Docker, see the `Makefile` in the r
 - `make down` — stop services
 - `make reset` — remove volumes and bring DB up again
 - `make logs` — show DB logs (`docker compose --env-file .env logs -f db`)
-- `make psql` — exec `psql` inside the Postgres container (container name: `cosmosindexer`)
+- `make psql` — exec `psql` inside the Postgres container (container name: `blockchainindexer`)
 - `make psql-file FILE=path/to/script.sql` — copy and run a SQL file inside the DB container
 
 ## Troubleshooting
