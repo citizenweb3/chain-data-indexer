@@ -127,7 +127,3 @@ If you prefer Makefile shortcuts that target Docker, see the `Makefile` in the r
 
 - The code uses `tsx` to run TypeScript directly during development. Production runs can use `npm run build` and run the compiled output with `node` if desired.
 - Tests are not included by default; add small smoke tests if you change core logic.
-
-## License
-
-MIT
