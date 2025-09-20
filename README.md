@@ -1,4 +1,4 @@
-# Indexer Monorepository
+# Chain Data Indexer: CDI 
 
 [![Build Status](#)](#) [![License: MIT](LICENSE) [![Docker Pulls](#)](#)
 
@@ -22,7 +22,7 @@
 
 ## 📚 Repository Overview
 
-**Indexer Monorepository** is a hub for high-performance blockchain data indexers tailored for various blockchain networks. Each indexer is maintained in a separate branch, allowing for network-specific optimizations and independent development.
+**Chain Data Indexer** is a high-performance blockchain data indexers tailored for various blockchain networks. Each indexer is maintained in a separate branch, allowing for network-specific optimizations and independent development.
 
 ---
 
