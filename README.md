@@ -1,18 +1,18 @@
-# Chain Data Indexer: CDI 
+# Chain Data Indexer: CDI
 
-[![Build Status](#)](#) [![License: MIT](LICENSE) [![Docker Pulls](#)](#)
+> built by [Citizen Web3](https://www.citizenweb3.com/) for [ValidatorInfo](https://validatorinfo.com/)
 
 ## 📚 Table of Contents
 
-- [Repository Overview](#-repository-overview)
-- [Features](#-key-features)
-- [Architecture](#-architecture)
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Usage](#usage)
-- [Makefile Shortcuts](#useful-makefile-targets)
+- [Makefile Shortcuts](#makefile-shortcuts)
 - [Troubleshooting](#troubleshooting)
 - [Development Notes](#development-notes)
 - [Contributing](#contributing)
@@ -20,29 +20,34 @@
 
 ---
 
-## 📚 Repository Overview
+## Overview
 
-**Chain Data Indexer** is a high-performance blockchain data indexers tailored for various blockchain networks. Each indexer is maintained in a separate branch, allowing for network-specific optimizations and independent development.
+**Chain Data Indexer** is a high-performance, modular blockchain data indexer designed for powering block explorers, analytics platforms, DeFi dashboards, compliance tools, and research projects.  
+It extracts, processes, and stores blockchain data from various networks into a PostgreSQL database, enabling fast and flexible querying.
 
----
-
-## ✨ Key Features
-
-- 🚀 **High Performance:** Built with TypeScript and optimized for handling large blockchain data volumes.
-- 🔄 **Resume Capability:** Smart resumption from the last indexed block, preventing data loss during restarts.
-- 🐳 **Docker Ready:** Fully containerized with Docker Compose for easy deployment and scaling.
-- 🗄️ **PostgreSQL Integration:** Robust data storage with automatic table partitioning and indexing.
-- 📊 **Message Decoding:** Advanced message type detection and decoding capabilities for blockchain transactions.
-- ⚡ **Real-time Processing:** Efficient block-by-block processing with configurable concurrency limits.
+- 🧭 **Primary Use Case:** Powering block explorers with rich, searchable blockchain data.
+- 🌌 **Extensible:** Suitable for analytics, compliance, DeFi, R&D, and more.
 
 ---
 
-## 🏗️ Architecture
+## Features
 
-- **RPC Client:** Connects to blockchain RPC endpoints using appropriate libraries for each network.
-- **Message Decoder:** Dynamically generates and uses message type definitions specific to each blockchain.
+- 🚀 **High Performance:** Efficiently processes large volumes of blocks and transactions.
+- 🔄 **Resumable Indexing:** Smart resumption from the last indexed block to prevent data loss.
+- 🐳 **Dockerized:** Simple deployment with Docker Compose.
+- 🗄️ **PostgreSQL Integration:** Robust, scalable storage with partitioning and indexing.
+- 📊 **Advanced Decoding:** Supports rich message/transaction type extraction.
+- ⚡ **Real-time Capable:** Block-by-block processing with adjustable concurrency.
+- 🔌 **Modular Branches:** Each supported network can be developed and maintained independently.
+
+---
+
+## Architecture
+
+- **RPC Client:** Interfaces with blockchain RPC endpoints.
+- **Message Decoder:** Dynamically generates message type definitions for supported chains.
 - **Database Layer:** Optimized PostgreSQL schema with automatic partitioning.
-- **Configuration System:** Flexible environment-based configuration with validation.
+- **Configuration System:** Environment-based, validated configuration.
 
 ---
 
@@ -54,7 +59,7 @@
 
 ---
 
-## 🚀 Installation
+## Installation
 
 ### 1. Clone the repository
 
@@ -73,13 +78,14 @@ npm install
 
 ---
 
-## ⚡ Quick Start
+## Quick Start
 
 ### Using Docker (Recommended)
 
-1. Copy the example environment file and edit as needed:
+1. Copy and configure your environment:
    ```bash
    cp .env.example .env
+   # Edit .env as needed
    ```
 
 2. Build and start all services:
@@ -92,9 +98,9 @@ npm install
    docker compose logs -f indexer
    ```
 
-> The indexer container defaults to `SINK=postgres` and `RESUME=true`, so it will try to resume from the last saved progress when restarted.
+> By default, the indexer will resume from the last processed block (`RESUME=true`) and use Postgres as the sink.
 
-#### To reset Postgres and re-init DB:
+#### To reset Postgres and re-initialize the database:
 ```bash
 docker compose down -v
 docker compose --env-file .env up -d db
@@ -102,25 +108,26 @@ docker compose --env-file .env up -d db
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
-All configuration is handled via environment variables. See `.env.example` for all options.
+All configuration is managed through environment variables.  
+See `.env.example` for a complete list.
 
-| Variable     | Description                        | Example                       |
-| ------------ | ---------------------------------- | ----------------------------- |
-| PG_HOST      | PostgreSQL host                    | `localhost`                   |
-| PG_PORT      | PostgreSQL port                    | `5432`                        |
-| PG_USER      | PostgreSQL user                    | `blockchain`                  |
-| PG_PASSWORD  | PostgreSQL password                | `password`                    |
-| PG_DATABASE  | PostgreSQL database name           | `indexerdb`                   |
-| RPC_URL      | Blockchain RPC endpoint            | `http://127.0.0.1:26657`      |
-| SINK         | Data sink type                     | `postgres`                    |
-| RESUME       | Resume from last indexed block     | `true`                        |
-| NODE_OPTIONS | Node.js runtime options            | `--max-old-space-size=24576`  |
+| Variable     | Description                        | Example                  |
+| ------------ | ---------------------------------- | ------------------------ |
+| PG_HOST      | PostgreSQL host                    | `localhost`              |
+| PG_PORT      | PostgreSQL port                    | `5432`                   |
+| PG_USER      | PostgreSQL user                    | `blockchain`             |
+| PG_PASSWORD  | PostgreSQL password                | `password`               |
+| PG_DATABASE  | PostgreSQL database name           | `indexerdb`              |
+| RPC_URL      | Blockchain RPC endpoint            | `http://127.0.0.1:26657` |
+| SINK         | Data sink type                     | `postgres`               |
+| RESUME       | Resume from last indexed block     | `true`                   |
+| NODE_OPTIONS | Node.js runtime options            | `--max-old-space-size=24576` |
 
 ---
 
-## 🖥️ Usage
+## Usage
 
 ### Running Locally (Without Docker)
 
@@ -134,7 +141,7 @@ All configuration is handled via environment variables. See `.env.example` for a
 2. Create a `.env` file:
     ```bash
     cp .env.example .env
-    # Edit .env as necessary
+    # Edit as necessary
     ```
 
 3. Generate runtime artifacts:
@@ -152,12 +159,12 @@ All configuration is handled via environment variables. See `.env.example` for a
     npm run start
     ```
 
-> Increase `NODE_OPTIONS` if you need more memory:  
+> Need more memory?  
 > `export NODE_OPTIONS=--max-old-space-size=24576`
 
 ---
 
-## 🛠️ Useful Makefile Targets
+## Makefile Shortcuts
 
 - `make up` — Start db via docker-compose
 - `make down` — Stop services
@@ -168,34 +175,34 @@ All configuration is handled via environment variables. See `.env.example` for a
 
 ---
 
-## 🩺 Troubleshooting
+## Troubleshooting
 
-- Indexer fails to start due to memory? Increase `NODE_OPTIONS` in your environment.
-- Ensure `.env` contains correct Postgres connection details and `RPC_URL` for the chain you want to index.
-- Use `make reset` to clear out and reinitialize your database if needed.
-
----
-
-## 🧑‍💻 Development Notes
-
-- The code uses `tsx` to run TypeScript directly during development.  
-  Production runs can use `npm run build` and run the compiled output with `node` if desired.
-- Tests are not included by default; add small smoke tests if you change core logic.
-- For advanced Docker/Makefile usage, refer to the Makefile and Docker Compose files.
+- Indexer fails due to memory? Increase `NODE_OPTIONS`.
+- Check your `.env` for correct DB and RPC settings.
+- Use `make reset` to reinitialize your database if needed.
 
 ---
 
-## 🤝 Contributing
+## Development Notes
 
-Contributions are welcome! Please open issues and pull requests for improvements, bug fixes, or new features.  
-For major changes, please open an issue first to discuss what you would like to change.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) if available.
+- Runs TypeScript directly via `tsx` during development.
+- For production: build with `npm run build` and run the compiled output.
+- No tests by default; please add smoke tests for core logic changes.
+- See Makefile and Docker Compose files for advanced operations.
 
 ---
 
-## 📄 License
+## Contributing
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+Contributions are welcome!  
+Open issues/PRs for improvements, bug fixes, or new features.
+
+For significant changes, please open an issue to discuss your ideas first.
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
