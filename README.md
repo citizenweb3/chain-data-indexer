@@ -53,8 +53,8 @@ It extracts, processes, and stores blockchain data from various networks into a 
 
 ## Requirements
 
-- Node.js (v18+ recommended)
-- npm or yarn
+- Node.js (v22+ recommended or v22.18.0 LTS for the best experience)
+- yarn
 - Docker & docker-compose
 
 ---
@@ -71,9 +71,7 @@ cd indexer
 ### 2. Install dependencies (for local runs)
 
 ```bash
-yarn install
-# or
-npm install
+yarn install --frozen-lockfile
 ```
 
 ---
@@ -103,6 +101,8 @@ npm install
 #### To reset Postgres and re-initialize the database:
 ```bash
 docker compose down -v
+```
+```bash
 docker compose --env-file .env up -d db
 ```
 
@@ -120,7 +120,7 @@ See `.env.example` for a complete list.
 | PG_USER      | PostgreSQL user                    | `blockchain`             |
 | PG_PASSWORD  | PostgreSQL password                | `password`               |
 | PG_DATABASE  | PostgreSQL database name           | `indexerdb`              |
-| RPC_URL      | Blockchain RPC endpoint            | `http://127.0.0.1:26657` |
+| RPC_URL      | Blockchain RPC endpoint            | `https://rpc.cosmoshub-4.citizenweb3.com` |
 | SINK         | Data sink type                     | `postgres`               |
 | RESUME       | Resume from last indexed block     | `true`                   |
 | NODE_OPTIONS | Node.js runtime options            | `--max-old-space-size=24576` |
@@ -133,9 +133,7 @@ See `.env.example` for a complete list.
 
 1. Install dependencies:
     ```bash
-    yarn install
-    # or
-    npm install
+    yarn install --frozen-lockfile
     ```
 
 2. Create a `.env` file:
@@ -186,7 +184,6 @@ See `.env.example` for a complete list.
 ## Development Notes
 
 - Runs TypeScript directly via `tsx` during development.
-- For production: build with `npm run build` and run the compiled output.
 - No tests by default; please add smoke tests for core logic changes.
 - See Makefile and Docker Compose files for advanced operations.
 
@@ -203,6 +200,6 @@ For significant changes, please open an issue to discuss your ideas first.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE-BG) for details.
 
 ---

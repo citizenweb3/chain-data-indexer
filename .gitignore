@@ -4,3 +4,4 @@
 .env
 src/generated/
 node_modules/
+dist
