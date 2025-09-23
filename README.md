@@ -120,7 +120,7 @@ See `.env.example` for a complete list.
 | PG_USER      | PostgreSQL user                    | `blockchain`             |
 | PG_PASSWORD  | PostgreSQL password                | `password`               |
 | PG_DATABASE  | PostgreSQL database name           | `indexerdb`              |
-| RPC_URL      | Blockchain RPC endpoint            | `https://rpc.cosmoshub-4.citizenweb3.com` |
+| RPC_URL      | Blockchain RPC endpoint            | `https://rpc.cosmoshub-4-archive.citizenweb3.com` |
 | SINK         | Data sink type                     | `postgres`               |
 | RESUME       | Resume from last indexed block     | `true`                   |
 | NODE_OPTIONS | Node.js runtime options            | `--max-old-space-size=24576` |
