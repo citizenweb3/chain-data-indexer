@@ -200,6 +200,6 @@ For significant changes, please open an issue to discuss your ideas first.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE-BG) for details.
+[`BE GOOD` License](LICENSE-BG) for details.
 
 ---
