@@ -5,8 +5,14 @@ node_modules*
 
 *.env
 !chicmoz-example.env
+.env.indexer
 
 ignore/
+
+# Indexer
+logs/*.log
+.aztec-listener.pid
+.explorer-api.pid
 
 .yarn/*
 !.yarn/patches

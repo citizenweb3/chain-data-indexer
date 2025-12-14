@@ -27,11 +27,11 @@ export const init = async (instanceName: string, logger: Logger) => {
     logger,
     clientId: instanceName,
     connection: KAFKA_CONNECTION,
-    saslConfig: {
+    saslConfig: KAFKA_SASL_USERNAME && KAFKA_SASL_PASSWORD ? {
       mechanism: "plain",
       username: KAFKA_SASL_USERNAME,
       password: KAFKA_SASL_PASSWORD,
-    },
+    } : undefined,
   });
 };
 

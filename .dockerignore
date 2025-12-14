@@ -34,3 +34,14 @@
 !packages/postgres-helper
 !packages/redis-helper
 !packages/contract-verification
+
+# Indexer docker files
+!docker
+!services/aztec-listener
+!services/explorer-api
+!services/auth
+!services/ethereum-listener
+!services/event-cannon
+!services/explorer-ui
+!services/websocket-event-publisher
+!packages
