@@ -5,6 +5,24 @@ const POSTGRES_ADMIN = process.env.POSTGRES_ADMIN ?? "admin";
 const POSTGRES_PASSWORD =
   process.env.POSTGRES_PASSWORD ?? "secret-local-password";
 
+// Настройки пула соединений из переменных окружения
+export const POSTGRES_POOL_MIN = parseInt(
+  process.env.POSTGRES_POOL_MIN || "5",
+  10,
+);
+export const POSTGRES_POOL_MAX = parseInt(
+  process.env.POSTGRES_POOL_MAX || "50",
+  10,
+);
+export const POSTGRES_POOL_IDLE_TIMEOUT_MS = parseInt(
+  process.env.POSTGRES_POOL_IDLE_TIMEOUT_MS || "120000",
+  10,
+);
+export const POSTGRES_POOL_CONNECTION_TIMEOUT_MS = parseInt(
+  process.env.POSTGRES_POOL_CONNECTION_TIMEOUT_MS || "10000",
+  10,
+);
+
 export const dbCredentials = {
   host: POSTGRES_IP,
   port: POSTGRES_PORT,

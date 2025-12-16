@@ -44,7 +44,7 @@ const callNodeFunction = async <K extends keyof AztecNode>(
   args?: Parameters<AztecNode[K]>,
   forceNode?: RpcNode,
 ): Promise<ReturnType<AztecNode[K]>> => {
-  let currentNode = forceNode ?? getRpcNode();
+  let currentNode = forceNode ?? await getRpcNode();
   const res = await backOff(
     async () => {
       logger.info(
@@ -62,7 +62,7 @@ const callNodeFunction = async <K extends keyof AztecNode>(
       numOfAttempts: getAmountOfOnlineNodes(),
       maxDelay: 2000,
       startingDelay: 200,
-      retry: (e, attemptNumber: number) => {
+      retry: async (e, attemptNumber: number) => {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         const errorCode = e.cause?.code;
         const isRetriableDevelopmentError =
@@ -90,7 +90,10 @@ const callNodeFunction = async <K extends keyof AztecNode>(
             return false;
           }
         }
-        currentNode = forceNode ?? getRpcNode();
+        // Get next node synchronously for retry
+        if (!forceNode) {
+          void getRpcNode().then(node => { currentNode = node; });
+        }
         return true;
       },
     },

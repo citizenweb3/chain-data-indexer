@@ -85,7 +85,9 @@ services:
   migrations:
     build:
       context: .
-      dockerfile: docker/migrations.Dockerfile
+      dockerfile: docker/universal.Dockerfile
+      args:
+        SERVICE: migrations
     container_name: aztec-indexer-migrations
     depends_on:
       postgres:
@@ -96,7 +98,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-chicmoz}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chicmoz123}
       L2_NETWORK_ID: ${L2_NETWORK_ID:-MAINNET}
-    restart: "no"
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
 
   # ============================================
   # Aztec Listener - Indexes blocks from Aztec RPC
@@ -104,12 +111,16 @@ services:
   aztec-listener:
     build:
       context: .
-      dockerfile: docker/aztec-listener.Dockerfile
+      dockerfile: docker/universal.Dockerfile
+      args:
+        SERVICE: aztec-listener
     container_name: aztec-indexer-listener
     depends_on:
       migrations:
         condition: service_completed_successfully
       kafka:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     environment:
       # Network
@@ -119,14 +130,14 @@ services:
       AZTEC_RPC_URLS: ${AZTEC_RPC_URLS}
 
       # PostgreSQL (postgres-helper package uses these names)
-      POSTGRES_IP: postgres
-      POSTGRES_PORT: 5432
+      POSTGRES_IP: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_ADMIN: ${POSTGRES_USER:-chicmoz}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chicmoz123}
       POSTGRES_DB_NAME: aztec_listener
 
       # Kafka
-      KAFKA_CONNECTION: kafka:9092
+      KAFKA_CONNECTION: ${KAFKA_HOST:-kafka}:${KAFKA_PORT:-9092}
 
       # Polling settings
       BLOCK_POLL_INTERVAL_MS: ${BLOCK_POLL_INTERVAL_MS:-3000}
@@ -137,6 +148,15 @@ services:
       AZTEC_LISTEN_FOR_PENDING_TXS: ${AZTEC_LISTEN_FOR_PENDING_TXS:-true}
       AZTEC_LISTEN_FOR_CHAIN_INFO: ${AZTEC_LISTEN_FOR_CHAIN_INFO:-true}
     restart: unless-stopped
+    # Resource limits (prevents memory leaks from consuming all server resources)
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
 
   # ============================================
   # Explorer API - REST API for indexed data
@@ -144,12 +164,16 @@ services:
   explorer-api:
     build:
       context: .
-      dockerfile: docker/explorer-api.Dockerfile
+      dockerfile: docker/universal.Dockerfile
+      args:
+        SERVICE: explorer-api
     container_name: aztec-indexer-api
     depends_on:
       migrations:
         condition: service_completed_successfully
       kafka:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     ports:
       - "${API_PORT:-8000}:8000"
@@ -163,19 +187,28 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
 
       # PostgreSQL (postgres-helper package uses these names)
-      POSTGRES_IP: postgres
-      POSTGRES_PORT: 5432
+      POSTGRES_IP: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_ADMIN: ${POSTGRES_USER:-chicmoz}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chicmoz123}
       POSTGRES_DB_NAME: explorer_api
 
       # Kafka
-      KAFKA_CONNECTION: kafka:9092
+      KAFKA_CONNECTION: ${KAFKA_HOST:-kafka}:${KAFKA_PORT:-9092}
 
       # Rate limiting
       THROTTLE_LIMIT: ${THROTTLE_LIMIT:-100}
       THROTTLE_TTL: ${THROTTLE_TTL:-60}
     restart: unless-stopped
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
 
   # ============================================
   # Kafka UI (optional, for debugging)
@@ -198,3 +231,4 @@ services:
 volumes:
   postgres_data:
     name: aztec-indexer-postgres-data
+    driver: local

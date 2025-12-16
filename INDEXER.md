@@ -2,6 +2,11 @@
 
 Aztec L2 blockchain indexer. Everything runs in Docker - one command to start.
 
+**📚 Documentation:**
+- [MONITORING.md](MONITORING.md) - Prometheus/Grafana integration
+- [docs/TRANSACTIONS.md](docs/TRANSACTIONS.md) - Database transactions guide
+- [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md) - Recent improvements cheatsheet
+
 ## Requirements
 
 - Docker and Docker Compose
@@ -67,6 +72,37 @@ curl http://localhost:8000/l2/blocks?limit=5
 ## API
 
 Base URL: `http://localhost:8000/l2/`
+
+### Health Check
+
+Check if services are running properly:
+
+```bash
+# Aztec Listener health
+curl http://localhost:8000/health
+
+# Explorer API health  
+curl http://localhost:8000/health
+
+# Response:
+# {
+#   "status": "healthy",
+#   "checks": {
+#     "postgres": true,
+#     "rpcNodes": true
+#   },
+#   "timestamp": "2025-12-16T10:30:00Z",
+#   "service": "aztec-listener"
+# }
+```
+
+### Prometheus Metrics
+
+```bash
+curl http://localhost:8000/metrics
+```
+
+For full monitoring setup (Prometheus, Grafana, Grafana Alloy), see [MONITORING.md](MONITORING.md).
 
 ### Available Endpoints Overview
 
@@ -353,8 +389,135 @@ docker-compose -f docker-compose.indexer.yml logs aztec-listener
 │   ├── aztec-listener.Dockerfile
 │   ├── explorer-api.Dockerfile
 │   ├── migrations.Dockerfile
+│   ├── universal.Dockerfile  # Universal Dockerfile (recommended)
 │   ├── init-databases.sql
 │   └── run-migrations-docker.sh
 ├── run-indexer.sh           # Management script
-└── INDEXER.md               # This documentation
+├── INDEXER.md               # This documentation
+├── MONITORING.md            # Prometheus/Grafana setup guide
+└── docs/
+    └── TRANSACTIONS.md      # Database transactions guide
 ```
+
+## Advanced Configuration
+
+### Environment Variables
+
+See [.env.indexer.example](.env.indexer.example) for all available options:
+
+#### Performance Tuning
+
+```bash
+# PostgreSQL connection pool (default: 5-50)
+POSTGRES_POOL_MIN=5
+POSTGRES_POOL_MAX=50
+POSTGRES_POOL_IDLE_TIMEOUT_MS=120000
+POSTGRES_POOL_CONNECTION_TIMEOUT_MS=10000
+
+# RPC rate limiting (requests per second)
+RPC_RATE_LIMIT_RPS=500
+RPC_RATE_LIMIT_MAX_CONCURRENT=50
+
+# Graceful shutdown timeout
+SHUTDOWN_TIMEOUT_SEC=30
+```
+
+#### Indexer Behavior
+
+```bash
+# Block polling interval (milliseconds)
+BLOCK_POLL_INTERVAL_MS=3000
+
+# Catchup mode speed (faster = more RPC load)
+CATCHUP_POLL_WAIT_TIME_MS=100
+
+# Listen for pending transactions
+AZTEC_LISTEN_FOR_PENDING_TXS=true
+
+# Listen for chain info updates
+AZTEC_LISTEN_FOR_CHAIN_INFO=true
+```
+
+#### Starting from Specific Block
+
+```bash
+# Skip historical blocks and start from specific height
+AZTEC_LISTEN_FOR_PROPOSED_BLOCKS_FORCED_START_FROM_HEIGHT=1000
+AZTEC_LISTEN_FOR_PROVEN_BLOCKS_FORCED_START_FROM_HEIGHT=1000
+
+# Ignore saved height (reindex from scratch)
+IGNORE_PROCESSED_HEIGHT=true
+
+# Disable eternal catchup (background reindexing)
+AZTEC_DISABLE_ETERNAL_CATCHUP=true
+```
+
+### Using External Databases
+
+You can use external PostgreSQL or Kafka by setting:
+
+```bash
+# .env.indexer
+POSTGRES_HOST=your-postgres-server.com
+POSTGRES_PORT=5432
+KAFKA_HOST=your-kafka-server.com
+KAFKA_PORT=9092
+```
+
+Then comment out `postgres`, `zookeeper`, and `kafka` services in `docker-compose.indexer.yml`.
+
+### Universal Dockerfile
+
+The project includes a universal Dockerfile (`docker/universal.Dockerfile`) that can build any service:
+
+```bash
+# Build aztec-listener
+docker build --build-arg SERVICE=aztec-listener -f docker/universal.Dockerfile -t aztec-listener .
+
+# Build explorer-api
+docker build --build-arg SERVICE=explorer-api -f docker/universal.Dockerfile -t explorer-api .
+
+# Build migrations
+docker build --build-arg SERVICE=migrations -f docker/universal.Dockerfile -t migrations .
+```
+
+**Benefits:**
+- Single Dockerfile to maintain
+- Consistent build process
+- Easier to update dependencies
+
+### Resource Limits (Optional)
+
+To prevent memory leaks from consuming all server resources, you can enable resource limits in `docker-compose.indexer.yml`:
+
+```yaml
+# Uncomment the deploy section for each service:
+deploy:
+  resources:
+    limits:
+      cpus: '4.0'      # Maximum 4 CPU cores
+      memory: 8G       # Maximum 8GB RAM
+    reservations:
+      cpus: '1.0'      # Reserved 1 CPU core
+      memory: 1G       # Reserved 1GB RAM
+```
+
+With your server specs (40 cores, 320GB RAM), high limits like these act as safety net without impacting performance.
+
+### Database Transactions
+
+For critical operations that require atomicity (all-or-nothing), use database transactions. See [docs/TRANSACTIONS.md](docs/TRANSACTIONS.md) for detailed guide with examples.
+
+**Quick example:**
+
+```typescript
+import { withTransaction } from "./svcs/database/index.js";
+
+await withTransaction(async (tx) => {
+  await tx.insert(blocks).values(blockData);
+  await tx.insert(transactions).values(txsData);
+  // If any operation fails, both are rolled back
+});
+```
+
+

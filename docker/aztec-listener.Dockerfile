@@ -62,8 +62,11 @@ COPY --from=builder /app/services/aztec-listener ./services/aztec-listener
 
 WORKDIR /app/services/aztec-listener
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD node -e "console.log('healthy')" || exit 1
+# Install wget for healthcheck
+RUN apk add --no-cache wget
 
-CMD ["yarn", "start"]
+# Health check - проверяет /health endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${HEALTH_PORT:-8000}/health || exit 1
+
+CMD ["node", "--enable-source-maps", "dist/index.js"]
