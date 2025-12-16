@@ -24,6 +24,11 @@ import { handleProvenTransactions } from "./handle-proven-block-txs.js";
 let timeoutId: number | undefined;
 let cancelPolling = false;
 
+// Indexing speed tracking
+let catchupStartTime = 0;
+let catchupBlockCount = 0;
+const SPEED_LOG_INTERVAL = 50; // Log speed every 50 blocks
+
 export const startPolling = async ({
   forceStartFromProposedHeight,
   forceStartFromProvenHeight,
@@ -152,13 +157,34 @@ const pollProvenBlock = async (height: number, isCatchup: boolean) => {
   const block = await internalGetBlock(height);
 
   if (isCatchup) {
+    // Initialize timer on first catchup block
+    if (catchupBlockCount === 0) {
+      catchupStartTime = Date.now();
+    }
+    
     await onCatchupBlock(
       block,
       ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROVEN,
     );
-    logger.info(`🐱 catchup proven block ${height}`);
+    
+    catchupBlockCount++;
+    
+    // Log speed periodically
+    if (catchupBlockCount % SPEED_LOG_INTERVAL === 0) {
+      const elapsedSeconds = (Date.now() - catchupStartTime) / 1000;
+      const blocksPerSecond = (catchupBlockCount / elapsedSeconds).toFixed(2);
+      logger.info(`⚡ ${blocksPerSecond} blocks/s`);
+    } else {
+      logger.info(`🐱 catchup proven block ${height}`);
+    }
+    
     await new Promise((r) => setTimeout(r, CATCHUP_POLL_WAIT_TIME_MS));
   } else {
+    // Reset counters when switching from catchup to live mode
+    if (catchupBlockCount > 0) {
+      catchupBlockCount = 0;
+      catchupStartTime = 0;
+    }
     await onBlock(block, ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROVEN);
   }
 
