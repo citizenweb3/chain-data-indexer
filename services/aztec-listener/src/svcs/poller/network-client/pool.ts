@@ -1,6 +1,6 @@
 import { AztecNode, createAztecNodeClient } from "@aztec/aztec.js";
-import { Mutex } from "async-mutex";
 import { AZTEC_RPC_URLS } from "../../../environment.js";
+import { AtomicCounter } from "./atomic-counter.js";
 import { onL2RpcNodeError } from "../../../events/emitted/index.js";
 import { logger } from "../../../logger.js";
 import { getRateLimiterForNode } from "./rate-limiter.js";
@@ -14,10 +14,9 @@ export interface RpcNode {
 let allNodes: RpcNode[] = [];
 let onlinePool: RpcNode[] = [];
 let offlinePool: RpcNode[] = [];
-let currentNodeIndex = 0;
 
-// Mutex для защиты от race conditions при параллельных вызовах
-const poolMutex = new Mutex();
+// ⚡ Lock-free atomic counter вместо mutex для лучшей производительности
+const nodeIndexCounter = new AtomicCounter();
 
 const resetPools = () => {
   logger.info(
@@ -25,7 +24,7 @@ const resetPools = () => {
   );
   onlinePool = allNodes.map((node) => node);
   offlinePool = [];
-  currentNodeIndex = 0;
+  nodeIndexCounter.reset();
 };
 
 export const getAmountOfOnlineNodes = () => {
@@ -49,18 +48,16 @@ export const initPool = () => {
   );
 };
 
-// Function to get the next AztecNode with mutex protection
+// ⚡ Lock-free round-robin (безопасно для параллельных вызовов)
 export const getRpcNode = async (): Promise<RpcNode> => {
-  return await poolMutex.runExclusive(() => {
-    if (onlinePool.length === 0) {
-      throw new Error(
-        "Node pool is empty. Ensure that initPool() has been called and the pool is properly initialized.",
-      );
-    }
-    const node = onlinePool[currentNodeIndex];
-    currentNodeIndex = (currentNodeIndex + 1) % onlinePool.length;
-    return node;
-  });
+  if (onlinePool.length === 0) {
+    throw new Error(
+      "Node pool is empty. Ensure that initPool() has been called and the pool is properly initialized.",
+    );
+  }
+
+  const index = nodeIndexCounter.increment() % onlinePool.length;
+  return onlinePool[index];
 };
 
 export const getNodeUrls = (): string[] => {
@@ -90,42 +87,40 @@ export const setNodeOffline = async <K extends keyof AztecNode>(
   e: unknown,
   args?: Parameters<AztecNode[K]>,
 ): Promise<void> => {
-  await poolMutex.runExclusive(() => {
-    const nodeAlreadyOffline = offlinePool.find(
-      (n) => n.name === node.name && n.url === node.url,
-    );
-    if (!nodeAlreadyOffline) {
-      offlinePool.push(node);
-    }
-    logger.warn(
-      `⚠️ ⚠️ ⚠️  Node ${node.name} failed to call ${fnName} with args: ${JSON.stringify(args)}. ${
-        (e as Error).cause ? `Cause: ${JSON.stringify((e as Error).cause)}` : ""
-      } ${
-        nodeAlreadyOffline
-          ? "is already marked as offline."
-          : "marking it as offline."
-      }`,
-    );
-    onL2RpcNodeError(
-      {
-        name: (e as Error).name ?? "UnknownName",
-        message: (e as Error).message ?? "UnknownMessage",
-        cause: JSON.stringify((e as Error).cause) ?? "UnknownCause",
-        stack: (e as Error).stack ?? "UnknownStack",
-        data: { fnName, args, error: e },
-        nodeName: node.name,
-      },
-      node.url,
-    );
-    onlinePool = onlinePool.filter(
-      (n) => n.name !== node.name || n.url !== node.url,
-    );
-    currentNodeIndex = 0;
-    if (onlinePool.length === 0) {
-      logger.error("All nodes in the pool are offline. Resetting pools.");
-      resetPools();
-    }
-  });
+  const nodeAlreadyOffline = offlinePool.find(
+    (n) => n.name === node.name && n.url === node.url,
+  );
+  if (!nodeAlreadyOffline) {
+    offlinePool.push(node);
+  }
+  logger.warn(
+    `⚠️ ⚠️ ⚠️  Node ${node.name} failed to call ${fnName} with args: ${JSON.stringify(args)}. ${
+      (e as Error).cause ? `Cause: ${JSON.stringify((e as Error).cause)}` : ""
+    } ${
+      nodeAlreadyOffline
+        ? "is already marked as offline."
+        : "marking it as offline."
+    }`,
+  );
+  onL2RpcNodeError(
+    {
+      name: (e as Error).name ?? "UnknownName",
+      message: (e as Error).message ?? "UnknownMessage",
+      cause: JSON.stringify((e as Error).cause) ?? "UnknownCause",
+      stack: (e as Error).stack ?? "UnknownStack",
+      data: { fnName, args, error: e },
+      nodeName: node.name,
+    },
+    node.url,
+  );
+  onlinePool = onlinePool.filter(
+    (n) => n.name !== node.name || n.url !== node.url,
+  );
+  nodeIndexCounter.reset();
+  if (onlinePool.length === 0) {
+    logger.error("All nodes in the pool are offline. Resetting pools.");
+    resetPools();
+  }
 };
 
 export const getAllRpcNodes = (): RpcNode[] => {

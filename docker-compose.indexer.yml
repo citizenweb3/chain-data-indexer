@@ -141,8 +141,17 @@ services:
 
       # Polling settings
       BLOCK_POLL_INTERVAL_MS: ${BLOCK_POLL_INTERVAL_MS:-3000}
-      CATCHUP_POLL_WAIT_TIME_MS: ${CATCHUP_POLL_WAIT_TIME_MS:-100}
+      CATCHUP_POLL_WAIT_TIME_MS: ${CATCHUP_POLL_WAIT_TIME_MS:-0}  # 0ms for maximum speed
       TX_POLL_INTERVAL_MS: ${TX_POLL_INTERVAL_MS:-4000}
+
+      # Performance Tuning (aggressive optimization for 250+ BPS)
+      BLOCK_FETCHER_WORKERS: ${BLOCK_FETCHER_WORKERS:-30}          # 30 parallel RPC requests
+      BLOCK_BATCH_SIZE: ${BLOCK_BATCH_SIZE:-50}                    # Block pre-loading
+      BLOCK_PREFETCH_SIZE: ${BLOCK_PREFETCH_SIZE:-30}              # 30 blocks for aggressive prefetch
+      BATCH_HEIGHTS_FLUSH_INTERVAL_MS: ${BATCH_HEIGHTS_FLUSH_INTERVAL_MS:-3000}  # Flush every 3 seconds
+      BATCH_HEIGHTS_FLUSH_EVERY_N_BLOCKS: ${BATCH_HEIGHTS_FLUSH_EVERY_N_BLOCKS:-300}  # Flush every 300 blocks
+      RPC_RATE_LIMIT_RPS: ${RPC_RATE_LIMIT_RPS:-500}               # Requests per second per node
+      RPC_RATE_LIMIT_MAX_CONCURRENT: ${RPC_RATE_LIMIT_MAX_CONCURRENT:-100}  # Maximum concurrent requests
 
       # Features
       AZTEC_LISTEN_FOR_PENDING_TXS: ${AZTEC_LISTEN_FOR_PENDING_TXS:-true}
@@ -155,8 +164,8 @@ services:
           cpus: "4.0"
           memory: 8G
         reservations:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "4.0"      # Reserve 4 cores for parallel processing
+          memory: 4G       # More RAM for worker pool buffers
 
   # ============================================
   # Explorer API - REST API for indexed data
