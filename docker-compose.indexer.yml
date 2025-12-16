@@ -127,7 +127,7 @@ services:
       L2_NETWORK_ID: ${L2_NETWORK_ID:-MAINNET}
 
       # Aztec RPC (REQUIRED)
-      AZTEC_RPC_URLS: ${AZTEC_RPC_URLS}
+      AZTEC_RPC_URLS: ${AZTEC_RPC_URLS:-mainnet::https://rpc.aztec.citizenweb3.com}
 
       # PostgreSQL (postgres-helper package uses these names)
       POSTGRES_IP: ${POSTGRES_HOST:-postgres}
