@@ -7,9 +7,7 @@ CREATE DATABASE aztec_listener;
 -- Create database for explorer-api (stores all blockchain data)
 CREATE DATABASE explorer_api;
 
--- Grant privileges
-GRANT ALL PRIVILEGES ON DATABASE aztec_listener TO chicmoz;
-GRANT ALL PRIVILEGES ON DATABASE explorer_api TO chicmoz;
+-- Note: Privileges are automatically granted to the owner (POSTGRES_USER from environment)
 
 -- Log success
 DO $$

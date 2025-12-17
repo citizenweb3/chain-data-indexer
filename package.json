@@ -14,8 +14,6 @@
     "eslint": "8.53.0",
     "eslint-config-prettier": "9.0.0",
     "eslint-plugin-import": "2.29.0",
-    "husky": "8.0.3",
-    "lint-staged": "15.1.0",
     "prettier": "3.5.3",
     "prettier-plugin-organize-imports": "4.1.0",
     "prettier-plugin-sort-json": "4.1.1",
@@ -28,9 +26,7 @@
     "build": "yarn workspaces foreach --parallel --all --topological-dev --verbose run build",
     "lint": "yarn workspaces foreach --parallel --all --topological-dev --verbose run lint",
     "test": "yarn workspaces foreach --parallel --all --topological-dev --verbose run test-once",
-    "g:lint": "cd $INIT_CWD && eslint --fix",
-    "postinstall": "husky install",
-    "prepare": "husky install"
+    "g:lint": "cd $INIT_CWD && eslint --fix"
   },
   "dependenciesMeta": {
     "prettier-plugin-organize-imports@4.1.0": {

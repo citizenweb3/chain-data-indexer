@@ -23,7 +23,6 @@ COPY packages/message-registry/package.json ./packages/message-registry/
 COPY packages/microservice-base/package.json ./packages/microservice-base/
 COPY packages/postgres-helper/package.json ./packages/postgres-helper/
 COPY packages/types/package.json ./packages/types/
-COPY packages/auth0-middleware/package.json ./packages/auth0-middleware/
 COPY packages/redis-helper/package.json ./packages/redis-helper/
 COPY packages/contract-verification/package.json ./packages/contract-verification/
 
