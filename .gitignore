@@ -4,9 +4,15 @@ node_modules*
 .DS_Store
 
 *.env
-!chicmoz-example.env
+!.env.indexer.example
+.env.indexer
 
 ignore/
+
+# Indexer
+logs/*.log
+.aztec-listener.pid
+.explorer-api.pid
 
 .yarn/*
 !.yarn/patches

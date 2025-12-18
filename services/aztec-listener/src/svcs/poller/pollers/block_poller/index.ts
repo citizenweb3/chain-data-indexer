@@ -8,6 +8,7 @@ import {
 } from "../../../../environment.js";
 import { onBlock, onCatchupBlock } from "../../../../events/emitted/index.js";
 import { logger } from "../../../../logger.js";
+import { batchHeightsWriter } from "../../../database/batch-heights.controller.js";
 import {
   getBlockHeights,
   storeBlockHeights,
@@ -20,9 +21,15 @@ import {
   getLatestProvenHeight,
 } from "../../network-client/index.js";
 import { handleProvenTransactions } from "./handle-proven-block-txs.js";
+import { blockFetcherPool } from "./worker-pool.js";
 
 let timeoutId: number | undefined;
 let cancelPolling = false;
+
+// Indexing speed tracking
+let catchupStartTime = 0;
+let catchupBlockCount = 0;
+const SPEED_LOG_INTERVAL = 50; // Log speed every 50 blocks
 
 export const startPolling = async ({
   forceStartFromProposedHeight,
@@ -40,15 +47,25 @@ export const startPolling = async ({
   if (forceStartFromProvenHeight) {
     await storeProcessedProvenBlockHeight(forceStartFromProvenHeight - 1);
   }
+  
+  // Start worker pool and batch writer for high performance
+  blockFetcherPool.start();
+  batchHeightsWriter.start();
+  
   syncRecursivePolling(true);
 };
 
-export const stopPolling = () => {
+export const stopPolling = async () => {
   cancelPolling = true;
   if (timeoutId) {
     clearTimeout(timeoutId);
     timeoutId = undefined;
   }
+  
+  // Graceful shutdown - save progress
+  blockFetcherPool.stop();
+  await batchHeightsWriter.forceFlush();
+  logger.info("🛑 Poller stopped gracefully");
 };
 
 const syncRecursivePolling = (isFirstRun: boolean) => {
@@ -86,11 +103,27 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
       heights.chainProvenBlockHeight
     } | DIFF ${provenHeightDiff}`);
     try {
+      const PREFETCH_SIZE = parseInt(process.env.BLOCK_PREFETCH_SIZE || "5", 10);
+      
       while (
         !cancelPolling &&
         heights.processedProposedBlockHeight < chainProposedBlockHeight &&
         !AZTEC_DISABLE_LISTEN_FOR_PROPOSED_BLOCKS
       ) {
+        // Start prefetching next blocks in parallel
+        const remainingBlocks = chainProposedBlockHeight - heights.processedProposedBlockHeight;
+        const prefetchCount = Math.min(PREFETCH_SIZE, remainingBlocks);
+        
+        // Start parallel loading of next blocks
+        for (let i = 1; i <= prefetchCount; i++) {
+          const nextHeight = heights.processedProposedBlockHeight + i;
+          if (nextHeight <= chainProposedBlockHeight) {
+            blockFetcherPool.fetchBlock(nextHeight).catch(() => {
+              // Ignore prefetch errors - блок будет загружен при обработке
+            });
+          }
+        }
+        
         heights.processedProposedBlockHeight++;
         await pollProposedBlock(
           heights.processedProposedBlockHeight,
@@ -103,11 +136,26 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
       );
     }
     try {
+      const PREFETCH_SIZE = parseInt(process.env.BLOCK_PREFETCH_SIZE || "30", 10);
+      
       while (
         !cancelPolling &&
         heights.processedProvenBlockHeight < chainProvenBlockHeight &&
         !AZTEC_DISABLE_LISTEN_FOR_PROVEN_BLOCKS
       ) {
+        // Start bulk prefetch forward via worker pool
+        const currentHeight = heights.processedProvenBlockHeight;
+        const remainingBlocks = chainProvenBlockHeight - currentHeight;
+        const prefetchCount = Math.min(PREFETCH_SIZE, remainingBlocks);
+        
+        // Load next blocks in parallel via worker pool
+        for (let i = 1; i <= prefetchCount; i++) {
+          const nextHeight = currentHeight + i;
+          if (nextHeight <= chainProvenBlockHeight) {
+            blockFetcherPool.prefetchBlock(nextHeight);
+          }
+        }
+        
         heights.processedProvenBlockHeight++;
         await pollProvenBlock(heights.processedProvenBlockHeight, isFirstRun);
       }
@@ -145,29 +193,54 @@ const pollProposedBlock = async (height: number, isCatchup: boolean) => {
       ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROPOSED,
     );
   }
-  await storeProcessedProposedBlockHeight(height);
+  batchHeightsWriter.updateProposedHeight(height); // Batching instead of direct write
 };
 
 const pollProvenBlock = async (height: number, isCatchup: boolean) => {
   const block = await internalGetBlock(height);
 
   if (isCatchup) {
+    // Initialize timer on first catchup block
+    if (catchupBlockCount === 0) {
+      catchupStartTime = Date.now();
+    }
+    
     await onCatchupBlock(
       block,
       ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROVEN,
     );
-    logger.info(`🐱 catchup proven block ${height}`);
-    await new Promise((r) => setTimeout(r, CATCHUP_POLL_WAIT_TIME_MS));
+    
+    catchupBlockCount++;
+    
+    // Log speed periodically
+    if (catchupBlockCount % SPEED_LOG_INTERVAL === 0) {
+      const elapsedSeconds = (Date.now() - catchupStartTime) / 1000;
+      const blocksPerSecond = (catchupBlockCount / elapsedSeconds).toFixed(2);
+      const queueSize = blockFetcherPool.getQueueSize();
+      const activeWorkers = blockFetcherPool.getActiveWorkers();
+      const cacheSize = blockFetcherPool.getCacheSize();
+      logger.info(`⚡ ${blocksPerSecond} blocks/s | Queue: ${queueSize} | Workers: ${activeWorkers} | Cache: ${cacheSize}`);
+    } else {
+      logger.info(`🐱 catchup proven block ${height}`);
+    }
+    
+    // REMOVED: artificial delay for maximum speed
   } else {
+    // Reset counters when switching from catchup to live mode
+    if (catchupBlockCount > 0) {
+      catchupBlockCount = 0;
+      catchupStartTime = 0;
+    }
     await onBlock(block, ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROVEN);
   }
 
   await handleProvenTransactions(block);
-  await storeProcessedProvenBlockHeight(height);
+  batchHeightsWriter.updateProvenHeight(height); // Batching instead of direct write
 };
 
 const internalGetBlock = async (height: number) => {
-  const blockRes = await getBlock(height);
+  // ⚡ Используем worker pool который может иметь закешированный блок из prefetch
+  const blockRes = await blockFetcherPool.fetchBlock(height);
   if (!blockRes) {
     throw new Error(`Block ${height} not found`);
   }

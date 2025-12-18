@@ -17,7 +17,7 @@ export interface MBOptions {
   logger: Logger;
   clientId: string;
   connection: string;
-  saslConfig: SASLOptions;
+  saslConfig?: SASLOptions;
   ssl?: boolean;
 }
 export type MBConsumer = {
@@ -38,7 +38,6 @@ export class MessageBus {
     const kafkaConfig: KafkaConfig = {
       clientId: options.clientId,
       brokers: options.connection.split(","),
-      sasl: options.saslConfig,
       logCreator: () => {
         return ({ log, label }) => {
           const { message, error, stack, retryCount } = log;
@@ -54,6 +53,9 @@ export class MessageBus {
         };
       },
     };
+    if (options.saslConfig) {
+      kafkaConfig.sasl = options.saslConfig;
+    }
     if (options.ssl) {
       kafkaConfig.ssl = true;
     }

@@ -11,7 +11,7 @@ export const BLOCK_POLL_INTERVAL_MS = z.coerce
   .parse(process.env.BLOCK_POLL_INTERVAL_MS);
 export const CATCHUP_POLL_WAIT_TIME_MS = z.coerce
   .number()
-  .default(100)
+  .default(0) // 0ms for maximum speed (was 100ms)
   .parse(process.env.CATCHUP_POLL_WAIT_TIME_MS);
 export const TX_POLL_INTERVAL_MS = z.coerce
   .number()
@@ -25,7 +25,36 @@ export const MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS = z.coerce
   .number()
   .default(50)
   .parse(process.env.MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS);
-export const AZTEC_DISABLE_LISTEN_FOR_PROPOSED_BLOCKS =
+
+// Performance tuning variables
+export const BLOCK_FETCHER_WORKERS = z.coerce
+  .number()
+  .default(30) // Parallel RPC requests for block fetching
+  .parse(process.env.BLOCK_FETCHER_WORKERS);
+export const BLOCK_BATCH_SIZE = z.coerce
+  .number()
+  .default(50) // Batch size for block pre-loading
+  .parse(process.env.BLOCK_BATCH_SIZE);
+export const BATCH_HEIGHTS_FLUSH_INTERVAL_MS = z.coerce
+  .number()
+  .default(3000) // DB flush interval in milliseconds (3 seconds)
+  .parse(process.env.BATCH_HEIGHTS_FLUSH_INTERVAL_MS);
+export const RPC_RATE_LIMIT_RPS = z.coerce
+  .number()
+  .default(500) // Requests per second per node
+  .parse(process.env.RPC_RATE_LIMIT_RPS);
+export const RPC_RATE_LIMIT_MAX_CONCURRENT = z.coerce
+  .number()
+  .default(100) // Maximum concurrent requests
+  .parse(process.env.RPC_RATE_LIMIT_MAX_CONCURRENT);
+export const BLOCK_PREFETCH_SIZE = z.coerce
+  .number()
+  .default(30) // Number of blocks to prefetch
+  .parse(process.env.BLOCK_PREFETCH_SIZE);
+export const BATCH_HEIGHTS_FLUSH_EVERY_N_BLOCKS = z.coerce
+  .number()
+  .default(300) // Flush every 300 blocks
+  .parse(process.env.BATCH_HEIGHTS_FLUSH_EVERY_N_BLOCKS);export const AZTEC_DISABLE_LISTEN_FOR_PROPOSED_BLOCKS =
   process.env.AZTEC_DISABLE_LISTEN_FOR_PROPOSED_BLOCKS === "true";
 export const AZTEC_LISTEN_FOR_PROPOSED_BLOCKS_FORCED_START_FROM_HEIGHT =
   z.coerce
@@ -135,4 +164,12 @@ CHAIN_INFO_POLL_INTERVAL_MS:                               ${
 IGNORE_PROCESSED_HEIGHT:                                   ${
   IGNORE_PROCESSED_HEIGHT ? "✅" : "❌"
 }
-MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS:                        ${MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS}`;
+MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS:                        ${MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS}
+=======================
+PERFORMANCE SETTINGS
+BLOCK_FETCHER_WORKERS:                                     ${BLOCK_FETCHER_WORKERS}
+BLOCK_BATCH_SIZE:                                          ${BLOCK_BATCH_SIZE}
+BATCH_HEIGHTS_FLUSH_INTERVAL_MS:                           ${BATCH_HEIGHTS_FLUSH_INTERVAL_MS / 1000}s
+RPC_RATE_LIMIT_RPS:                                        ${RPC_RATE_LIMIT_RPS}
+RPC_RATE_LIMIT_MAX_CONCURRENT:                             ${RPC_RATE_LIMIT_MAX_CONCURRENT}
+BLOCK_PREFETCH_SIZE:                                       ${BLOCK_PREFETCH_SIZE}`;

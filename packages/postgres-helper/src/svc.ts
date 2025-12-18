@@ -6,16 +6,27 @@ import {
 import { DrizzleConfig } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { dbCredentials, getConfigStr } from "./environment.js";
+import {
+  dbCredentials,
+  getConfigStr,
+  POSTGRES_POOL_MIN,
+  POSTGRES_POOL_MAX,
+  POSTGRES_POOL_IDLE_TIMEOUT_MS,
+  POSTGRES_POOL_CONNECTION_TIMEOUT_MS,
+} from "./environment.js";
 
 let pool: pg.Pool;
 let db: ReturnType<typeof drizzle>;
 const serviceId = "DB";
 
+// Используем значения из переменных окружения
 const DEFAULT_POOL_CONFIG = {
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  min: POSTGRES_POOL_MIN,
+  max: POSTGRES_POOL_MAX,
+  idleTimeoutMillis: POSTGRES_POOL_IDLE_TIMEOUT_MS,
+  connectionTimeoutMillis: POSTGRES_POOL_CONNECTION_TIMEOUT_MS,
+  allowExitOnIdle: false,
+  maxUses: 7500,
 };
 
 const init = async (
@@ -31,6 +42,27 @@ const init = async (
   pool.on("error", (err) => {
     // eslint-disable-next-line no-console
     console.error("[POSTGRES] Unexpected error on idle client", err);
+  });
+
+  pool.on("connect", () => {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[POSTGRES] New client connected. Total: ${pool.totalCount}, Idle: ${pool.idleCount}, Waiting: ${pool.waitingCount}`,
+    );
+  });
+
+  pool.on("acquire", () => {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[POSTGRES] Client acquired. Total: ${pool.totalCount}, Idle: ${pool.idleCount}, Waiting: ${pool.waitingCount}`,
+    );
+  });
+
+  pool.on("remove", () => {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[POSTGRES] Client removed. Total: ${pool.totalCount}, Idle: ${pool.idleCount}, Waiting: ${pool.waitingCount}`,
+    );
   });
 
   db = drizzle(pool, drizzleConfig);

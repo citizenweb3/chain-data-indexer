@@ -1,0 +1,243 @@
+version: "3.8"
+
+# ============================================
+# Aztec Blockchain Indexer
+# One command: docker-compose -f docker-compose.indexer.yml up --build
+# ============================================
+
+services:
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:14-alpine
+    container_name: aztec-indexer-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aztec_indexer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aztec_indexer_secure_pass_2024}
+    ports:
+      - "${POSTGRES_PORT:-5439}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-databases.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aztec_indexer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ============================================
+  # Zookeeper (for Kafka)
+  # ============================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: aztec-indexer-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # Kafka
+  # ============================================
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: aztec-indexer-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-topics",
+          "--bootstrap-server",
+          "localhost:9092",
+          "--list",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # ============================================
+  # Migrations (runs once, then exits)
+  # ============================================
+  migrations:
+    build:
+      context: .
+      dockerfile: docker/universal.Dockerfile
+      args:
+        SERVICE: migrations
+    container_name: aztec-indexer-migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-aztec_indexer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aztec_indexer_secure_pass_2024}
+      L2_NETWORK_ID: ${L2_NETWORK_ID:-MAINNET}
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  # ============================================
+  # Aztec Listener - Indexes blocks from Aztec RPC
+  # ============================================
+  aztec-listener:
+    build:
+      context: .
+      dockerfile: docker/universal.Dockerfile
+      args:
+        SERVICE: aztec-listener
+    container_name: aztec-indexer-listener
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      # Network
+      L2_NETWORK_ID: ${L2_NETWORK_ID:-MAINNET}
+
+      # Aztec RPC (REQUIRED)
+      AZTEC_RPC_URLS: ${AZTEC_RPC_URLS:-mainnet::https://rpc.aztec.citizenweb3.com}
+
+      # PostgreSQL (postgres-helper package uses these names)
+      POSTGRES_IP: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: 5432
+      POSTGRES_ADMIN: ${POSTGRES_USER:-aztec_indexer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aztec_indexer_secure_pass_2024}
+      POSTGRES_DB_NAME: aztec_listener
+
+      # Kafka
+      KAFKA_CONNECTION: ${KAFKA_HOST:-kafka}:${KAFKA_PORT:-9092}
+
+      # Polling settings
+      BLOCK_POLL_INTERVAL_MS: ${BLOCK_POLL_INTERVAL_MS:-3000}
+      CATCHUP_POLL_WAIT_TIME_MS: ${CATCHUP_POLL_WAIT_TIME_MS:-0} # 0ms for maximum speed
+      TX_POLL_INTERVAL_MS: ${TX_POLL_INTERVAL_MS:-4000}
+
+      # Performance Tuning (aggressive optimization for 250+ BPS)
+      BLOCK_FETCHER_WORKERS: ${BLOCK_FETCHER_WORKERS:-30} # 30 parallel RPC requests
+      BLOCK_BATCH_SIZE: ${BLOCK_BATCH_SIZE:-50} # Block pre-loading
+      BLOCK_PREFETCH_SIZE: ${BLOCK_PREFETCH_SIZE:-30} # 30 blocks for aggressive prefetch
+      BATCH_HEIGHTS_FLUSH_INTERVAL_MS: ${BATCH_HEIGHTS_FLUSH_INTERVAL_MS:-3000} # Flush every 3 seconds
+      BATCH_HEIGHTS_FLUSH_EVERY_N_BLOCKS: ${BATCH_HEIGHTS_FLUSH_EVERY_N_BLOCKS:-300} # Flush every 300 blocks
+      RPC_RATE_LIMIT_RPS: ${RPC_RATE_LIMIT_RPS:-500} # Requests per second per node
+      RPC_RATE_LIMIT_MAX_CONCURRENT: ${RPC_RATE_LIMIT_MAX_CONCURRENT:-100} # Maximum concurrent requests
+
+      # Features
+      AZTEC_LISTEN_FOR_PENDING_TXS: ${AZTEC_LISTEN_FOR_PENDING_TXS:-true}
+      AZTEC_LISTEN_FOR_CHAIN_INFO: ${AZTEC_LISTEN_FOR_CHAIN_INFO:-true}
+    restart: unless-stopped
+    # Resource limits (prevents memory leaks from consuming all server resources)
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8G
+        reservations:
+          cpus: "4.0" # Reserve 4 cores for parallel processing
+          memory: 4G # More RAM for worker pool buffers
+
+  # ============================================
+  # Explorer API - REST API for indexed data
+  # ============================================
+  explorer-api:
+    build:
+      context: .
+      dockerfile: docker/universal.Dockerfile
+      args:
+        SERVICE: explorer-api
+    container_name: aztec-indexer-api
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Network
+      L2_NETWORK_ID: ${L2_NETWORK_ID:-MAINNET}
+
+      # API
+      PORT: 8000
+      API_KEYS: ${API_KEYS:-dev}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+
+      # PostgreSQL (postgres-helper package uses these names)
+      POSTGRES_IP: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: 5432
+      POSTGRES_ADMIN: ${POSTGRES_USER:-aztec_indexer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aztec_indexer_secure_pass_2024}
+      POSTGRES_DB_NAME: explorer_api
+
+      # Kafka
+      KAFKA_CONNECTION: ${KAFKA_HOST:-kafka}:${KAFKA_PORT:-9092}
+
+      # Rate limiting
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-100}
+      THROTTLE_TTL: ${THROTTLE_TTL:-60}
+    restart: unless-stopped
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  # ============================================
+  # Kafka UI (optional, for debugging)
+  # ============================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: aztec-indexer-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_UI_PORT:-8081}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: aztec-indexer
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    profiles:
+      - debug
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: aztec-indexer-postgres-data
+    driver: local

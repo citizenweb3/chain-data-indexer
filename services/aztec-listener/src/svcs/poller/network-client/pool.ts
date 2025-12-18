@@ -1,7 +1,9 @@
 import { AztecNode, createAztecNodeClient } from "@aztec/aztec.js";
 import { AZTEC_RPC_URLS } from "../../../environment.js";
+import { AtomicCounter } from "./atomic-counter.js";
 import { onL2RpcNodeError } from "../../../events/emitted/index.js";
 import { logger } from "../../../logger.js";
+import { getRateLimiterForNode } from "./rate-limiter.js";
 
 export interface RpcNode {
   name: string;
@@ -12,7 +14,9 @@ export interface RpcNode {
 let allNodes: RpcNode[] = [];
 let onlinePool: RpcNode[] = [];
 let offlinePool: RpcNode[] = [];
-let currentNodeIndex = 0;
+
+// ⚡ Lock-free atomic counter вместо mutex для лучшей производительности
+const nodeIndexCounter = new AtomicCounter();
 
 const resetPools = () => {
   logger.info(
@@ -20,7 +24,7 @@ const resetPools = () => {
   );
   onlinePool = allNodes.map((node) => node);
   offlinePool = [];
-  currentNodeIndex = 0;
+  nodeIndexCounter.reset();
 };
 
 export const getAmountOfOnlineNodes = () => {
@@ -44,16 +48,16 @@ export const initPool = () => {
   );
 };
 
-// Function to get the next AztecNode
-export const getRpcNode = (): RpcNode => {
+// ⚡ Lock-free round-robin (безопасно для параллельных вызовов)
+export const getRpcNode = async (): Promise<RpcNode> => {
   if (onlinePool.length === 0) {
     throw new Error(
       "Node pool is empty. Ensure that initPool() has been called and the pool is properly initialized.",
     );
   }
-  const node = onlinePool[currentNodeIndex];
-  currentNodeIndex = (currentNodeIndex + 1) % onlinePool.length;
-  return node;
+
+  const index = nodeIndexCounter.increment() % onlinePool.length;
+  return onlinePool[index];
 };
 
 export const getNodeUrls = (): string[] => {
@@ -77,12 +81,12 @@ export const checkValidatorStats = async () => {
   logger.warn("No nodes in the pool were able to provide validator stats.");
 };
 
-export const setNodeOffline = <K extends keyof AztecNode>(
+export const setNodeOffline = async <K extends keyof AztecNode>(
   node: RpcNode,
   fnName: K,
   e: unknown,
   args?: Parameters<AztecNode[K]>,
-) => {
+): Promise<void> => {
   const nodeAlreadyOffline = offlinePool.find(
     (n) => n.name === node.name && n.url === node.url,
   );
@@ -112,7 +116,7 @@ export const setNodeOffline = <K extends keyof AztecNode>(
   onlinePool = onlinePool.filter(
     (n) => n.name !== node.name || n.url !== node.url,
   );
-  currentNodeIndex = 0;
+  nodeIndexCounter.reset();
   if (onlinePool.length === 0) {
     logger.error("All nodes in the pool are offline. Resetting pools.");
     resetPools();
@@ -122,3 +126,31 @@ export const setNodeOffline = <K extends keyof AztecNode>(
 export const getAllRpcNodes = (): RpcNode[] => {
   return allNodes;
 };
+
+/**
+ * Wrapper для вызова любого метода RPC с rate limiting и retry логикой
+ * @param methodName - Имя метода AztecNode для вызова
+ * @param args - Аргументы метода
+ * @returns Promise с результатом вызова
+ */
+export const callRpcMethod = async <K extends keyof AztecNode>(
+  methodName: K,
+  ...args: Parameters<AztecNode[K]>
+): Promise<ReturnType<AztecNode[K]>> => {
+  const node = await getRpcNode();
+  const limiter = getRateLimiterForNode(node.url);
+
+  try {
+    const result = await limiter.schedule(() =>
+      // @ts-expect-error - TypeScript не может правильно определить тип возврата
+      node.instance[methodName](...args),
+    );
+    return result as ReturnType<AztecNode[K]>;
+  } catch (e) {
+    await setNodeOffline(node, methodName, e, args);
+    // Retry с другой нодой (рекурсивно)
+    logger.info(`Retrying ${String(methodName)} with another node...`);
+    return callRpcMethod(methodName, ...args);
+  }
+};
+

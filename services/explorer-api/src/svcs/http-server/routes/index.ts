@@ -4,6 +4,7 @@ import { Router } from "express";
 import { OpenAPIObject } from "openapi3-ts/oas31";
 import { ARTIFACT_BODY_LIMIT } from "../../../environment.js";
 import { logger } from "../../../logger.js";
+import { getPool } from "@chicmoz-pkg/postgres-helper";
 import * as controller from "./controllers/index.js";
 import { paths } from "./paths_and_validation.js";
 
@@ -123,6 +124,46 @@ const checkDocsStatus = () => {
 
 export const init = ({ router }: { router: Router }) => {
   checkDocsStatus();
+  
+  // Health check endpoint
+  router.get("/health", async (req, res) => {
+    const checks = {
+      postgres: false,
+    };
+
+    try {
+      const pool = getPool();
+      const client = await pool.connect();
+      await client.query("SELECT 1");
+      client.release();
+      checks.postgres = true;
+    } catch (e) {
+      logger.error({
+        msg: "Health check: PostgreSQL failed",
+        error: (e as Error).message,
+      });
+    }
+
+    const isHealthy = checks.postgres;
+    const statusCode = isHealthy ? 200 : 503;
+
+    res.status(statusCode).json({
+      status: isHealthy ? "healthy" : "unhealthy",
+      checks,
+      timestamp: new Date().toISOString(),
+      service: "explorer-api",
+    });
+  });
+
+  // Metrics endpoint for Prometheus
+  router.get("/metrics", (req, res) => {
+    res.set("Content-Type", "text/plain");
+    res.send(`# HELP explorer_api_up Service is up
+# TYPE explorer_api_up gauge
+explorer_api_up 1
+`);
+  });
+
   router.get("/l2/index", controller.GET_ROUTES);
 
   router.get(paths.latestHeight, controller.GET_LATEST_HEIGHT);
