@@ -5,6 +5,7 @@
 ## 📚 Table of Contents
 
 - [Overview](#overview)
+- [Supported Networks](#supported-networks)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
@@ -22,15 +23,43 @@
 
 ## Overview
 
-**Chain Data Indexer** is a high-performance, modular blockchain data indexer designed for powering block explorers, analytics platforms, DeFi dashboards, compliance tools, and research projects.  
+**Chain Data Indexer (CDI)** is a high-performance, modular blockchain data indexer designed for powering block explorers, analytics platforms, DeFi dashboards, compliance tools, and research projects.  
 It extracts, processes, and stores blockchain data from various networks into a PostgreSQL database, enabling fast and flexible querying.
 
 - 🧭 **Primary Use Case:** Powering block explorers with rich, searchable blockchain data.
 - 🌌 **Extensible:** Suitable for analytics, compliance, DeFi, R&D, and more.
+- 🌐 **Multi-Network:** This is a monorepo with indexers for multiple blockchain networks.
+
+---
+
+## Supported Networks
+
+CDI supports multiple blockchain networks. Each network has its own dedicated branch with specialized implementation:
+
+| Network | Branch | Status | Description |
+|---------|--------|--------|-------------|
+| **Cosmos Hub** | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) | ✅ Production | Full indexer for cosmoshub-4 with Protobuf decoding, transaction parsing, and PostgreSQL storage |
+| **Aztec Protocol** | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | 🚧 Development | High-performance L2 indexer with REST API, Kafka streaming, and parallel block processing (270-280 blocks/sec) |
+
+### Switching Networks
+
+To work with a specific network indexer, switch to the corresponding branch:
+
+```bash
+# For Cosmos Hub indexer (this branch)
+git checkout main
+
+# For Aztec Protocol indexer
+git checkout aztec
+```
+
+> 💡 **Note:** Each branch contains network-specific configuration, schemas, and documentation. Make sure to read the branch-specific README for detailed setup instructions.
 
 ---
 
 ## Features
+
+> **Note:** The features below are specific to the **Cosmos Hub** indexer. For other networks, please refer to the respective branch documentation.
 
 - 🚀 **High Performance:** Efficiently processes large volumes of blocks and transactions.
 - 🔄 **Resumable Indexing:** Smart resumption from the last indexed block to prevent data loss.
