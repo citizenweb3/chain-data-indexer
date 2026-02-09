@@ -2,6 +2,13 @@
 
 > built by [Citizen Web3](https://www.citizenweb3.com/) for [ValidatorInfo](https://validatorinfo.com/)
 
+## Chains
+
+- [Cosmos Hub](https://github.com/citizenweb3/chain-data-indexer/tree/main) - Development 🚧
+- [Aztec Protocol](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) - Production ✅
+
+---
+
 ## 📚 Table of Contents
 
 - [Overview](#overview)
