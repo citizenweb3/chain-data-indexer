@@ -44,6 +44,28 @@ services:
       RPC_URL: ${RPC_URL}
       # Node memory default (can be overridden at compose run time)
       NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=24576}
+      # Performance tuning (from .env)
+      CONCURRENCY: ${CONCURRENCY:-48}
+      RPS: ${RPS:-500}
+      TIMEOUT_MS: ${TIMEOUT_MS:-5000}
+      RETRIES: ${RETRIES:-3}
+      BACKOFF_MS: ${BACKOFF_MS:-250}
+      BACKOFF_JITTER: ${BACKOFF_JITTER:-0.3}
+      # Indexing range
+      FIRST_BLOCK: ${FIRST_BLOCK:-1}
+      FOLLOW: ${FOLLOW:-true}
+      FOLLOW_INTERVAL_MS: ${FOLLOW_INTERVAL_MS:-5000}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Postgres batch sizes
+      PG_BATCH_BLOCKS: ${PG_BATCH_BLOCKS:-1000}
+      PG_BATCH_TXS: ${PG_BATCH_TXS:-2000}
+      PG_BATCH_MSGS: ${PG_BATCH_MSGS:-5000}
+      PG_BATCH_EVENTS: ${PG_BATCH_EVENTS:-10000}
+      PG_BATCH_ATTRS: ${PG_BATCH_ATTRS:-30000}
+      PG_POOL_SIZE: ${PG_POOL_SIZE:-16}
+      PG_MODE: ${PG_MODE:-batch-insert}
+      PG_PROGRESS_ID: ${PG_PROGRESS_ID:-default}
     # In production, do not bind-mount the host project directory — that can overwrite
     # container-installed node_modules (causing esbuild platform mismatch). The image
     # already contains the app and dependencies.
