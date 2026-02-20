@@ -1,5 +1,41 @@
 services:
   db:
+    command:
+      - postgres
+      - -c
+      - shared_buffers=80GB
+      - -c
+      - effective_cache_size=240GB
+      - -c
+      - work_mem=256MB
+      - -c
+      - maintenance_work_mem=4GB
+      - -c
+      - max_wal_size=16GB
+      - -c
+      - min_wal_size=4GB
+      - -c
+      - wal_buffers=64MB
+      - -c
+      - max_connections=300
+      - -c
+      - max_worker_processes=40
+      - -c
+      - max_parallel_workers_per_gather=8
+      - -c
+      - max_parallel_workers=32
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - wal_level=minimal
+      - -c
+      - max_wal_senders=0
+      - -c
+      - synchronous_commit=off
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
       interval: 10s

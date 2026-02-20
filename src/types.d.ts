@@ -20,6 +20,8 @@ export type Config = {
   shardId: number;
   /** Max number of concurrent network requests. */
   concurrency: number;
+  /** Number of worker threads for transaction decoding. Defaults to min(concurrency, cpuCount). */
+  decodeWorkers?: number;
   /** HTTP request timeout in milliseconds. */
   timeoutMs: number;
   /** Target requests-per-second throttle per process. */

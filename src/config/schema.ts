@@ -31,6 +31,7 @@ export const ConfigSchema = z
     shards: z.number().int().min(1),
     shardId: z.number().int().min(0),
     concurrency: z.number().int().min(1),
+    decodeWorkers: z.number().int().min(1).optional(),
     timeoutMs: z.number().int().min(1),
     rps: z.number().int().min(1),
     retries: z.number().int().min(0),

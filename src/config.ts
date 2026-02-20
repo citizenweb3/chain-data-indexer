@@ -49,6 +49,7 @@ export function getConfig(): Config {
   if (shardId < 0 || shardId >= shards) throw new Error(`shard-id must be in [0..${shards - 1}], got ${shardId}`);
 
   const concurrency = asPositiveInt('concurrency', (args.concurrency as string) ?? process.env.CONCURRENCY ?? 48);
+  const decodeWorkers = process.env.DECODE_WORKERS ? asPositiveInt('decode-workers', process.env.DECODE_WORKERS) : undefined;
   const timeoutMs = asPositiveInt('timeout-ms', (args['timeout-ms'] as string) ?? process.env.TIMEOUT_MS ?? 5000);
   const rps = asPositiveInt('rps', (args.rps as string) ?? process.env.RPS ?? 150);
   const retries = asPositiveInt('retries', (args.retries as string) ?? process.env.RETRIES ?? 3);
@@ -104,6 +105,7 @@ export function getConfig(): Config {
     shards,
     shardId,
     concurrency,
+    decodeWorkers,
     timeoutMs,
     rps,
     retries,

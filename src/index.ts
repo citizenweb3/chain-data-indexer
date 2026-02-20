@@ -6,10 +6,12 @@
  */
 // src/index.ts
 import { EventEmitter } from 'node:events';
+import { cpus } from 'node:os';
 import { getConfig, printConfig } from './config.ts';
 import { createRpcClientFromConfig } from './rpc/client.ts';
-import { createTxDecodePool } from './decode/txPool.ts';
+import { createTxDecodePool, TxDecodePool } from './decode/txPool.ts';
 import { createSink } from './sink/index.ts';
+import { Sink } from './sink/types.ts';
 import { closePgPool, createPgPool } from './db/pg.ts';
 import { getProgress } from './db/progress.ts';
 import { getLogger } from './utils/logger.ts';
@@ -18,6 +20,28 @@ import { followLoop } from './runner/follow.ts';
 
 EventEmitter.defaultMaxListeners = 0;
 const log = getLogger('index');
+
+let activeSink: Sink | null = null;
+let activePool: TxDecodePool | null = null;
+let shuttingDown = false;
+
+async function gracefulShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.warn(`${signal} received, flushing buffers…`);
+  try {
+    await activeSink?.flush?.();
+    await activeSink?.close();
+    await activePool?.close();
+    log.info('graceful shutdown complete');
+  } catch (e) {
+    log.error(`shutdown error: ${e}`);
+  }
+  process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 /**
  * Main function that runs the indexing process.
@@ -67,7 +91,7 @@ async function main() {
   const protoDir = process.env.PROTO_DIR || defaultProtoDir;
   log.info(`[proto] dir = ${protoDir}`);
 
-  const poolSize = Math.max(1, Math.min(cfg.concurrency ?? 8, 8));
+  const poolSize = cfg.decodeWorkers ?? Math.max(1, Math.min(cfg.concurrency, cpus().length));
   const decodePool = createTxDecodePool(poolSize, { protoDir });
 
   const sink = createSink({
@@ -84,6 +108,9 @@ async function main() {
     },
   });
   await sink.init();
+
+  activeSink = sink;
+  activePool = decodePool;
 
   const backfill = await syncRange(rpc, decodePool, sink, {
     from: startFrom,
@@ -114,21 +141,6 @@ async function main() {
   await sink.flush?.();
   await sink.close();
 }
-
-/**
- * Handle SIGINT signal to gracefully shut down the indexer.
- */
-process.on('SIGINT', async () => {
-  log.warn('SIGINT received, shutting down…');
-  process.exit(0);
-});
-/**
- * Handle SIGTERM signal to gracefully shut down the indexer.
- */
-process.on('SIGTERM', async () => {
-  log.warn('SIGTERM received, shutting down…');
-  process.exit(0);
-});
 
 main().catch((e) => {
   const msg = e instanceof Error ? e.stack || e.message : String(e);

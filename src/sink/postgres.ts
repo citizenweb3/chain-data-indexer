@@ -693,8 +693,12 @@ export class PostgresSink implements Sink {
         return;
       }
 
-      const minH = Math.min(...heights);
-      const maxH = Math.max(...heights);
+      let minH = heights[0]!;
+      let maxH = heights[0]!;
+      for (let i = 1; i < heights.length; i++) {
+        if (heights[i]! < minH) minH = heights[i]!;
+        if (heights[i]! > maxH) maxH = heights[i]!;
+      }
 
       log.debug('ensure partitions', {
         minH,

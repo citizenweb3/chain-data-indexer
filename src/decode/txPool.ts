@@ -27,12 +27,23 @@ type AnyOut = ProgressMsg | ReadyMsg | OkMsg | ErrMsg;
  *   @returns {Promise<void>} - A promise that resolves when all workers have terminated.
  */
 export type TxDecodePool = {
-  submit: (txBase64: string) => Promise<any>;
+  submit: (txBase64: string, timeoutMs?: number) => Promise<any>;
   close: () => Promise<void>;
 };
 
 const INIT_TIMEOUT_MS = 30000;
 const log = getLogger('decode/txPool');
+
+/**
+ * Wraps a promise with a timeout that rejects with a labeled error if exceeded.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    t = setTimeout(() => reject(new Error(`timeout: ${label} after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(t));
+}
 
 /**
  * Creates a pool of worker threads for parallel transaction decoding.
@@ -45,6 +56,7 @@ const log = getLogger('decode/txPool');
 export function createTxDecodePool(size: number, opts?: { protoDir?: string }): TxDecodePool {
   const workers: Worker[] = [];
   const idle: number[] = [];
+  const waiters: Array<(wid: number) => void> = [];
   const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
   const readyFlags: boolean[] = Array(size).fill(false);
   const readyResolvers: Array<() => void> = [];
@@ -116,9 +128,13 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
         const entry = pending.get((m as OkMsg | ErrMsg).id);
         if (!entry) return;
         pending.delete((m as OkMsg | ErrMsg).id);
-        idle.push(i);
         if ((m as OkMsg).ok) entry.resolve((m as OkMsg).decoded);
         else entry.reject(new Error((m as ErrMsg).error));
+        if (waiters.length > 0) {
+          waiters.shift()!(i);
+        } else {
+          idle.push(i);
+        }
         return;
       }
     });
@@ -128,7 +144,11 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
       if (!readyFlags[i]) {
         clearTimeout(timer);
         readyFlags[i] = true;
-        idle.push(i);
+        if (waiters.length > 0) {
+          waiters.shift()!(i);
+        } else {
+          idle.push(i);
+        }
         resolveReady();
       }
       for (const [id, p] of pending) {
@@ -148,19 +168,33 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
     await Promise.all(readyPromises);
   }
 
-  async function submit(txBase64: string): Promise<any> {
+  async function submit(txBase64: string, timeoutMs?: number): Promise<any> {
     await waitAllReady();
-    while (idle.length === 0) await new Promise((r) => setTimeout(r, 0));
-    const wid = idle.shift()!;
-    const w = workers[wid];
 
+    // Event-based queue: grab an idle worker or wait for one
+    let wid: number;
+    if (idle.length > 0) {
+      wid = idle.shift()!;
+    } else {
+      wid = await new Promise<number>((resolve) => waiters.push(resolve));
+    }
+
+    const w = workers[wid];
     const id = (Math.random() * 2 ** 31) | 0;
-    const prom = new Promise<any>((resolve, reject) => {
+    const decodePromise = new Promise<any>((resolve, reject) => {
       pending.set(id, { resolve, reject });
     });
 
     w?.postMessage({ type: 'decode', id, txBase64 });
-    return prom;
+
+    // Timeout only covers actual decode work, not queue wait time
+    if (timeoutMs) {
+      return withTimeout(decodePromise, timeoutMs, `decode@worker#${wid}`).catch((err) => {
+        decodePromise.catch(() => {}); // suppress unhandled rejection if worker responds with error after timeout
+        throw err;
+      });
+    }
+    return decodePromise;
   }
 
   async function close() {
