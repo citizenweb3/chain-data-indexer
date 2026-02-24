@@ -670,7 +670,9 @@ export class PostgresSink implements Sink {
       return;
 
     const pool = getPgPool();
+    const tConn0 = Date.now();
     const client = await pool.connect();
+    const tConnMs = Date.now() - tConn0;
     try {
       const heights: number[] = [
         ...this.bufBlocks.map((r) => r.height),
@@ -732,6 +734,7 @@ export class PostgresSink implements Sink {
       const t0 = Date.now();
 
       await ensureCorePartitions(client, minH, maxH);
+      const tAfterPart = Date.now();
 
       await client.query('BEGIN');
 
@@ -765,6 +768,7 @@ export class PostgresSink implements Sink {
       this.bufGovProposals = [];
 
       await upsertProgress(client, this.cfg.pg?.progressId ?? 'default', maxH);
+      const tBeforeCommit = Date.now();
 
       await client.query('COMMIT');
       const tookMs = Date.now() - t0;
@@ -772,6 +776,10 @@ export class PostgresSink implements Sink {
         span: `[${minH}, ${maxH}]`,
         rows: snapshotCounts,
         tookMs,
+        connectMs: tConnMs,
+        partitionsMs: tAfterPart - t0,
+        insertsMs: tBeforeCommit - tAfterPart,
+        commitMs: Date.now() - tBeforeCommit,
       });
     } catch (e) {
       await client.query('ROLLBACK');

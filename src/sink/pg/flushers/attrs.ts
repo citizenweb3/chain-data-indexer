@@ -12,13 +12,13 @@ import { execBatchedInsert } from '../batch.js';
  */
 export async function flushAttrs(client: PoolClient, rows: any[]): Promise<void> {
   if (!rows.length) return;
-  const cols = ['tx_hash', 'msg_index', 'event_index', 'key', 'value'];
+  const cols = ['height', 'tx_hash', 'msg_index', 'event_index', 'key', 'value'];
   await execBatchedInsert(
     client,
     'core.event_attrs',
     cols,
     rows,
-    'ON CONFLICT (tx_hash, msg_index, event_index, key) DO NOTHING',
+    'ON CONFLICT (height, tx_hash, msg_index, event_index, key) DO NOTHING',
     undefined,
     { maxRows: 10000, maxParams: 30000 },
   );

@@ -28,6 +28,7 @@ const RANGE_TABLES: Array<{ schema: string; table: string }> = [
   { schema: 'authz_feegrant', table: 'authz_grants' },
   { schema: 'authz_feegrant', table: 'fee_grants' },
   { schema: 'core', table: 'network_params' },
+  { schema: 'core', table: 'event_attrs' },
 ];
 
 /**

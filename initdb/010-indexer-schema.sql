@@ -205,13 +205,14 @@ COMMENT ON COLUMN core.events.attributes IS 'Array of key/value pairs (or map) a
 -- Attribute fan-out (fast WHERE key/value filters)
 CREATE TABLE core.event_attrs
 (
+    height      BIGINT NOT NULL,
     tx_hash     TEXT NOT NULL,
     msg_index   INT  NOT NULL,
     event_index INT  NOT NULL,
     key         TEXT NOT NULL,
     value       TEXT NULL,
-    PRIMARY KEY (tx_hash, msg_index, event_index, key)
-);
+    PRIMARY KEY (height, tx_hash, msg_index, event_index, key)
+) PARTITION BY RANGE (height);
 
 CREATE INDEX IF NOT EXISTS idx_event_attrs_key ON core.event_attrs (key);
 CREATE INDEX IF NOT EXISTS idx_event_attrs_key_value_md5 ON core.event_attrs (key, md5(COALESCE(value, '')));
