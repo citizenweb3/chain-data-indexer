@@ -185,7 +185,7 @@ export async function syncRange(
       ]);
       const txsB64: string[] = b?.block?.data?.txs ?? [];
       const decoded = await Promise.all(
-        txsB64.map((x, i) => withTimeout(pool.submit(x), blockTimeoutMs, `decode#${i}@${h}`)),
+        txsB64.map((x) => pool.submit(x, blockTimeoutMs)),
       );
       const assembled = await withTimeout(
         assembleBlockJsonFromParts(rpc, b, br, decoded, caseMode),
