@@ -122,6 +122,7 @@ VALUES
     ('ibc','packets','p',1000000,1000000),
     ('wasm','executions','p',1000000,1000000),
     ('wasm','contract_migrations','p',1000000,1000000),
+    ('core','event_attrs','p',1000000,1000000),
     ('wasm','state_kv','p',1000000,1000000)
 ON CONFLICT (schema_name, table_name) DO NOTHING;
 

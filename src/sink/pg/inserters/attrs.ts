@@ -10,18 +10,18 @@ import { makeMultiInsert } from '../batch.ts';
  *
  * @param client - Active PostgreSQL client connection from a connection pool.
  * @param rows - Array of attribute rows to insert. Each row should match the column order:
- *               [tx_hash, msg_index, event_index, key, value].
+ *               [height, tx_hash, msg_index, event_index, key, value].
  * @returns Resolves when the insert operation completes.
  */
 /** Single-transaction insert for flattened event attributes (block-atomic mode). */
 export async function insertAttrs(client: PoolClient, rows: any[]): Promise<void> {
   if (!rows?.length) return;
-  const cols = ['tx_hash', 'msg_index', 'event_index', 'key', 'value'];
+  const cols = ['height', 'tx_hash', 'msg_index', 'event_index', 'key', 'value'];
   const { text, values } = makeMultiInsert(
     'core.event_attrs',
     cols,
     rows,
-    'ON CONFLICT (tx_hash, msg_index, event_index, key) DO NOTHING',
+    'ON CONFLICT (height, tx_hash, msg_index, event_index, key) DO NOTHING',
   );
   await client.query(text, values);
 }
