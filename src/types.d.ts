@@ -100,8 +100,6 @@ export type Config = {
     batchGovVotes?: number;
     /** Batch size for governance proposals buffer. */
     batchGovProposals?: number;
-    /** Use COPY for append-only hot tables during batch flushes. */
-    copyAppendOnlyTables?: boolean;
     /** Maximum number of pooled connections for pg. */
     poolSize?: number;
     /** Custom identifier for tracking progress in the database, used when resuming indexing. */

@@ -30,7 +30,7 @@ export async function flushAttrs(client: PoolClient, rows: any[], opts?: { useCo
         { name: 'value', value: (row) => row.value },
       ],
       dedupedRows,
-      { maxRows: 10000 },
+      { maxRows: 50000 },
     );
     return;
   }

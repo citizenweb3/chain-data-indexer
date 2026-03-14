@@ -12,8 +12,16 @@ import { createRpcClientFromConfig } from './rpc/client.ts';
 import { createTxDecodePool, TxDecodePool } from './decode/txPool.ts';
 import { createSink } from './sink/index.ts';
 import { Sink } from './sink/types.ts';
-import { closePgPool, createPgPool } from './db/pg.ts';
+import { closePgPool, createPgPool, getPgPool } from './db/pg.ts';
 import { getProgress } from './db/progress.ts';
+import {
+  bulkModeOff,
+  detectBulkModeStatus,
+  disableAutovacuum,
+  findBulkModeOverlapTables,
+  getBulkModeSafetyError,
+  getBulkModeTopologyError,
+} from './db/bulk-mode.ts';
 import { getLogger } from './utils/logger.ts';
 import { syncRange } from './runner/syncRange.ts';
 import { followLoop } from './runner/follow.ts';
@@ -54,6 +62,7 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 async function main() {
   const cfg = getConfig();
   printConfig(cfg);
+  const progressId = cfg.pg?.progressId ?? 'default';
 
   const rpc = createRpcClientFromConfig(cfg);
   const status = await rpc.fetchStatus();
@@ -66,7 +75,7 @@ async function main() {
     if (cfg.sinkKind === 'postgres') {
       const pool = createPgPool({ ...cfg.pg, applicationName: 'cosmos-indexer-resolver' });
       try {
-        const last = await getProgress(pool, cfg.pg?.progressId ?? 'default');
+        const last = await getProgress(pool, progressId);
         const earliest = Number(status['sync_info']['earliest_block_height']);
         const explicitFrom = typeof cfg.from === 'number' ? cfg.from : (cfg.firstBlock as number | undefined);
         startFrom = last != null ? last + 1 : (explicitFrom ?? earliest);
@@ -117,23 +126,75 @@ async function main() {
   });
   await sink.init();
 
+  const hasBackfillRange = startFrom <= endHeight;
+
+  // Auto-detect bulk mode from durable/recovered DB state.
+  let bulkMode = false;
+  let bulkModeDetectionSource: 'persisted' | 'inferred' | null = null;
+  if (cfg.sinkKind === 'postgres') {
+    const pool = getPgPool();
+    const bulkModeStatus = await detectBulkModeStatus(pool, progressId);
+    bulkMode = bulkModeStatus.enabled;
+    bulkModeDetectionSource = bulkModeStatus.source;
+    if (bulkMode) {
+      const topologyError = getBulkModeTopologyError(cfg.shards);
+      if (topologyError) {
+        throw new Error(topologyError);
+      }
+
+      const overlappingTables =
+        bulkModeStatus.source === 'persisted' || !hasBackfillRange
+          ? []
+          : await findBulkModeOverlapTables(pool, startFrom, endHeight);
+      const safetyError = getBulkModeSafetyError({
+        detectionSource: bulkModeStatus.source,
+        resumeEnabled: cfg.resume === true,
+        hasBackfillRange,
+        overlappingTables,
+      });
+      if (safetyError) {
+        throw new Error(safetyError);
+      }
+
+      await disableAutovacuum(pool);
+      sink.setBulkMode?.(true);
+    }
+  }
+
   activeSink = sink;
   activePool = decodePool;
 
-  const backfill = await syncRange(rpc, decodePool, sink, {
-    from: startFrom,
-    to: endHeight,
-    concurrency: cfg.concurrency,
-    progressEveryBlocks: cfg.progressEveryBlocks,
-    progressIntervalSec: cfg.progressIntervalSec,
-    caseMode: cfg.caseMode,
-  });
+  if (!hasBackfillRange) {
+    log.info(`[start] no backfill needed: start ${startFrom} is above end ${endHeight}`);
+  }
+
+  const backfill = hasBackfillRange
+    ? await syncRange(rpc, decodePool, sink, {
+        from: startFrom,
+        to: endHeight,
+        concurrency: cfg.concurrency,
+        progressEveryBlocks: cfg.progressEveryBlocks,
+        progressIntervalSec: cfg.progressIntervalSec,
+        caseMode: cfg.caseMode,
+      })
+    : { processed: 0 };
 
   log.info(
-    `[done-range] processed ${backfill.processed} blocks in [${startFrom}, ${endHeight}] — switching mode: ${
-      cfg.follow === false ? 'exit' : 'follow'
-    }`,
+    `[done-range] ${
+      hasBackfillRange ? `processed ${backfill.processed} blocks` : 'skipped backfill'
+    } in [${startFrom}, ${endHeight}] — switching mode: ${cfg.follow === false ? 'exit' : 'follow'}`,
   );
+
+  // Transition: create indexes and switch to INSERT
+  if (bulkMode) {
+    const pool = getPgPool();
+    await sink.flush?.();
+    await bulkModeOff(pool, progressId);
+    sink.setBulkMode?.(false);
+    log.info(
+      `[bulk-mode] transition complete, switching to INSERT mode (source=${bulkModeDetectionSource ?? 'unknown'})`,
+    );
+  }
 
   if (cfg.follow !== false) {
     const pollMs = cfg.followIntervalMs ?? 1500;

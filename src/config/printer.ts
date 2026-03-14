@@ -19,6 +19,7 @@ export function printConfig(cfg: Config): void {
     parallel: {
       shards: `${cfg.shardId + 1}/${cfg.shards}`,
       concurrency: cfg.concurrency,
+      decodeWorkers: cfg.decodeWorkers,
     },
     network: {
       timeoutMs: cfg.timeoutMs,
@@ -56,8 +57,15 @@ export function printConfig(cfg: Config): void {
             msgs: cfg.pg.batchMsgs,
             events: cfg.pg.batchEvents,
             attrs: cfg.pg.batchAttrs,
+            transfers: cfg.pg.batchTransfers,
+            stakeDeleg: cfg.pg.batchStakeDeleg,
+            stakeDistr: cfg.pg.batchStakeDistr,
+            wasmExec: cfg.pg.batchWasmExec,
+            wasmEvents: cfg.pg.batchWasmEvents,
+            govDeposits: cfg.pg.batchGovDeposits,
+            govVotes: cfg.pg.batchGovVotes,
+            govProposals: cfg.pg.batchGovProposals,
           },
-          copyAppendOnlyTables: cfg.pg.copyAppendOnlyTables,
           poolSize: cfg.pg.poolSize,
           progressId: cfg.pg.progressId,
         }

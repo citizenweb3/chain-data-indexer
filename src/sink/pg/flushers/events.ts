@@ -30,7 +30,7 @@ export async function flushEvents(client: PoolClient, rows: any[], opts?: { useC
         { name: 'height', value: (row) => row.height },
       ],
       dedupedRows,
-      { maxRows: 5000 },
+      { maxRows: 50000 },
     );
     return;
   }

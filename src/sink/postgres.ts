@@ -43,6 +43,7 @@ import { flushStakeDistr } from './pg/flushers/stake_distr.ts';
 import { flushWasmExec } from './pg/flushers/wasm_exec.ts';
 import { flushWasmEvents } from './pg/flushers/wasm_events.ts';
 import { flushGovDeposits, flushGovVotes, upsertGovProposals } from './pg/flushers/gov.ts';
+import { getTriggeredFlushBuffers } from './flush-trigger.js';
 
 import { insertBlocks } from './pg/inserters/blocks.ts';
 import { insertTxs } from './pg/inserters/txs.ts';
@@ -94,7 +95,6 @@ export interface PostgresSinkConfig extends SinkConfig {
     database?: string;
     ssl?: boolean;
     progressId?: string;
-    copyAppendOnlyTables?: boolean;
   };
   mode?: PostgresMode;
   batchSizes?: {
@@ -121,6 +121,29 @@ type NormalizedLog = {
   events: Array<{ type: string; attributes: any }>;
 };
 
+type FlushBufferName =
+  | 'blocks'
+  | 'txs'
+  | 'msgs'
+  | 'events'
+  | 'attrs'
+  | 'transfers'
+  | 'stakeDeleg'
+  | 'stakeDistr'
+  | 'wasmExec'
+  | 'wasmEvents'
+  | 'govDeposits'
+  | 'govVotes'
+  | 'govProposals';
+
+type FlushTriggerName = FlushBufferName | 'manual';
+type FlushBufferCounts = Record<FlushBufferName, number>;
+type FlushTriggerInfo = {
+  triggeredBy: FlushTriggerName[];
+  counts: FlushBufferCounts;
+  thresholds: Record<FlushBufferName, number>;
+};
+
 /**
  * Sink that writes blocks, transactions, messages and related rows into PostgreSQL.
  * @implements {Sink}
@@ -128,7 +151,7 @@ type NormalizedLog = {
 export class PostgresSink implements Sink {
   private cfg: PostgresSinkConfig;
   private mode: PostgresMode;
-  private copyAppendOnlyTables: boolean;
+  private bulkMode = false;
 
   /**
    * Partition ensuring is expensive (advisory lock + many CREATE TABLE IF NOT EXISTS calls).
@@ -151,6 +174,7 @@ export class PostgresSink implements Sink {
   private bufGovDeposits: any[] = [];
   private bufGovVotes: any[] = [];
   private bufGovProposals: any[] = [];
+  private pendingFlushTrigger: FlushTriggerInfo | null = null;
 
   private batchSizes = {
     blocks: 1000,
@@ -175,7 +199,6 @@ export class PostgresSink implements Sink {
   constructor(cfg: PostgresSinkConfig) {
     this.cfg = cfg;
     this.mode = cfg.mode ?? 'batch-insert';
-    this.copyAppendOnlyTables = cfg.pg.copyAppendOnlyTables ?? false;
     if (cfg.batchSizes) {
       if (cfg.batchSizes.blocks) this.batchSizes.blocks = cfg.batchSizes.blocks;
       if (cfg.batchSizes.txs) this.batchSizes.txs = cfg.batchSizes.txs;
@@ -191,6 +214,11 @@ export class PostgresSink implements Sink {
       if (cfg.batchSizes.govVotes) this.batchSizes.govVotes = cfg.batchSizes.govVotes;
       if (cfg.batchSizes.govProposals) this.batchSizes.govProposals = cfg.batchSizes.govProposals;
     }
+  }
+
+  setBulkMode(enabled: boolean): void {
+    this.bulkMode = enabled;
+    log.info(`bulk mode ${enabled ? 'ON (COPY FROM)' : 'OFF (INSERT)'}`);
   }
 
   /**
@@ -671,40 +699,34 @@ export class PostgresSink implements Sink {
     this.bufGovVotes.push(...govVotesRows);
     this.bufGovProposals.push(...govProposalsRows);
 
-    const needFlush =
-      this.bufBlocks.length >= this.batchSizes.blocks ||
-      this.bufTxs.length >= this.batchSizes.txs ||
-      this.bufMsgs.length >= this.batchSizes.msgs ||
-      this.bufEvents.length >= this.batchSizes.events ||
-      this.bufAttrs.length >= this.batchSizes.attrs ||
-      this.bufTransfers.length >= this.batchSizes.transfers ||
-      this.bufStakeDeleg.length >= this.batchSizes.stakeDeleg ||
-      this.bufStakeDistr.length >= this.batchSizes.stakeDistr ||
-      this.bufWasmExec.length >= this.batchSizes.wasmExec ||
-      this.bufWasmEvents.length >= this.batchSizes.wasmEvents ||
-      this.bufGovDeposits.length >= this.batchSizes.govDeposits ||
-      this.bufGovVotes.length >= this.batchSizes.govVotes ||
-      this.bufGovProposals.length >= this.batchSizes.govProposals;
+    const counts: FlushBufferCounts = {
+      blocks: this.bufBlocks.length,
+      txs: this.bufTxs.length,
+      msgs: this.bufMsgs.length,
+      events: this.bufEvents.length,
+      attrs: this.bufAttrs.length,
+      transfers: this.bufTransfers.length,
+      stakeDeleg: this.bufStakeDeleg.length,
+      stakeDistr: this.bufStakeDistr.length,
+      wasmExec: this.bufWasmExec.length,
+      wasmEvents: this.bufWasmEvents.length,
+      govDeposits: this.bufGovDeposits.length,
+      govVotes: this.bufGovVotes.length,
+      govProposals: this.bufGovProposals.length,
+    };
+    const triggeredBy = getTriggeredFlushBuffers(counts, this.batchSizes);
 
-    if (needFlush) {
-      const counts = {
-        blocks: this.bufBlocks.length,
-        txs: this.bufTxs.length,
-        msgs: this.bufMsgs.length,
-        events: this.bufEvents.length,
-        attrs: this.bufAttrs.length,
-        transfers: this.bufTransfers.length,
-        stakeDeleg: this.bufStakeDeleg.length,
-        stakeDistr: this.bufStakeDistr.length,
-        wasmExec: this.bufWasmExec.length,
-        wasmEvents: this.bufWasmEvents.length,
-        govDeposits: this.bufGovDeposits.length,
-        govVotes: this.bufGovVotes.length,
-        govProposals: this.bufGovProposals.length,
+    if (triggeredBy.length > 0) {
+      this.pendingFlushTrigger = {
+        triggeredBy,
+        counts,
+        thresholds: { ...this.batchSizes },
       };
-      log.debug(
-        `flush trigger: blocks=${counts.blocks} txs=${counts.txs} msgs=${counts.msgs} events=${counts.events} attrs=${counts.attrs}`,
-      );
+      log.debug('flush trigger', {
+        triggeredBy,
+        counts,
+        thresholds: this.batchSizes,
+      });
       await this.flushAll();
     }
   }
@@ -738,24 +760,37 @@ export class PostgresSink implements Sink {
     const client = await pool.connect();
     const tConnMs = Date.now() - tConn0;
     try {
+      const blocks = this.bufBlocks.slice();
+      const txs = this.bufTxs.slice();
+      const msgs = this.bufMsgs.slice();
+      const events = this.bufEvents.slice();
+      const attrs = this.bufAttrs.slice();
+      const transfers = this.bufTransfers.slice();
+      const stakeDeleg = this.bufStakeDeleg.slice();
+      const stakeDistr = this.bufStakeDistr.slice();
+      const wasmExec = this.bufWasmExec.slice();
+      const wasmEvents = this.bufWasmEvents.slice();
+      const govDeposits = this.bufGovDeposits.slice();
+      const govVotes = this.bufGovVotes.slice();
+      const govProposals = this.bufGovProposals.slice();
+
       const heights: number[] = [
-        ...this.bufBlocks.map((r) => r.height),
-        ...this.bufTxs.map((r) => r.height),
-        ...this.bufMsgs.map((r) => r.height),
-        ...this.bufEvents.map((r) => r.height),
-        ...this.bufAttrs.map((r) => r.height),
-        ...this.bufTransfers.map((r) => r.height),
-        ...this.bufStakeDeleg.map((r) => r.height),
-        ...this.bufStakeDistr.map((r) => r.height),
-        ...this.bufWasmExec.map((r) => r.height),
-        ...this.bufWasmEvents.map((r) => r.height),
-        ...this.bufGovDeposits.map((r) => r.height),
-        ...this.bufGovVotes.map((r) => r.height),
-        ...this.bufGovProposals.map((r) => r.height),
-      ].filter((h): h is number => Number.isFinite(h)); // ← фильтр
+        ...blocks.map((r) => r.height),
+        ...txs.map((r) => r.height),
+        ...msgs.map((r) => r.height),
+        ...events.map((r) => r.height),
+        ...attrs.map((r) => r.height),
+        ...transfers.map((r) => r.height),
+        ...stakeDeleg.map((r) => r.height),
+        ...stakeDistr.map((r) => r.height),
+        ...wasmExec.map((r) => r.height),
+        ...wasmEvents.map((r) => r.height),
+        ...govDeposits.map((r) => r.height),
+        ...govVotes.map((r) => r.height),
+        ...govProposals.map((r) => r.height),
+      ].filter((h): h is number => Number.isFinite(h));
 
       if (heights.length === 0) {
-        client.release();
         return;
       }
 
@@ -770,30 +805,35 @@ export class PostgresSink implements Sink {
         minH,
         maxH,
         counts: {
-          blocks: this.bufBlocks.length,
-          txs: this.bufTxs.length,
-          msgs: this.bufMsgs.length,
-          events: this.bufEvents.length,
-          attrs: this.bufAttrs.length,
-          govDeposits: this.bufGovDeposits.length,
-          govVotes: this.bufGovVotes.length,
-          govProposals: this.bufGovProposals.length,
+          blocks: blocks.length,
+          txs: txs.length,
+          msgs: msgs.length,
+          events: events.length,
+          attrs: attrs.length,
+          govDeposits: govDeposits.length,
+          govVotes: govVotes.length,
+          govProposals: govProposals.length,
         },
       });
-      const snapshotCounts = {
-        blocks: this.bufBlocks.length,
-        txs: this.bufTxs.length,
-        msgs: this.bufMsgs.length,
-        events: this.bufEvents.length,
-        attrs: this.bufAttrs.length,
-        transfers: this.bufTransfers.length,
-        stakeDeleg: this.bufStakeDeleg.length,
-        stakeDistr: this.bufStakeDistr.length,
-        wasmExec: this.bufWasmExec.length,
-        wasmEvents: this.bufWasmEvents.length,
-        govDeposits: this.bufGovDeposits.length,
-        govVotes: this.bufGovVotes.length,
-        govProposals: this.bufGovProposals.length,
+      const snapshotCounts: FlushBufferCounts = {
+        blocks: blocks.length,
+        txs: txs.length,
+        msgs: msgs.length,
+        events: events.length,
+        attrs: attrs.length,
+        transfers: transfers.length,
+        stakeDeleg: stakeDeleg.length,
+        stakeDistr: stakeDistr.length,
+        wasmExec: wasmExec.length,
+        wasmEvents: wasmEvents.length,
+        govDeposits: govDeposits.length,
+        govVotes: govVotes.length,
+        govProposals: govProposals.length,
+      };
+      const flushTrigger = this.pendingFlushTrigger ?? {
+        triggeredBy: ['manual'],
+        counts: snapshotCounts,
+        thresholds: { ...this.batchSizes },
       };
       const flushMsByTable: Record<string, number> = {};
       const t0 = Date.now();
@@ -811,43 +851,48 @@ export class PostgresSink implements Sink {
         flushMsByTable[name] = Date.now() - startedAt;
       };
 
-      await timeFlush('blocks', () => flushBlocks(client, this.bufBlocks));
-      this.bufBlocks = [];
-      await timeFlush('txs', () => flushTxs(client, this.bufTxs));
-      this.bufTxs = [];
-      await timeFlush('msgs', () => flushMsgs(client, this.bufMsgs));
-      this.bufMsgs = [];
-      await timeFlush('events', () => flushEvents(client, this.bufEvents, { useCopy: this.copyAppendOnlyTables }));
-      this.bufEvents = [];
-      await timeFlush('attrs', () => flushAttrs(client, this.bufAttrs, { useCopy: this.copyAppendOnlyTables }));
-      this.bufAttrs = [];
+      const copyOpts = { useCopy: this.bulkMode };
 
-      await timeFlush('transfers', () => flushTransfers(client, this.bufTransfers));
-      this.bufTransfers = [];
-      await timeFlush('stakeDeleg', () => flushStakeDeleg(client, this.bufStakeDeleg));
-      this.bufStakeDeleg = [];
-      await timeFlush('stakeDistr', () => flushStakeDistr(client, this.bufStakeDistr));
-      this.bufStakeDistr = [];
-      await timeFlush('wasmExec', () => flushWasmExec(client, this.bufWasmExec));
-      this.bufWasmExec = [];
-      await timeFlush('wasmEvents', () => flushWasmEvents(client, this.bufWasmEvents));
-      this.bufWasmEvents = [];
+      await timeFlush('blocks', () => flushBlocks(client, blocks, copyOpts));
+      await timeFlush('txs', () => flushTxs(client, txs, copyOpts));
+      await timeFlush('msgs', () => flushMsgs(client, msgs, copyOpts));
+      await timeFlush('events', () => flushEvents(client, events, copyOpts));
+      await timeFlush('attrs', () => flushAttrs(client, attrs, copyOpts));
 
-      await timeFlush('govDeposits', () => flushGovDeposits(client, this.bufGovDeposits));
-      this.bufGovDeposits = [];
-      await timeFlush('govVotes', () => flushGovVotes(client, this.bufGovVotes));
-      this.bufGovVotes = [];
-      await timeFlush('govProposals', () => upsertGovProposals(client, this.bufGovProposals));
-      this.bufGovProposals = [];
+      await timeFlush('transfers', () => flushTransfers(client, transfers, copyOpts));
+      await timeFlush('stakeDeleg', () => flushStakeDeleg(client, stakeDeleg, copyOpts));
+      await timeFlush('stakeDistr', () => flushStakeDistr(client, stakeDistr, copyOpts));
+      await timeFlush('wasmExec', () => flushWasmExec(client, wasmExec, copyOpts));
+      await timeFlush('wasmEvents', () => flushWasmEvents(client, wasmEvents, copyOpts));
+
+      await timeFlush('govDeposits', () => flushGovDeposits(client, govDeposits));
+      await timeFlush('govVotes', () => flushGovVotes(client, govVotes));
+      await timeFlush('govProposals', () => upsertGovProposals(client, govProposals));
 
       await timeFlush('progress', () => upsertProgress(client, this.cfg.pg?.progressId ?? 'default', maxH));
       const tBeforeCommit = Date.now();
 
       await client.query('COMMIT');
+      this.bufBlocks.splice(0, blocks.length);
+      this.bufTxs.splice(0, txs.length);
+      this.bufMsgs.splice(0, msgs.length);
+      this.bufEvents.splice(0, events.length);
+      this.bufAttrs.splice(0, attrs.length);
+      this.bufTransfers.splice(0, transfers.length);
+      this.bufStakeDeleg.splice(0, stakeDeleg.length);
+      this.bufStakeDistr.splice(0, stakeDistr.length);
+      this.bufWasmExec.splice(0, wasmExec.length);
+      this.bufWasmEvents.splice(0, wasmEvents.length);
+      this.bufGovDeposits.splice(0, govDeposits.length);
+      this.bufGovVotes.splice(0, govVotes.length);
+      this.bufGovProposals.splice(0, govProposals.length);
       const tookMs = Date.now() - t0;
       log.info('flushed', {
         span: `[${minH}, ${maxH}]`,
         rows: snapshotCounts,
+        triggeredBy: flushTrigger.triggeredBy,
+        triggerCounts: flushTrigger.counts,
+        triggerThresholds: flushTrigger.thresholds,
         tookMs,
         connectMs: tConnMs,
         partitionsMs: tAfterPart - t0,
@@ -855,6 +900,7 @@ export class PostgresSink implements Sink {
         commitMs: Date.now() - tBeforeCommit,
         flushMsByTable,
       });
+      this.pendingFlushTrigger = null;
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;

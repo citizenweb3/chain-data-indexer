@@ -62,6 +62,38 @@ export interface SinkConfig {
      * Number of attributes per batch.
      */
     attrs?: number;
+    /**
+     * Number of bank transfer rows per batch.
+     */
+    transfers?: number;
+    /**
+     * Number of staking delegation rows per batch.
+     */
+    stakeDeleg?: number;
+    /**
+     * Number of staking distribution rows per batch.
+     */
+    stakeDistr?: number;
+    /**
+     * Number of wasm execution rows per batch.
+     */
+    wasmExec?: number;
+    /**
+     * Number of wasm event rows per batch.
+     */
+    wasmEvents?: number;
+    /**
+     * Number of governance deposit rows per batch.
+     */
+    govDeposits?: number;
+    /**
+     * Number of governance vote rows per batch.
+     */
+    govVotes?: number;
+    /**
+     * Number of governance proposal rows per batch.
+     */
+    govProposals?: number;
   };
   /**
    * PostgreSQL-specific connection options.
@@ -99,10 +131,6 @@ export interface SinkConfig {
      * Insert mode for PostgreSQL.
      */
     mode?: 'block-atomic' | 'batch-insert';
-    /**
-     * Use COPY for append-only hot tables during batch flushes.
-     */
-    copyAppendOnlyTables?: boolean;
   };
 }
 
@@ -131,4 +159,5 @@ export interface Sink {
    * @returns A promise that resolves when the sink is closed.
    */
   close(): Promise<void>;
+  setBulkMode?(enabled: boolean): void;
 }

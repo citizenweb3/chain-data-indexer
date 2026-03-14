@@ -23,6 +23,9 @@ function stringifyCopyJson(value: unknown): string {
   });
 }
 
+const COPY_ESCAPE_RE = /[\\\t\n\r]/g;
+const COPY_ESCAPE_MAP: Record<string, string> = { '\\': '\\\\', '\t': '\\t', '\n': '\\n', '\r': '\\r' };
+
 function escapeCopyText(value: unknown): string {
   if (value === null || value === undefined) return '\\N';
 
@@ -37,7 +40,7 @@ function escapeCopyText(value: unknown): string {
     text = stringifyCopyJson(value);
   }
 
-  return text.replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+  return text.replace(COPY_ESCAPE_RE, (ch) => COPY_ESCAPE_MAP[ch]!);
 }
 
 function* buildCopyLines<Row>(rows: Row[], columns: CopyColumn<Row>[]): Generator<string> {
@@ -54,18 +57,17 @@ export async function execCopyFrom<Row>(
   rows: Row[],
   opts?: { maxRows?: number },
 ): Promise<void> {
-  const maxRows = opts?.maxRows ?? 10_000;
-
   if (!rows.length) return;
 
   const columnList = columns.map((column) => column.name).join(',');
   const sql = `COPY ${table} (${columnList}) FROM STDIN WITH (FORMAT text)`;
+  const maxRows = opts?.maxRows && opts.maxRows > 0 ? opts.maxRows : rows.length;
 
-  for (let index = 0; index < rows.length; index += maxRows) {
-    const slice = rows.slice(index, index + maxRows);
+  for (let offset = 0; offset < rows.length; offset += maxRows) {
+    const chunk = rows.slice(offset, offset + maxRows);
     const stream = client.query(copyFrom(sql) as never) as Writable;
-    log.debug('exec copy batch', { table, slice: slice.length });
-    await pipeline(Readable.from(buildCopyLines(slice, columns)), stream);
+    log.debug('exec copy', { table, rows: chunk.length, offset });
+    await pipeline(Readable.from(buildCopyLines(chunk, columns)), stream);
   }
 }
 

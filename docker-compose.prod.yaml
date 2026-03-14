@@ -49,9 +49,15 @@ services:
       - "-c"
       - "checkpoint_completion_target=0.9"
       - "-c"
-      - "max_wal_size=16GB"
+      - "checkpoint_timeout=30min"
+      - "-c"
+      - "max_wal_size=32GB"
       - "-c"
       - "min_wal_size=4GB"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "wal_compression=lz4"
       # Parallel queries
       - "-c"
       - "max_worker_processes=40"
@@ -80,7 +86,10 @@ services:
       - "random_page_cost=1.1"
       - "-c"
       - "effective_io_concurrency=200"
-    
+      # Bulk mode: defer heavy indexes for fast backfill (set via PG_DEFER_HEAVY_INDEXES env var)
+      - "-c"
+      - "app.defer_heavy_indexes=${PG_DEFER_HEAVY_INDEXES:-off}"
+
     deploy:
       resources:
         limits:

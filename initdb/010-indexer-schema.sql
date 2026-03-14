@@ -149,10 +149,10 @@ CREATE TABLE IF NOT EXISTS core.transactions
 CREATE TABLE IF NOT EXISTS core.transactions_p0 PARTITION OF core.transactions
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_txs_height_pos ON core.transactions (height, tx_index);
 DO $$
 BEGIN
     IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS uq_txs_height_pos ON core.transactions (height, tx_index)';
         EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_code ON core.transactions (code)';
         EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_signers_gin ON core.transactions USING GIN (signers)';
         EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_time ON core.transactions (time DESC)';

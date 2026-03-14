@@ -4,6 +4,7 @@
 -- Notes:
 --   * Uses conditional DO blocks and IF EXISTS guards.
 --   * Targets only auxiliary indexes/partitions that may be missing.
+--   * Respects app.defer_heavy_indexes for bulk-mode backfill.
 -- ============================================================================
 
 -- TRANSACTIONS: helper indexes (success-path and time ordering)
@@ -12,7 +13,7 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'core' AND table_name = 'transactions'
-  ) THEN
+  ) AND COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
     -- Fast access to successful tx within a block
     CREATE INDEX IF NOT EXISTS idx_txs_success
       ON core.transactions (height DESC, tx_index)
@@ -24,7 +25,7 @@ BEGIN
   END IF;
 END $$;
 
--- MESSAGES: ensure initial partition exists
+-- MESSAGES: ensure initial partition exists (always, not index-related)
 DO $$
 BEGIN
   IF EXISTS (
@@ -38,13 +39,12 @@ BEGIN
 END $$;
 
 -- EVENTS: index by (event_type, msg_index)
--- (Table core.events has no height column — only use existing fields)
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'core' AND table_name = 'events'
-  ) THEN
+  ) AND COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
     CREATE INDEX IF NOT EXISTS idx_events_type_msg
       ON core.events (event_type, msg_index);
   END IF;
@@ -56,7 +56,7 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables
     WHERE table_schema = 'core' AND table_name = 'event_attrs'
-  ) THEN
+  ) AND COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
     CREATE INDEX IF NOT EXISTS idx_event_attrs_key
       ON core.event_attrs (key);
   END IF;
