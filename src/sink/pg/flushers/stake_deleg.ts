@@ -15,8 +15,6 @@ import { execBatchedInsert } from '../batch.js';
 
 export async function flushStakeDeleg(client: PoolClient, rowsAll: any[]): Promise<void> {
   if (!rowsAll.length) return;
-  await client.query(`SET LOCAL statement_timeout = '30s'`);
-  await client.query(`SET LOCAL lock_timeout = '5s'`);
 
   const rows = rowsAll.filter((r) => r && r.delegator_address && r.denom && r.amount && r.event_type);
   if (!rows.length) return;

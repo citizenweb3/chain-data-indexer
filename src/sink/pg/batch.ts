@@ -41,6 +41,16 @@ export function makeMultiInsert(
   return { text, values };
 }
 
+function stringifyPgJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => {
+    if (typeof item === 'bigint') return Number(item);
+    if (item instanceof Uint8Array) return Buffer.from(item).toString('base64');
+    if (Buffer.isBuffer(item)) return item.toString('base64');
+    if (item instanceof Date) return item.toISOString();
+    return item;
+  });
+}
+
 /**
  * Executes a multi-row INSERT in batches, honoring maximum row and parameter limits,
  * and safely casting JSONB values. Useful for inserting large datasets while avoiding
@@ -83,13 +93,7 @@ export async function execBatchedInsert(
             } else if (typeof v === 'string') {
               x[col] = v; // предполагаем валидный JSON
             } else {
-              x[col] = JSON.stringify(v, (_k, val) => {
-                if (typeof val === 'bigint') return Number(val);
-                if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
-                if (Buffer.isBuffer(val)) return val.toString('base64');
-                if (val instanceof Date) return val.toISOString();
-                return val;
-              });
+              x[col] = stringifyPgJson(v);
             }
           }
         }

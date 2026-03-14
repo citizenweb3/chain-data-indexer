@@ -15,8 +15,6 @@ import { execBatchedInsert } from '../batch.js';
  */
 export async function flushWasmEvents(client: PoolClient, rows: any[]): Promise<void> {
   if (!rows.length) return;
-  await client.query(`SET LOCAL statement_timeout = '30s'`);
-  await client.query(`SET LOCAL lock_timeout = '5s'`);
   const cols = ['contract', 'height', 'tx_hash', 'msg_index', 'event_type', 'attributes'];
   await execBatchedInsert(
     client,

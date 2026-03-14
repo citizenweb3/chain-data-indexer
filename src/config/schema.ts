@@ -23,6 +23,7 @@ const PgConfigSchema = z.object({
   batchGovDeposits: z.number().int().positive().optional(),
   batchGovVotes: z.number().int().positive().optional(),
   batchGovProposals: z.number().int().positive().optional(),
+  copyAppendOnlyTables: z.boolean().optional(),
   poolSize: z.number().int().positive(),
   progressId: z.string().min(1),
 });

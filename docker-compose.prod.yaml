@@ -2,16 +2,15 @@
 # docker-compose.prod.yaml — Production configuration
 # 
 # Usage (LOCAL TEST):
-#   docker compose -f docker-compose.yaml -f docker-compose.override.yaml \
-#                  --env-file .env up --build -d
+#   docker compose --env-file .env up --build -d
 #
 # Usage (PRODUCTION with external DB access):
-#   docker compose -f docker-compose.yaml -f docker-compose.override.yaml \
-#                  -f docker-compose.prod.yaml --env-file .env.production up --build -d
+#   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml \
+#                  --env-file .env.production up --build -d
 #
 # This file adds production-specific settings:
 #   - Exposes PostgreSQL to external connections (for validatorinfo)
-#   - PostgreSQL tuning for high-load
+#   - Replaces local PostgreSQL tuning with server tuning
 #   - Resource limits
 #   - Structured logging
 ####################################################################
@@ -50,9 +49,7 @@ services:
       - "-c"
       - "checkpoint_completion_target=0.9"
       - "-c"
-      - "checkpoint_timeout=15min"
-      - "-c"
-      - "max_wal_size=32GB"
+      - "max_wal_size=16GB"
       - "-c"
       - "min_wal_size=4GB"
       # Parallel queries

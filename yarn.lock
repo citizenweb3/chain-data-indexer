@@ -957,6 +957,11 @@ pg-connection-string@^2.9.1:
   resolved "https://registry.npmjs.org/pg-connection-string/-/pg-connection-string-2.9.1.tgz"
   integrity sha512-nkc6NpDcvPVpZXxrreI/FOtX3XemeLl8E0qFr6F2Lrm/I8WOnaWNhIPK2Z7OHpw7gh5XJThi6j6ppgNoaT1w4w==
 
+pg-copy-streams@^7.0.0:
+  version "7.0.0"
+  resolved "https://registry.yarnpkg.com/pg-copy-streams/-/pg-copy-streams-7.0.0.tgz#4659bccad49eab0d7f4b25e6e33e36a80107bf82"
+  integrity sha512-zBvnY6wtaBRE2ae2xXWOOGMaNVPkXh1vhypAkNSKgMdciJeTyIQAHZaEeRAxUjs/p1El5jgzYmwG5u871Zj3dQ==
+
 pg-format@^1.0.4:
   version "1.0.4"
   resolved "https://registry.npmjs.org/pg-format/-/pg-format-1.0.4.tgz"

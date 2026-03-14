@@ -148,6 +148,11 @@ export function getConfig(): Config {
       batchGovDeposits: args['pg-batch-gov-deposits'] ? Number(args['pg-batch-gov-deposits']) : (process.env.PG_BATCH_GOV_DEPOSITS ? Number(process.env.PG_BATCH_GOV_DEPOSITS) : undefined),
       batchGovVotes: args['pg-batch-gov-votes'] ? Number(args['pg-batch-gov-votes']) : (process.env.PG_BATCH_GOV_VOTES ? Number(process.env.PG_BATCH_GOV_VOTES) : undefined),
       batchGovProposals: args['pg-batch-gov-proposals'] ? Number(args['pg-batch-gov-proposals']) : (process.env.PG_BATCH_GOV_PROPOSALS ? Number(process.env.PG_BATCH_GOV_PROPOSALS) : undefined),
+      copyAppendOnlyTables: asBool(
+        'pg-copy-append-only-tables',
+        args['pg-copy-append-only-tables'] ?? process.env.PG_COPY_APPEND_ONLY_TABLES ?? false,
+        false,
+      ),
       poolSize: asPositiveInt('pg-pool-size', (args['pg-pool-size'] as string) ?? process.env.PG_POOL_SIZE ?? 16, 16),
       progressId:
         (args['pg-progress-id'] as string | undefined) ??

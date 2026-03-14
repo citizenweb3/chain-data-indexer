@@ -94,6 +94,7 @@ export interface PostgresSinkConfig extends SinkConfig {
     database?: string;
     ssl?: boolean;
     progressId?: string;
+    copyAppendOnlyTables?: boolean;
   };
   mode?: PostgresMode;
   batchSizes?: {
@@ -127,6 +128,7 @@ type NormalizedLog = {
 export class PostgresSink implements Sink {
   private cfg: PostgresSinkConfig;
   private mode: PostgresMode;
+  private copyAppendOnlyTables: boolean;
 
   /**
    * Partition ensuring is expensive (advisory lock + many CREATE TABLE IF NOT EXISTS calls).
@@ -173,6 +175,7 @@ export class PostgresSink implements Sink {
   constructor(cfg: PostgresSinkConfig) {
     this.cfg = cfg;
     this.mode = cfg.mode ?? 'batch-insert';
+    this.copyAppendOnlyTables = cfg.pg.copyAppendOnlyTables ?? false;
     if (cfg.batchSizes) {
       if (cfg.batchSizes.blocks) this.batchSizes.blocks = cfg.batchSizes.blocks;
       if (cfg.batchSizes.txs) this.batchSizes.txs = cfg.batchSizes.txs;
@@ -792,43 +795,52 @@ export class PostgresSink implements Sink {
         govVotes: this.bufGovVotes.length,
         govProposals: this.bufGovProposals.length,
       };
+      const flushMsByTable: Record<string, number> = {};
       const t0 = Date.now();
 
       await this.ensurePartitionsIfNeeded(client, minH, maxH);
       const tAfterPart = Date.now();
 
       await client.query('BEGIN');
+      await client.query(`SET LOCAL statement_timeout = '30s'`);
+      await client.query(`SET LOCAL lock_timeout = '5s'`);
 
-      await flushBlocks(client, this.bufBlocks);
+      const timeFlush = async (name: string, fn: () => Promise<void>) => {
+        const startedAt = Date.now();
+        await fn();
+        flushMsByTable[name] = Date.now() - startedAt;
+      };
+
+      await timeFlush('blocks', () => flushBlocks(client, this.bufBlocks));
       this.bufBlocks = [];
-      await flushTxs(client, this.bufTxs);
+      await timeFlush('txs', () => flushTxs(client, this.bufTxs));
       this.bufTxs = [];
-      await flushMsgs(client, this.bufMsgs);
+      await timeFlush('msgs', () => flushMsgs(client, this.bufMsgs));
       this.bufMsgs = [];
-      await flushEvents(client, this.bufEvents);
+      await timeFlush('events', () => flushEvents(client, this.bufEvents, { useCopy: this.copyAppendOnlyTables }));
       this.bufEvents = [];
-      await flushAttrs(client, this.bufAttrs);
+      await timeFlush('attrs', () => flushAttrs(client, this.bufAttrs, { useCopy: this.copyAppendOnlyTables }));
       this.bufAttrs = [];
 
-      await flushTransfers(client, this.bufTransfers);
+      await timeFlush('transfers', () => flushTransfers(client, this.bufTransfers));
       this.bufTransfers = [];
-      await flushStakeDeleg(client, this.bufStakeDeleg);
+      await timeFlush('stakeDeleg', () => flushStakeDeleg(client, this.bufStakeDeleg));
       this.bufStakeDeleg = [];
-      await flushStakeDistr(client, this.bufStakeDistr);
+      await timeFlush('stakeDistr', () => flushStakeDistr(client, this.bufStakeDistr));
       this.bufStakeDistr = [];
-      await flushWasmExec(client, this.bufWasmExec);
+      await timeFlush('wasmExec', () => flushWasmExec(client, this.bufWasmExec));
       this.bufWasmExec = [];
-      await flushWasmEvents(client, this.bufWasmEvents);
+      await timeFlush('wasmEvents', () => flushWasmEvents(client, this.bufWasmEvents));
       this.bufWasmEvents = [];
 
-      await flushGovDeposits(client, this.bufGovDeposits);
+      await timeFlush('govDeposits', () => flushGovDeposits(client, this.bufGovDeposits));
       this.bufGovDeposits = [];
-      await flushGovVotes(client, this.bufGovVotes);
+      await timeFlush('govVotes', () => flushGovVotes(client, this.bufGovVotes));
       this.bufGovVotes = [];
-      await upsertGovProposals(client, this.bufGovProposals);
+      await timeFlush('govProposals', () => upsertGovProposals(client, this.bufGovProposals));
       this.bufGovProposals = [];
 
-      await upsertProgress(client, this.cfg.pg?.progressId ?? 'default', maxH);
+      await timeFlush('progress', () => upsertProgress(client, this.cfg.pg?.progressId ?? 'default', maxH));
       const tBeforeCommit = Date.now();
 
       await client.query('COMMIT');
@@ -841,6 +853,7 @@ export class PostgresSink implements Sink {
         partitionsMs: tAfterPart - t0,
         insertsMs: tBeforeCommit - tAfterPart,
         commitMs: Date.now() - tBeforeCommit,
+        flushMsByTable,
       });
     } catch (e) {
       await client.query('ROLLBACK');

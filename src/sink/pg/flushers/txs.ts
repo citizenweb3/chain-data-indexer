@@ -15,8 +15,6 @@ import { execBatchedInsert } from '../batch.js';
  */
 export async function flushTxs(client: PoolClient, rows: any[]): Promise<void> {
   if (!rows.length) return;
-  await client.query(`SET LOCAL statement_timeout = '30s'`);
-  await client.query(`SET LOCAL lock_timeout = '5s'`);
   const cols = [
     'tx_hash',
     'height',
@@ -38,6 +36,6 @@ export async function flushTxs(client: PoolClient, rows: any[]): Promise<void> {
     rows,
     'ON CONFLICT (height, tx_hash) DO UPDATE SET gas_used = EXCLUDED.gas_used, log_summary = EXCLUDED.log_summary',
     { fee: 'jsonb', raw_tx: 'jsonb' },
-    { maxRows: 1000, maxParams: 20000 },
+    { maxRows: 2000, maxParams: 30000 },
   );
 }

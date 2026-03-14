@@ -165,6 +165,33 @@ See `.env.example` for a complete list.
 
 ## Usage
 
+### Bulk Backfill Mode
+
+For fresh bulk backfills on a new PostgreSQL volume, you can skip the heaviest
+secondary indexes during init and rebuild them after the range finishes.
+
+Start a fixed backfill window with deferred heavy indexes:
+
+```bash
+INDEXER_RESTART_POLICY=no \
+PG_DEFER_HEAVY_INDEXES=on \
+RESUME=false \
+FROM=9000000 \
+TO=9002499 \
+docker compose --env-file .env.production up --build -d
+```
+
+After the range finishes, stop the indexer, bring the database back up if needed,
+and rebuild the skipped indexes:
+
+```bash
+docker compose --env-file .env.production up -d db
+make rebuild-heavy-indexes
+```
+
+This mode does not change indexed row content. It only removes selected heavy
+secondary indexes from the write path during the backfill.
+
 ### Running Locally (Without Docker)
 
 1. Install dependencies:
@@ -206,6 +233,7 @@ See `.env.example` for a complete list.
 - `make logs` — Show DB logs (`docker compose --env-file .env logs -f db`)
 - `make psql` — Exec `psql` inside the Postgres container
 - `make psql-file FILE=path/to/script.sql` — Copy and run a SQL file inside the DB container
+- `make rebuild-heavy-indexes` — Recreate heavy secondary indexes skipped by bulk backfill mode
 
 ---
 

@@ -27,6 +27,7 @@
     "long": "^5.3.2",
     "p-limit": "^6.1.0",
     "pg": "^8.16.3",
+    "pg-copy-streams": "^7.0.0",
     "pg-format": "^1.0.4",
     "protobufjs": "^7.5.4",
     "tsx": "^4.20.5",

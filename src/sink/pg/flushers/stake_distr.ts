@@ -12,8 +12,6 @@ import { execBatchedInsert } from '../batch.js';
 
 export async function flushStakeDistr(client: PoolClient, rows: any[]): Promise<void> {
   if (!rows.length) return;
-  await client.query(`SET LOCAL statement_timeout = '30s'`);
-  await client.query(`SET LOCAL lock_timeout = '5s'`);
   const cols = [
     'height',
     'tx_hash',

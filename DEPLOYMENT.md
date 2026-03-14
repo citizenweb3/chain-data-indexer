@@ -132,7 +132,6 @@ NODE_OPTIONS=--max-old-space-size=24576
 ```bash
 # Start with external PostgreSQL access
 docker compose -f docker-compose.yaml \
-               -f docker-compose.override.yaml \
                -f docker-compose.prod.yaml \
                --env-file .env up --build -d
 
@@ -142,6 +141,40 @@ docker compose logs -f indexer
 # All logs
 docker compose logs -f
 ```
+
+### Bulk Backfill Mode
+
+If your goal is raw backfill throughput on a fresh database, you can skip the
+heaviest secondary indexes during initialization and rebuild them after the
+backfill completes.
+
+Start a fixed backfill range:
+
+```bash
+INDEXER_RESTART_POLICY=no \
+PG_DEFER_HEAVY_INDEXES=on \
+RESUME=false \
+FROM=9000000 \
+TO=9002499 \
+docker compose --env-file .env up --build -d
+```
+
+After the range is done:
+
+```bash
+docker compose --env-file .env up -d db
+make rebuild-heavy-indexes
+```
+
+Deferred indexes in this mode:
+
+- `core.transactions(signers)` GIN
+- `core.messages(value jsonb_path_ops)` GIN
+- `core.event_attrs(key, md5(value))`
+- `wasm.executions(msg jsonb_path_ops)` GIN
+
+This mode preserves indexed data content. It only changes whether those heavy
+secondary indexes are maintained during the initial backfill.
 
 ### Firewall Configuration
 
@@ -348,7 +381,6 @@ SELECT util.ensure_next_height_partition('core', 'blocks');
 2. Verify you're using `docker-compose.prod.yaml`:
    ```bash
    docker compose -f docker-compose.yaml \
-                  -f docker-compose.override.yaml \
                   -f docker-compose.prod.yaml \
                   --env-file .env up -d
    ```

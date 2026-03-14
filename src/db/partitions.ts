@@ -23,6 +23,7 @@ const RANGE_TABLES: Array<{ schema: string; table: string }> = [
   { schema: 'wasm', table: 'contract_migrations' },
   { schema: 'wasm', table: 'executions' },
   { schema: 'wasm', table: 'events' },
+  { schema: 'core', table: 'events' },
   { schema: 'wasm', table: 'state_kv' },
   { schema: 'tokens', table: 'cw20_transfers' },
   { schema: 'authz_feegrant', table: 'authz_grants' },
@@ -52,8 +53,6 @@ export async function ensureCorePartitions(client: PoolClient, minH: number, max
 
   await client.query(`SELECT pg_advisory_lock($1)`, [0x70617274]);
   try {
-    await ensureEventsHashPartitions(client);
-
     for (let base = startBase; base <= endBase; base += STEP) {
       const from = base;
       const to = base + STEP;
@@ -91,31 +90,3 @@ async function createRangePartition(client: PoolClient, schema: string, table: s
   await client.query(sql);
 }
 
-/**
- * Ensures hash-based partitions exist for the "core.events" table.
- * Reads the configured hash modulus from the database setting 'app.events.hash_modulus',
- * defaulting to 16 if not set or invalid.
- * Creates partitions for each remainder from 0 to modulus-1.
- *
- * @param client - The PostgreSQL client to execute queries with.
- */
-async function ensureEventsHashPartitions(client: PoolClient): Promise<void> {
-  const res = await client.query<{ value: string }>(`SELECT current_setting('app.events.hash_modulus', true) AS value`);
-  let modulus = 16;
-  if (res.rows.length > 0) {
-    const val = Number(res.rows[0].value);
-    if (Number.isInteger(val) && val > 0) {
-      modulus = val;
-    }
-  }
-
-  for (let r = 0; r < modulus; r++) {
-    const suffix = r.toString().padStart(2, '0');
-    const sql = `
-      CREATE TABLE IF NOT EXISTS "core"."events_h${suffix}"
-      PARTITION OF "core"."events"
-      FOR VALUES WITH (MODULUS ${modulus}, REMAINDER ${r});
-    `;
-    await client.query(sql);
-  }
-}

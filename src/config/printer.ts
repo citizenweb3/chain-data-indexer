@@ -57,6 +57,7 @@ export function printConfig(cfg: Config): void {
             events: cfg.pg.batchEvents,
             attrs: cfg.pg.batchAttrs,
           },
+          copyAppendOnlyTables: cfg.pg.copyAppendOnlyTables,
           poolSize: cfg.pg.poolSize,
           progressId: cfg.pg.progressId,
         }

@@ -297,6 +297,12 @@ export async function syncRange(
   await new Promise<void>((resolve) => {
     const maybeSpawn = () => {
       while (inFlight < concurrency && (nextHeight <= to || retryQueue.length > 0)) {
+        // [FIX] Prevent unbounded memory growth (OOM Loop) if RPC times out frequently
+        if (nextHeight - nextToFlush > concurrency * 2) {
+          log.warn(`[syncRange] queue full, pausing fetch (head=${nextHeight}, tail=${nextToFlush})`);
+          break;
+        }
+
         const h = retryQueue.length > 0 ? (retryQueue.shift() as number) : nextHeight++;
         inFlight++;
         processHeight(h).finally(() => {

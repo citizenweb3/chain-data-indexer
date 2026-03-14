@@ -105,6 +105,14 @@ async function main() {
       msgs: cfg.pg?.batchMsgs,
       events: cfg.pg?.batchEvents,
       attrs: cfg.pg?.batchAttrs,
+      transfers: cfg.pg?.batchTransfers,
+      stakeDeleg: cfg.pg?.batchStakeDeleg,
+      stakeDistr: cfg.pg?.batchStakeDistr,
+      wasmExec: cfg.pg?.batchWasmExec,
+      wasmEvents: cfg.pg?.batchWasmEvents,
+      govDeposits: cfg.pg?.batchGovDeposits,
+      govVotes: cfg.pg?.batchGovVotes,
+      govProposals: cfg.pg?.batchGovProposals,
     },
   });
   await sink.init();
