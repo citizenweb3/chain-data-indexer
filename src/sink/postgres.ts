@@ -102,6 +102,14 @@ export interface PostgresSinkConfig extends SinkConfig {
     msgs?: number;
     events?: number;
     attrs?: number;
+    transfers?: number;
+    stakeDeleg?: number;
+    stakeDistr?: number;
+    wasmExec?: number;
+    wasmEvents?: number;
+    govDeposits?: number;
+    govVotes?: number;
+    govProposals?: number;
   };
 }
 
@@ -119,6 +127,14 @@ type NormalizedLog = {
 export class PostgresSink implements Sink {
   private cfg: PostgresSinkConfig;
   private mode: PostgresMode;
+
+  /**
+   * Partition ensuring is expensive (advisory lock + many CREATE TABLE IF NOT EXISTS calls).
+   * Since the indexer writes heights in order, we can safely avoid re-checking partitions
+   * for already-covered 1,000,000-height ranges within a single run.
+   */
+  private ensuredPartitionBases = new Set<number>();
+  private static readonly PARTITION_STEP = 1_000_000;
 
   private bufBlocks: any[] = [];
   private bufTxs: any[] = [];
@@ -157,7 +173,21 @@ export class PostgresSink implements Sink {
   constructor(cfg: PostgresSinkConfig) {
     this.cfg = cfg;
     this.mode = cfg.mode ?? 'batch-insert';
-    if (cfg.batchSizes) Object.assign(this.batchSizes, cfg.batchSizes);
+    if (cfg.batchSizes) {
+      if (cfg.batchSizes.blocks) this.batchSizes.blocks = cfg.batchSizes.blocks;
+      if (cfg.batchSizes.txs) this.batchSizes.txs = cfg.batchSizes.txs;
+      if (cfg.batchSizes.msgs) this.batchSizes.msgs = cfg.batchSizes.msgs;
+      if (cfg.batchSizes.events) this.batchSizes.events = cfg.batchSizes.events;
+      if (cfg.batchSizes.attrs) this.batchSizes.attrs = cfg.batchSizes.attrs;
+      if (cfg.batchSizes.transfers) this.batchSizes.transfers = cfg.batchSizes.transfers;
+      if (cfg.batchSizes.stakeDeleg) this.batchSizes.stakeDeleg = cfg.batchSizes.stakeDeleg;
+      if (cfg.batchSizes.stakeDistr) this.batchSizes.stakeDistr = cfg.batchSizes.stakeDistr;
+      if (cfg.batchSizes.wasmExec) this.batchSizes.wasmExec = cfg.batchSizes.wasmExec;
+      if (cfg.batchSizes.wasmEvents) this.batchSizes.wasmEvents = cfg.batchSizes.wasmEvents;
+      if (cfg.batchSizes.govDeposits) this.batchSizes.govDeposits = cfg.batchSizes.govDeposits;
+      if (cfg.batchSizes.govVotes) this.batchSizes.govVotes = cfg.batchSizes.govVotes;
+      if (cfg.batchSizes.govProposals) this.batchSizes.govProposals = cfg.batchSizes.govProposals;
+    }
   }
 
   /**
@@ -216,6 +246,37 @@ export class PostgresSink implements Sink {
   async close(): Promise<void> {
     await this.flush?.();
     await closePgPool();
+  }
+
+  private getPartitionBase(height: number): number {
+    return Math.floor(height / PostgresSink.PARTITION_STEP) * PostgresSink.PARTITION_STEP;
+  }
+
+  private markPartitionsEnsured(minH: number, maxH: number): void {
+    const startBase = this.getPartitionBase(minH);
+    const endBase = this.getPartitionBase(maxH);
+    for (let base = startBase; base <= endBase; base += PostgresSink.PARTITION_STEP) {
+      this.ensuredPartitionBases.add(base);
+    }
+  }
+
+  private async ensurePartitionsIfNeeded(client: PoolClient, minH: number, maxH: number): Promise<void> {
+    if (!Number.isFinite(minH) || !Number.isFinite(maxH)) return;
+
+    const startBase = this.getPartitionBase(minH);
+    const endBase = this.getPartitionBase(maxH);
+
+    let missing = false;
+    for (let base = startBase; base <= endBase; base += PostgresSink.PARTITION_STEP) {
+      if (!this.ensuredPartitionBases.has(base)) {
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) return;
+
+    await ensureCorePartitions(client, minH, maxH);
+    this.markPartitionsEnsured(minH, maxH);
   }
 
   /**
@@ -547,7 +608,7 @@ export class PostgresSink implements Sink {
 
     const client = await pool.connect();
     try {
-      await ensureCorePartitions(client, height);
+      await this.ensurePartitionsIfNeeded(client, height, height);
       await client.query('BEGIN');
       await insertBlocks(client, [blockRow]);
       if (txRows.length) await insertTxs(client, txRows);
@@ -733,7 +794,7 @@ export class PostgresSink implements Sink {
       };
       const t0 = Date.now();
 
-      await ensureCorePartitions(client, minH, maxH);
+      await this.ensurePartitionsIfNeeded(client, minH, maxH);
       const tAfterPart = Date.now();
 
       await client.query('BEGIN');

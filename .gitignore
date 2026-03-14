@@ -5,3 +5,4 @@
 src/generated/
 node_modules/
 dist
+.env.production

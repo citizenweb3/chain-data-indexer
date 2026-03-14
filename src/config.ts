@@ -140,6 +140,14 @@ export function getConfig(): Config {
         ? Number(args['pg-batch-events'])
         : Number(process.env.PG_BATCH_EVENTS ?? 10000),
       batchAttrs: args['pg-batch-attrs'] ? Number(args['pg-batch-attrs']) : Number(process.env.PG_BATCH_ATTRS ?? 30000),
+      batchTransfers: args['pg-batch-transfers'] ? Number(args['pg-batch-transfers']) : (process.env.PG_BATCH_TRANSFERS ? Number(process.env.PG_BATCH_TRANSFERS) : undefined),
+      batchStakeDeleg: args['pg-batch-stake-deleg'] ? Number(args['pg-batch-stake-deleg']) : (process.env.PG_BATCH_STAKE_DELEG ? Number(process.env.PG_BATCH_STAKE_DELEG) : undefined),
+      batchStakeDistr: args['pg-batch-stake-distr'] ? Number(args['pg-batch-stake-distr']) : (process.env.PG_BATCH_STAKE_DISTR ? Number(process.env.PG_BATCH_STAKE_DISTR) : undefined),
+      batchWasmExec: args['pg-batch-wasm-exec'] ? Number(args['pg-batch-wasm-exec']) : (process.env.PG_BATCH_WASM_EXEC ? Number(process.env.PG_BATCH_WASM_EXEC) : undefined),
+      batchWasmEvents: args['pg-batch-wasm-events'] ? Number(args['pg-batch-wasm-events']) : (process.env.PG_BATCH_WASM_EVENTS ? Number(process.env.PG_BATCH_WASM_EVENTS) : undefined),
+      batchGovDeposits: args['pg-batch-gov-deposits'] ? Number(args['pg-batch-gov-deposits']) : (process.env.PG_BATCH_GOV_DEPOSITS ? Number(process.env.PG_BATCH_GOV_DEPOSITS) : undefined),
+      batchGovVotes: args['pg-batch-gov-votes'] ? Number(args['pg-batch-gov-votes']) : (process.env.PG_BATCH_GOV_VOTES ? Number(process.env.PG_BATCH_GOV_VOTES) : undefined),
+      batchGovProposals: args['pg-batch-gov-proposals'] ? Number(args['pg-batch-gov-proposals']) : (process.env.PG_BATCH_GOV_PROPOSALS ? Number(process.env.PG_BATCH_GOV_PROPOSALS) : undefined),
       poolSize: asPositiveInt('pg-pool-size', (args['pg-pool-size'] as string) ?? process.env.PG_POOL_SIZE ?? 16, 16),
       progressId:
         (args['pg-progress-id'] as string | undefined) ??

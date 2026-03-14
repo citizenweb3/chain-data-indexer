@@ -53,7 +53,7 @@ export async function followLoop(
       const live = await syncRange(rpc, decodePool, sink, {
         from: next,
         to,
-        concurrency: Math.min(opts.concurrency, 16),
+        concurrency: latest - next > 100 ? opts.concurrency : Math.min(opts.concurrency, 16),
         progressEveryBlocks: 25,
         progressIntervalSec: 2,
         caseMode: opts.caseMode,
