@@ -12,7 +12,8 @@ import { createRpcClientFromConfig } from './rpc/client.ts';
 import { createTxDecodePool, TxDecodePool } from './decode/txPool.ts';
 import { createSink } from './sink/index.ts';
 import { Sink } from './sink/types.ts';
-import { closePgPool, createPgPool } from './db/pg.ts';
+import { closePgPool, createPgPool, getPgPool } from './db/pg.ts';
+import { bulkModeOn, bulkModeOff, recoverDerived } from './db/bulk-mode.ts';
 import { getProgress } from './db/progress.ts';
 import { getLogger } from './utils/logger.ts';
 import { syncRange } from './runner/syncRange.ts';
@@ -117,6 +118,12 @@ async function main() {
   });
   await sink.init();
 
+  if (cfg.pg?.bulkMode && cfg.sinkKind === 'postgres') {
+    const pool = getPgPool();
+    await bulkModeOn(pool);
+    await recoverDerived(pool);
+  }
+
   activeSink = sink;
   activePool = decodePool;
 
@@ -142,7 +149,13 @@ async function main() {
       pollMs,
       concurrency: cfg.concurrency,
       caseMode: cfg.caseMode,
+      bulkMode: cfg.pg?.bulkMode,
     });
+  } else if (cfg.pg?.bulkMode && cfg.sinkKind === 'postgres') {
+    // FOLLOW=false: restore indexes before exit, otherwise DB is left without them
+    await sink.flush?.();
+    (sink as any).setBulkMode?.(false);
+    await bulkModeOff(getPgPool());
   }
 
   await decodePool.close();

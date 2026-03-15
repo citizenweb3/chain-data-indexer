@@ -9,6 +9,8 @@ import { createTxDecodePool } from '../decode/txPool.ts';
 import { createSink } from '../sink/index.ts';
 import { syncRange, CaseMode } from './syncRange.ts';
 import { sleep } from '../utils/sleep.ts';
+import { bulkModeOff } from '../db/bulk-mode.ts';
+import { getPgPool } from '../db/pg.ts';
 
 const log = getLogger('follow');
 
@@ -25,6 +27,7 @@ export interface FollowOptions {
   pollMs: number;
   concurrency: number;
   caseMode: CaseMode;
+  bulkMode?: boolean;
 }
 
 /**
@@ -45,6 +48,15 @@ export async function followLoop(
 ): Promise<void> {
   let next = opts.startNext;
   log.info(`[follow] entering live mode from height ${next}, poll=${opts.pollMs}ms`);
+
+  if (opts.bulkMode) {
+    log.info('[follow] draining derived queue before restoring indexes...');
+    await sink.flush?.();
+    (sink as any).setBulkMode?.(false);
+    await bulkModeOff(getPgPool());
+    log.info('[follow] bulk mode off, entering live mode with INSERT');
+  }
+
   for (;;) {
     const st = await rpc.fetchStatus();
     const latest = Number(st['sync_info']['latest_block_height']);
