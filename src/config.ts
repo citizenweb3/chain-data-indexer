@@ -153,6 +153,7 @@ export function getConfig(): Config {
         args['pg-copy-append-only-tables'] ?? process.env.PG_COPY_APPEND_ONLY_TABLES ?? false,
         false,
       ),
+      bulkMode: asBool('pg-bulk-mode', args['pg-bulk-mode'] ?? process.env.PG_BULK_MODE ?? false, false),
       poolSize: asPositiveInt('pg-pool-size', (args['pg-pool-size'] as string) ?? process.env.PG_POOL_SIZE ?? 16, 16),
       progressId:
         (args['pg-progress-id'] as string | undefined) ??
