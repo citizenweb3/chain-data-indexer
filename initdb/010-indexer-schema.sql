@@ -237,7 +237,7 @@ DO $$
 BEGIN
     IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
         EXECUTE 'CREATE INDEX IF NOT EXISTS idx_event_attrs_key ON core.event_attrs (key)';
-        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_event_attrs_key_value_md5 ON core.event_attrs (key, md5(COALESCE(value, '''''')))';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_event_attrs_key_value_md5 ON core.event_attrs (key, md5(COALESCE(value, '''')))';
     END IF;
 END $$;
 -- [DISABLED FOR PERFORMANCE] A GIN trigram index causes 10-second insert pauses for bulk backfilling.
