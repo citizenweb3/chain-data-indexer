@@ -93,29 +93,46 @@ services:
       NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=24576}
       # Performance tuning (from .env)
       CONCURRENCY: ${CONCURRENCY:-48}
+      DECODE_WORKERS: ${DECODE_WORKERS:-}
       RPS: ${RPS:-500}
       TIMEOUT_MS: ${TIMEOUT_MS:-5000}
       RETRIES: ${RETRIES:-3}
       BACKOFF_MS: ${BACKOFF_MS:-250}
       BACKOFF_JITTER: ${BACKOFF_JITTER:-0.3}
+      # Sharding
+      SHARDS: ${SHARDS:-1}
+      SHARD_ID: ${SHARD_ID:-0}
       # Indexing range
       FROM: ${FROM:-}
       TO: ${TO:-}
       FIRST_BLOCK: ${FIRST_BLOCK:-1}
       FOLLOW: ${FOLLOW:-true}
       FOLLOW_INTERVAL_MS: ${FOLLOW_INTERVAL_MS:-5000}
-      # Logging
+      # Logging & formatting
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      CASE: ${CASE:-snake}
+      PROGRESS_EVERY_BLOCKS: ${PROGRESS_EVERY_BLOCKS:-1000}
+      PROGRESS_INTERVAL_SEC: ${PROGRESS_INTERVAL_SEC:-15}
+      # Postgres settings
+      PG_MODE: ${PG_MODE:-batch-insert}
+      PG_BULK_MODE: ${PG_BULK_MODE:-false}
+      PG_COPY_APPEND_ONLY_TABLES: ${PG_COPY_APPEND_ONLY_TABLES:-off}
+      PG_POOL_SIZE: ${PG_POOL_SIZE:-16}
+      PG_PROGRESS_ID: ${PG_PROGRESS_ID:-default}
       # Postgres batch sizes
       PG_BATCH_BLOCKS: ${PG_BATCH_BLOCKS:-1000}
       PG_BATCH_TXS: ${PG_BATCH_TXS:-2000}
       PG_BATCH_MSGS: ${PG_BATCH_MSGS:-5000}
       PG_BATCH_EVENTS: ${PG_BATCH_EVENTS:-10000}
       PG_BATCH_ATTRS: ${PG_BATCH_ATTRS:-30000}
-      PG_POOL_SIZE: ${PG_POOL_SIZE:-16}
-      PG_MODE: ${PG_MODE:-batch-insert}
-      PG_COPY_APPEND_ONLY_TABLES: ${PG_COPY_APPEND_ONLY_TABLES:-off}
-      PG_PROGRESS_ID: ${PG_PROGRESS_ID:-default}
+      PG_BATCH_TRANSFERS: ${PG_BATCH_TRANSFERS:-5000}
+      PG_BATCH_STAKE_DELEG: ${PG_BATCH_STAKE_DELEG:-5000}
+      PG_BATCH_STAKE_DISTR: ${PG_BATCH_STAKE_DISTR:-5000}
+      PG_BATCH_WASM_EXEC: ${PG_BATCH_WASM_EXEC:-5000}
+      PG_BATCH_WASM_EVENTS: ${PG_BATCH_WASM_EVENTS:-5000}
+      PG_BATCH_GOV_DEPOSITS: ${PG_BATCH_GOV_DEPOSITS:-5000}
+      PG_BATCH_GOV_VOTES: ${PG_BATCH_GOV_VOTES:-5000}
+      PG_BATCH_GOV_PROPOSALS: ${PG_BATCH_GOV_PROPOSALS:-1000}
     # The image contains the app and dependencies. Avoid bind-mounting the repo into
     # the container unless you add a dedicated dev override with an anonymous
     # node_modules volume to prevent native binary mismatches.
