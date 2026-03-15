@@ -86,6 +86,24 @@ export function getConfig(): Config {
     : process.env.FLUSH_EVERY
       ? Number(process.env.FLUSH_EVERY)
       : undefined;
+  const chUrl = asString(
+    'ch-url',
+    (args['ch-url'] as string | undefined) ?? process.env.CH_URL ?? process.env.CLICKHOUSE_URL ?? 'http://127.0.0.1:8123',
+  );
+  const chDatabase = asString(
+    'ch-database',
+    (args['ch-database'] as string | undefined) ?? process.env.CH_DATABASE ?? process.env.CLICKHOUSE_DB ?? 'core',
+  );
+  const chUsername =
+    (args['ch-username'] as string | undefined) ??
+    (args['ch-user'] as string | undefined) ??
+    process.env.CH_USERNAME ??
+    process.env.CLICKHOUSE_USER;
+  const chPassword =
+    (args['ch-password'] as string | undefined) ??
+    (args['ch-pass'] as string | undefined) ??
+    process.env.CH_PASSWORD ??
+    process.env.CLICKHOUSE_PASSWORD;
   const firstBlock = args['first-block']
     ? Number(args['first-block'])
     : process.env.FIRST_BLOCK
@@ -123,6 +141,12 @@ export function getConfig(): Config {
     firstBlock,
     follow,
     followIntervalMs,
+    ch: {
+      url: chUrl,
+      database: chDatabase,
+      username: chUsername,
+      password: chPassword,
+    },
     pg: {
       host: (args['pg-host'] as string | undefined) ?? process.env.PG_HOST,
       port: args['pg-port'] ? Number(args['pg-port']) : Number(process.env.PG_PORT ?? 5432),

@@ -12,6 +12,7 @@ import { createRpcClientFromConfig } from './rpc/client.ts';
 import { createTxDecodePool, TxDecodePool } from './decode/txPool.ts';
 import { createSink } from './sink/index.ts';
 import { Sink } from './sink/types.ts';
+import type { Config } from './types.js';
 import { closePgPool, createPgPool, getPgPool } from './db/pg.ts';
 import { getProgress } from './db/progress.ts';
 import {
@@ -32,6 +33,61 @@ const log = getLogger('index');
 let activeSink: Sink | null = null;
 let activePool: TxDecodePool | null = null;
 let shuttingDown = false;
+
+type ClickHouseResumeConfig = NonNullable<Config['ch']>;
+type ClickHouseResumeRow = {
+  max_height?: number | string | null;
+};
+
+function parseClickHouseMaxHeight(payload: unknown): number | null {
+  const rows = Array.isArray(payload)
+    ? payload
+    : payload &&
+        typeof payload === 'object' &&
+        'data' in payload &&
+        Array.isArray((payload as { data?: unknown }).data)
+      ? (payload as { data: unknown[] }).data
+      : null;
+
+  if (!rows) {
+    throw new Error('Unexpected ClickHouse response shape for resume query.');
+  }
+
+  const row = rows[0] as ClickHouseResumeRow | undefined;
+  const rawHeight = row?.max_height;
+  if (rawHeight == null) {
+    return null;
+  }
+
+  const height = typeof rawHeight === 'number' ? rawHeight : Number(rawHeight);
+  if (!Number.isFinite(height)) {
+    throw new Error(`Invalid ClickHouse max(height) value: "${rawHeight}"`);
+  }
+
+  return height;
+}
+
+async function getClickHouseMaxHeight(cfg: ClickHouseResumeConfig): Promise<number | null> {
+  const { createClient } = await import('@clickhouse/client');
+  const client = createClient({
+    url: cfg.url,
+    username: cfg.username,
+    password: cfg.password,
+    database: cfg.database,
+    application: 'cosmos-indexer-resolver',
+  });
+
+  try {
+    const resultSet = await client.query({
+      query: 'SELECT max(height) AS max_height FROM core.blocks',
+      format: 'JSONEachRow',
+    });
+
+    return parseClickHouseMaxHeight(await resultSet.json());
+  } finally {
+    await client.close();
+  }
+}
 
 async function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
@@ -70,21 +126,29 @@ async function main() {
   let startFrom = cfg.from as number | undefined;
   const wantResume =
     !startFrom || cfg.resume === true || (typeof cfg.from === 'string' && cfg.from.toLowerCase() === 'resume');
+  const earliest = Number(status['sync_info']['earliest_block_height']);
+  const explicitFrom = typeof cfg.from === 'number' ? cfg.from : (cfg.firstBlock as number | undefined);
 
   if (wantResume) {
     if (cfg.sinkKind === 'postgres') {
       const pool = createPgPool({ ...cfg.pg, applicationName: 'cosmos-indexer-resolver' });
       try {
         const last = await getProgress(pool, progressId);
-        const earliest = Number(status['sync_info']['earliest_block_height']);
-        const explicitFrom = typeof cfg.from === 'number' ? cfg.from : (cfg.firstBlock as number | undefined);
         startFrom = last != null ? last + 1 : (explicitFrom ?? earliest);
         log.info(`[resume] last_height=${last ?? 'null'} → start from ${startFrom}`);
       } finally {
         await closePgPool();
       }
+    } else if (cfg.sinkKind === 'clickhouse') {
+      if (!cfg.ch) {
+        throw new Error('ClickHouse configuration is required when SINK=clickhouse');
+      }
+
+      const last = await getClickHouseMaxHeight(cfg.ch);
+      startFrom = last != null ? last + 1 : (explicitFrom ?? earliest);
+      log.info(`[resume] clickhouse max_height=${last ?? 'null'} → start from ${startFrom}`);
     } else {
-      log.warn('[resume] requested, but sinkKind is not postgres — skipping.');
+      log.warn('[resume] requested, but sinkKind is neither postgres nor clickhouse — skipping.');
     }
   }
 
@@ -107,6 +171,7 @@ async function main() {
     kind: cfg.sinkKind,
     outPath: cfg.outPath,
     flushEvery: cfg.flushEvery ?? 1,
+    ch: cfg.ch,
     pg: cfg.pg,
     batchSizes: {
       blocks: cfg.pg?.batchBlocks,

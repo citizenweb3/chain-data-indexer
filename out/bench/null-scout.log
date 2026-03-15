@@ -1,0 +1,9 @@
+2026-03-15T11:40:48.663Z [index] [31merror[39m: [31mError: Invalid configuration[39m
+[31msinkKind: Invalid option: expected one of "stdout"|"postgres"|"clickhouse"[39m
+[31m    at validateConfig (file:///pool0/dev-cosm/dist/config/validate.js:25:15)[39m
+[31m    at getConfig (file:///pool0/dev-cosm/dist/config.js:145:12)[39m
+[31m    at main (file:///pool0/dev-cosm/dist/index.js:95:17)[39m
+[31m    at file:///pool0/dev-cosm/dist/index.js:231:1[39m
+[31m    at ModuleJob.run (node:internal/modules/esm/module_job:345:25)[39m
+[31m    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:651:26)[39m
+[31m    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)[39m {"app":"cosmos-indexer","env":"development"}

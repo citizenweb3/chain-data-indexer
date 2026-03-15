@@ -2,6 +2,18 @@
 # yarn lockfile v1
 
 
+"@clickhouse/client-common@1.18.2":
+  version "1.18.2"
+  resolved "https://registry.yarnpkg.com/@clickhouse/client-common/-/client-common-1.18.2.tgz#9e2a0dd8cd1810083fbc7acbd0026f9cd5b303c1"
+  integrity sha512-J0SG6q9V31ydxonglpj9xhNRsUxCsF71iEZ784yldqMYwsHixj/9xHFDgBDX3DuMiDx/kPDfXnf+pimp08wIBA==
+
+"@clickhouse/client@^1.12.0":
+  version "1.18.2"
+  resolved "https://registry.yarnpkg.com/@clickhouse/client/-/client-1.18.2.tgz#176f2c49a6bb0310c216f50f724b36a817978ba9"
+  integrity sha512-fuquQswRSHWM6D079ZeuGqkMOsqtcUPL06UdTnowmoeeYjVrqisfVmvnw8pc3OeKS4kVb91oygb/MfLDiMs0TQ==
+  dependencies:
+    "@clickhouse/client-common" "1.18.2"
+
 "@colors/colors@1.6.0", "@colors/colors@^1.6.0":
   version "1.6.0"
   resolved "https://registry.npmjs.org/@colors/colors/-/colors-1.6.0.tgz"

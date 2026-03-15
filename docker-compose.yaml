@@ -1,3 +1,69 @@
+x-indexer-base: &indexer-base
+   build:
+     context: .
+     dockerfile: Dockerfile
+   restart: ${INDEXER_RESTART_POLICY:-unless-stopped}
+   environment: &indexer-environment
+     RESUME: ${RESUME:-true}
+     PG_HOST: ${PG_HOST:-db}
+     # use container internal Postgres port (5432) for inter-container networking
+     PG_PORT: 5432
+     PG_USER: ${PG_USER}
+     PG_PASSWORD: ${PG_PASSWORD}
+     PG_DB: ${PG_DB}
+     CH_DATABASE: ${CH_DATABASE:-core}
+     CH_USERNAME: ${CH_USERNAME:-default}
+     CH_PASSWORD: ${CH_PASSWORD:-password}
+     # Optional: override RPC_URL if you want the indexer to target a remote node
+     RPC_URL: ${RPC_URL}
+     # Node memory default (can be overridden at compose run time)
+     NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=24576}
+     # Performance tuning (from .env)
+     SHARDS: ${SHARDS:-1}
+     SHARD_ID: ${SHARD_ID:-0}
+     CONCURRENCY: ${CONCURRENCY:-48}
+     DECODE_WORKERS: ${DECODE_WORKERS:-}
+     RPS: ${RPS:-500}
+     TIMEOUT_MS: ${TIMEOUT_MS:-5000}
+     RETRIES: ${RETRIES:-3}
+     BACKOFF_MS: ${BACKOFF_MS:-250}
+     BACKOFF_JITTER: ${BACKOFF_JITTER:-0.3}
+     # Indexing range
+     FROM: ${FROM:-}
+     TO: ${TO:-}
+     FIRST_BLOCK: ${FIRST_BLOCK:-1}
+     FOLLOW: ${FOLLOW:-true}
+     FOLLOW_INTERVAL_MS: ${FOLLOW_INTERVAL_MS:-5000}
+     # Logging
+     LOG_LEVEL: ${LOG_LEVEL:-info}
+     CASE: ${CASE:-snake}
+     PROGRESS_EVERY_BLOCKS: ${PROGRESS_EVERY_BLOCKS:-1000}
+     PROGRESS_INTERVAL_SEC: ${PROGRESS_INTERVAL_SEC:-15}
+     OUT: ${OUT:-}
+     FLUSH_EVERY: ${FLUSH_EVERY:-}
+     # Postgres batch sizes
+     PG_SSL: ${PG_SSL:-false}
+     PG_BATCH_BLOCKS: ${PG_BATCH_BLOCKS:-1000}
+     PG_BATCH_TXS: ${PG_BATCH_TXS:-2000}
+     PG_BATCH_MSGS: ${PG_BATCH_MSGS:-5000}
+     PG_BATCH_EVENTS: ${PG_BATCH_EVENTS:-10000}
+     PG_BATCH_ATTRS: ${PG_BATCH_ATTRS:-30000}
+     PG_BATCH_TRANSFERS: ${PG_BATCH_TRANSFERS:-}
+     PG_BATCH_STAKE_DELEG: ${PG_BATCH_STAKE_DELEG:-}
+     PG_BATCH_STAKE_DISTR: ${PG_BATCH_STAKE_DISTR:-}
+     PG_BATCH_WASM_EXEC: ${PG_BATCH_WASM_EXEC:-}
+     PG_BATCH_WASM_EVENTS: ${PG_BATCH_WASM_EVENTS:-}
+     PG_BATCH_GOV_DEPOSITS: ${PG_BATCH_GOV_DEPOSITS:-}
+     PG_BATCH_GOV_VOTES: ${PG_BATCH_GOV_VOTES:-}
+     PG_BATCH_GOV_PROPOSALS: ${PG_BATCH_GOV_PROPOSALS:-}
+     PG_POOL_SIZE: ${PG_POOL_SIZE:-16}
+     PG_MODE: ${PG_MODE:-batch-insert}
+     PG_PROGRESS_ID: ${PG_PROGRESS_ID:-default}
+   # The image contains the app and dependencies. Avoid bind-mounting the repo into
+   # the container unless you add a dedicated dev override with an anonymous
+   # node_modules volume to prevent native binary mismatches.
+   working_dir: /usr/src/app
+
 services:
   db:
     image: postgres:${PG_VERSION:-16}
@@ -68,75 +134,55 @@ services:
       - pgdata_cosmosindexer:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:${CH_VERSION:-24.8}
+    container_name: cosmosindexer-clickhouse
+    profiles: ["clickhouse"]
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --host 127.0.0.1 --port 9000 --user $$CLICKHOUSE_USER --password $$CLICKHOUSE_PASSWORD --query 'SELECT 1' >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      CLICKHOUSE_DB: ${CH_DATABASE:-core}
+      CLICKHOUSE_USER: ${CH_USERNAME:-default}
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-password}
+    ports:
+      - "${CH_HTTP_PORT:-8123}:8123"
+      - "${CH_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - clickhousedata_cosmosindexer:/var/lib/clickhouse
+      - ./initdb-clickhouse:/docker-entrypoint-initdb.d:ro
+
   indexer:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *indexer-base
     container_name: cosmos-indexer-app
-    restart: ${INDEXER_RESTART_POLICY:-unless-stopped}
     depends_on:
       db:
         condition: service_healthy
     environment:
-      # Ensure the indexer writes to Postgres and will try to resume from progress
-      SINK: postgres
-      RESUME: ${RESUME:-true}
-      PG_HOST: ${PG_HOST:-db}
-      # use container internal Postgres port (5432) for inter-container networking
-      PG_PORT: 5432
-      PG_USER: ${PG_USER}
-      PG_PASSWORD: ${PG_PASSWORD}
-      PG_DB: ${PG_DB}
-      # Optional: override RPC_URL if you want the indexer to target a remote node
-      RPC_URL: ${RPC_URL}
-      # Node memory default (can be overridden at compose run time)
-      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=24576}
-      # Performance tuning (from .env)
-      SHARDS: ${SHARDS:-1}
-      SHARD_ID: ${SHARD_ID:-0}
-      CONCURRENCY: ${CONCURRENCY:-48}
-      DECODE_WORKERS: ${DECODE_WORKERS:-}
-      RPS: ${RPS:-500}
-      TIMEOUT_MS: ${TIMEOUT_MS:-5000}
-      RETRIES: ${RETRIES:-3}
-      BACKOFF_MS: ${BACKOFF_MS:-250}
-      BACKOFF_JITTER: ${BACKOFF_JITTER:-0.3}
-      # Indexing range
-      FROM: ${FROM:-}
-      TO: ${TO:-}
-      FIRST_BLOCK: ${FIRST_BLOCK:-1}
-      FOLLOW: ${FOLLOW:-true}
-      FOLLOW_INTERVAL_MS: ${FOLLOW_INTERVAL_MS:-5000}
-      # Logging
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      CASE: ${CASE:-snake}
-      PROGRESS_EVERY_BLOCKS: ${PROGRESS_EVERY_BLOCKS:-1000}
-      PROGRESS_INTERVAL_SEC: ${PROGRESS_INTERVAL_SEC:-15}
-      OUT: ${OUT:-}
-      FLUSH_EVERY: ${FLUSH_EVERY:-}
-      # Postgres batch sizes
-      PG_SSL: ${PG_SSL:-false}
-      PG_BATCH_BLOCKS: ${PG_BATCH_BLOCKS:-1000}
-      PG_BATCH_TXS: ${PG_BATCH_TXS:-2000}
-      PG_BATCH_MSGS: ${PG_BATCH_MSGS:-5000}
-      PG_BATCH_EVENTS: ${PG_BATCH_EVENTS:-10000}
-      PG_BATCH_ATTRS: ${PG_BATCH_ATTRS:-30000}
-      PG_BATCH_TRANSFERS: ${PG_BATCH_TRANSFERS:-}
-      PG_BATCH_STAKE_DELEG: ${PG_BATCH_STAKE_DELEG:-}
-      PG_BATCH_STAKE_DISTR: ${PG_BATCH_STAKE_DISTR:-}
-      PG_BATCH_WASM_EXEC: ${PG_BATCH_WASM_EXEC:-}
-      PG_BATCH_WASM_EVENTS: ${PG_BATCH_WASM_EVENTS:-}
-      PG_BATCH_GOV_DEPOSITS: ${PG_BATCH_GOV_DEPOSITS:-}
-      PG_BATCH_GOV_VOTES: ${PG_BATCH_GOV_VOTES:-}
-      PG_BATCH_GOV_PROPOSALS: ${PG_BATCH_GOV_PROPOSALS:-}
-      PG_POOL_SIZE: ${PG_POOL_SIZE:-16}
-      PG_MODE: ${PG_MODE:-batch-insert}
-      PG_PROGRESS_ID: ${PG_PROGRESS_ID:-default}
-    # The image contains the app and dependencies. Avoid bind-mounting the repo into
-    # the container unless you add a dedicated dev override with an anonymous
-    # node_modules volume to prevent native binary mismatches.
-    working_dir: /usr/src/app
+      <<: *indexer-environment
+      # Select sink backend and configure sink-specific resume state lookup.
+      SINK: ${SINK:-postgres}
+      CH_URL: ${CH_URL:-http://clickhouse:8123}
 
+  indexer-clickhouse:
+    <<: *indexer-base
+    profiles: ["clickhouse"]
+    container_name: cosmos-indexer-clickhouse-app
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      <<: *indexer-environment
+      SINK: clickhouse
+      CH_URL: http://clickhouse:8123
 
 volumes:
   pgdata_cosmosindexer:
+  clickhousedata_cosmosindexer:

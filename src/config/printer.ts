@@ -43,6 +43,14 @@ export function printConfig(cfg: Config): void {
       enabled: cfg.resume ?? false,
       firstBlock: cfg.firstBlock,
     },
+    clickhouse:
+      cfg.sinkKind === 'clickhouse' && cfg.ch
+        ? {
+            url: cfg.ch.url,
+            database: cfg.ch.database,
+            username: cfg.ch.username,
+          }
+        : 'disabled',
     postgres: cfg.pg
       ? {
           host: cfg.pg.host,

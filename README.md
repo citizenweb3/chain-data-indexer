@@ -134,6 +134,20 @@ yarn install --frozen-lockfile
 
 > By default, the indexer will resume from the last processed block (`RESUME=true`) and use Postgres as the sink.
 
+#### Run the dedicated ClickHouse stack
+
+If you want `ClickHouse` without mandatory `Postgres`, start the dedicated ClickHouse services explicitly:
+
+```bash
+docker compose --env-file .env --profile clickhouse up --build -d clickhouse indexer-clickhouse
+```
+
+View the ClickHouse-mode indexer logs with:
+
+```bash
+docker compose --env-file .env --profile clickhouse logs -f indexer-clickhouse
+```
+
 #### To reset Postgres and re-initialize the database:
 ```bash
 docker compose down -v
@@ -228,9 +242,12 @@ secondary indexes from the write path during the backfill.
 ## Makefile Shortcuts
 
 - `make up` — Start db via docker-compose
+- `make up-clickhouse` — Start the dedicated `clickhouse + indexer-clickhouse` stack
 - `make down` — Stop services
 - `make reset` — Remove volumes and re-init DB
 - `make logs` — Show DB logs (`docker compose --env-file .env logs -f db`)
+- `make clickhouse-logs` — Show ClickHouse stack logs (`docker compose --env-file .env --profile clickhouse logs -f clickhouse indexer-clickhouse`)
+- `make clickhouse-client` — Open `clickhouse-client` inside the ClickHouse container
 - `make psql` — Exec `psql` inside the Postgres container
 - `make psql-file FILE=path/to/script.sql` — Copy and run a SQL file inside the DB container
 - `make rebuild-heavy-indexes` — Recreate heavy secondary indexes skipped by bulk backfill mode

@@ -132,6 +132,27 @@ export interface SinkConfig {
      */
     mode?: 'block-atomic' | 'batch-insert';
   };
+  /**
+   * ClickHouse-specific connection and resume options.
+   */
+  ch?: {
+    /**
+     * ClickHouse HTTP(S) endpoint URL.
+     */
+    url?: string;
+    /**
+     * ClickHouse database name.
+     */
+    database?: string;
+    /**
+     * ClickHouse username.
+     */
+    username?: string;
+    /**
+     * ClickHouse password.
+     */
+    password?: string;
+  };
 }
 
 /**

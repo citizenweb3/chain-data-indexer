@@ -1,8 +1,20 @@
 // /src/types.d.ts
+import type { SinkKind } from './sink/types.js';
+
 export type ArgMap = Record<string, string | boolean>;
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'silent';
 export type PgMode = 'block-atomic' | 'batch-insert';
+export type ClickHouseConfig = {
+  /** ClickHouse HTTP(S) endpoint URL. */
+  url: string;
+  /** ClickHouse database name. */
+  database: string;
+  /** Optional ClickHouse username. */
+  username?: string;
+  /** Optional ClickHouse password. */
+  password?: string;
+};
 
 /**
  * Global application configuration resolved from CLI args, environment variables, and defaults.
@@ -57,6 +69,9 @@ export type Config = {
   follow?: boolean;
   /** Polling interval in milliseconds for follow mode. */
   followIntervalMs?: number;
+
+  /** ClickHouse connection and resume settings. */
+  ch?: ClickHouseConfig;
 
   /** Postgres connection and batching settings (present only for postgres sink). */
   pg?: {

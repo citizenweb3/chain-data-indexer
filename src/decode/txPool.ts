@@ -31,8 +31,23 @@ export type TxDecodePool = {
   close: () => Promise<void>;
 };
 
+export type TxWorkerRuntime = {
+  workerUrl: URL;
+  execArgv?: string[];
+};
+
 const INIT_TIMEOUT_MS = 30000;
 const log = getLogger('decode/txPool');
+
+export function resolveTxWorkerRuntime(moduleUrl: string | URL): TxWorkerRuntime {
+  const runtimeUrl = moduleUrl instanceof URL ? moduleUrl : new URL(moduleUrl);
+  const useTsWorker = runtimeUrl.pathname.endsWith('.ts');
+
+  return {
+    workerUrl: new URL(useTsWorker ? './txWorker.ts' : './txWorker.js', runtimeUrl),
+    execArgv: useTsWorker ? ['--import', 'tsx/esm'] : [],
+  };
+}
 
 /**
  * Wraps a promise with a timeout that rejects with a labeled error if exceeded.
@@ -62,12 +77,13 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
   const readyResolvers: Array<() => void> = [];
   const readyPromises: Array<Promise<void>> = [];
   const perWorkerProgress: Record<number, { loaded: number; total: number }> = {};
+  const workerRuntime = resolveTxWorkerRuntime(import.meta.url);
 
   log.info(`[txPool] creating ${size} worker(s)`);
 
   for (let i = 0; i < size; i++) {
-    const w = new Worker(new URL('./txWorker.ts', import.meta.url), {
-      execArgv: ['--import', 'tsx/esm'],
+    const w = new Worker(workerRuntime.workerUrl, {
+      execArgv: workerRuntime.execArgv,
       stdout: true,
       stderr: true,
     });

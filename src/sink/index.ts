@@ -8,7 +8,7 @@ import { StdoutSink } from './stdout.js';
 import { FileSink } from './file.js';
 import { NullSink } from './null.js';
 import { PostgresSink } from './postgres.js';
-import { ClickhouseSink } from './clickhouse.js';
+import { ClickhouseSink as ClickHouseSink } from './clickhouse.js';
 
 /**
  * Creates and returns an instance of a Sink implementation according to the
@@ -32,7 +32,7 @@ export function createSink(cfg: SinkConfig): Sink {
         batchSizes: (cfg as any).batchSizes,
       });
     case 'clickhouse':
-      return new ClickhouseSink(cfg);
+      return new ClickHouseSink(cfg);
     case 'null':
       return new NullSink();
     default:

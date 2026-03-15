@@ -4,9 +4,8 @@
  * Module for decoding Cosmos SDK transactions into normalized JSON shapes.
  */
 import Long from 'long';
-import { decodeTxRaw } from '@cosmjs/proto-signing';
 import { PubKey as PubKeySecp256k1 } from 'cosmjs-types/cosmos/crypto/secp256k1/keys.js';
-import { TxBody, AuthInfo, Tx } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
+import { TxBody, AuthInfo, Tx, TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
 import { decodeAnyWithRoot } from '../dynamicProto.ts';
 import { decodeKnown } from '../../generated/knownMsgs.ts';
 import { getLogger } from '../../utils/logger.ts';
@@ -116,7 +115,7 @@ export function decodeTxBase64(base64: string) {
   let sigs: Uint8Array[] | undefined;
 
   try {
-    const txRaw = decodeTxRaw(txBytes);
+    const txRaw = TxRaw.decode(txBytes);
     bodyBytes = txRaw.bodyBytes;
     authInfoBytes = txRaw.authInfoBytes;
     sigs = txRaw.signatures;
