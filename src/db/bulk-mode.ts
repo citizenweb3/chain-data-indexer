@@ -367,17 +367,25 @@ export async function recoverDerived(pool: Pool): Promise<void> {
 
   log.info('height check — events: %d, transfers: %d, stakeDeleg: %d, stakeDistr: %d, wasmExec: %d, wasmEvents: %d, govDeposits: %d, govVotes: %d', eventsH, transfersH, stakeDelegH, stakeDistrH, wasmExecH, wasmEventsH, govDepositsH, govVotesH);
 
-  // Step 2: find minimum derived height (only for event-recoverable tables)
-  const minDerivedH = Math.min(transfersH, stakeDelegH, stakeDistrH, wasmEventsH);
+  // Step 2: find minimum derived height (only for tables that have data)
+  // Tables with height=0 were never populated (e.g. wasm on Cosmos Hub) — skip them
+  const recoverableHeights = [transfersH, stakeDelegH, stakeDistrH, wasmEventsH].filter((h) => h > 0);
 
-  // Step 3: warn about tables that cannot be recovered from events
-  if (wasmExecH < eventsH) {
+  if (recoverableHeights.length === 0) {
+    log.info('no recoverable derived tables have data — skipping recovery');
+    return;
+  }
+
+  const minDerivedH = Math.min(...recoverableHeights);
+
+  // Step 3: warn about tables that cannot be recovered from events (only if they have data)
+  if (wasmExecH > 0 && wasmExecH < eventsH) {
     log.warn('cannot recover wasm.executions from events — requires re-indexing the gap range [%d, %d]', wasmExecH + 1, eventsH);
   }
-  if (govDepositsH < eventsH) {
+  if (govDepositsH > 0 && govDepositsH < eventsH) {
     log.warn('cannot recover gov.deposits from events — requires re-indexing the gap range [%d, %d]', govDepositsH + 1, eventsH);
   }
-  if (govVotesH < eventsH) {
+  if (govVotesH > 0 && govVotesH < eventsH) {
     log.warn('cannot recover gov.votes from events — requires re-indexing the gap range [%d, %d]', govVotesH + 1, eventsH);
   }
 

@@ -120,8 +120,8 @@ async function main() {
 
   if (cfg.pg?.bulkMode && cfg.sinkKind === 'postgres') {
     const pool = getPgPool();
-    await bulkModeOn(pool);
     await recoverDerived(pool);
+    await bulkModeOn(pool);
   }
 
   activeSink = sink;
