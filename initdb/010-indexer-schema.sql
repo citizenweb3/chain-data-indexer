@@ -388,7 +388,7 @@ CREATE TABLE gov.proposals
 (
     proposal_id   BIGINT PRIMARY KEY,
     submitter     TEXT            NULL,
-    title         TEXT            NOT NULL,
+    title         TEXT            NULL,
     summary       TEXT            NULL,
     proposal_type TEXT            NULL, -- text/type_url
     status        proposal_status NOT NULL,
@@ -437,10 +437,10 @@ CREATE TABLE gov.votes
     proposal_id BIGINT          NOT NULL,
     voter       TEXT            NOT NULL,
     option      TEXT            NOT NULL, -- Yes/No/NoWithVeto/Abstain (+ weighted)
-    weight      NUMERIC(20, 18) NULL,     -- for weighted
+    weight      NUMERIC(20, 18) NULL,     -- decimal weight (e.g. 1.000000000000000000)
     height      BIGINT          NOT NULL,
     tx_hash     TEXT            NOT NULL,
-    PRIMARY KEY (proposal_id, voter, height, tx_hash)
+    PRIMARY KEY (proposal_id, voter, option, height, tx_hash)
 ) PARTITION BY RANGE (height);
 
 CREATE TABLE IF NOT EXISTS gov.votes_p0 PARTITION OF gov.votes

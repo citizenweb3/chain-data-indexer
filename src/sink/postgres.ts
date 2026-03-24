@@ -374,6 +374,67 @@ export class PostgresSink implements Sink {
             height,
           });
         }
+
+        if (t === '/cosmos.gov.v1beta1.MsgDeposit' || t === '/cosmos.gov.v1.MsgDeposit') {
+          let pid: bigint;
+          try { pid = BigInt(m?.proposal_id ?? 0); } catch { pid = 0n; }
+          const depositor = m?.depositor ?? null;
+          const coins: Array<{ denom: string; amount: string }> = Array.isArray(m?.amount) ? m.amount : [];
+          if (pid > 0n && depositor) {
+            for (const c of coins) {
+              govDepositsRows.push({
+                proposal_id: pid,
+                depositor,
+                denom: String(c.denom ?? ''),
+                amount: String(c.amount ?? '0'),
+                height,
+                tx_hash,
+              });
+            }
+          }
+        }
+
+        if (
+          t === '/cosmos.gov.v1beta1.MsgVote' || t === '/cosmos.gov.v1.MsgVote' ||
+          t === '/cosmos.gov.v1beta1.MsgVoteWeighted' || t === '/cosmos.gov.v1.MsgVoteWeighted'
+        ) {
+          let pid: bigint;
+          try { pid = BigInt(m?.proposal_id ?? 0); } catch { pid = 0n; }
+          const voter = m?.voter ?? null;
+          const weighted: Array<{ option: string; weight: string }> | undefined = m?.options;
+          if (pid > 0n && voter) {
+            if (Array.isArray(weighted) && weighted.length > 0) {
+              for (const opt of weighted) {
+                // Cosmos SDK weight: integer format "1000000000000000000" (= 1.0 with 18 decimals) or decimal "1.000..."
+                let w = String(opt?.weight ?? '0');
+                if (/^\d+$/.test(w) && w !== '0') {
+                  // Raw integer: pad to 19 chars min, insert decimal point 18 from right
+                  const padded = w.padStart(19, '0');
+                  const intPart = padded.slice(0, padded.length - 18) || '0';
+                  const decPart = padded.slice(padded.length - 18);
+                  w = `${intPart}.${decPart}`;
+                }
+                govVotesRows.push({
+                  proposal_id: pid,
+                  voter,
+                  option: String(opt?.option ?? 'UNKNOWN'),
+                  weight: w,
+                  height,
+                  tx_hash,
+                });
+              }
+            } else {
+              govVotesRows.push({
+                proposal_id: pid,
+                voter,
+                option: String(m?.option ?? 'UNKNOWN'),
+                weight: null,
+                height,
+                tx_hash,
+              });
+            }
+          }
+        }
       }
 
       const logs = pickLogs(tx);
@@ -517,20 +578,69 @@ export class PostgresSink implements Sink {
             }
           }
 
+          if (event_type === 'submit_proposal' || event_type === 'proposal') {
+            const pidAttr = findAttr(attrsPairs, 'proposal_id');
+            if (pidAttr) {
+              let pid: bigint;
+              try { pid = BigInt(pidAttr); } catch { pid = 0n; }
+              if (pid > 0n) {
+                // msg_index from log may be -1 for flat tx-level events; fallback to event attribute
+                const effectiveMsgIdx = msg_index >= 0 ? msg_index : Number(findAttr(attrsPairs, 'msg_index') ?? -1);
+                const mm = effectiveMsgIdx >= 0 && effectiveMsgIdx < msgs.length ? msgs[effectiveMsgIdx] : null;
+                const content = mm?.content; // v1beta1: has title, description
+                const innerMsg = Array.isArray(mm?.messages) ? mm.messages[0] : null; // v1: nested Any
+
+                // v1: title/summary at top level of mm; v1beta1: inside content
+                const title = mm?.title || content?.title || null;
+                const summary = mm?.summary || content?.description || null;
+                const proposer = mm?.proposer || mm?.signer || mm?.from_address || null;
+                const proposalType = content?.['@type'] || innerMsg?.['@type'] || innerMsg?.type_url || null;
+
+                govProposalsRows.push({
+                  proposal_id: pid,
+                  submitter: proposer,
+                  title: title ? String(title) : null,
+                  summary: summary ? String(summary) : null,
+                  proposal_type: proposalType ? String(proposalType) : null,
+                  status: 'deposit_period' as const,
+                  submit_time: time,
+                });
+              }
+            }
+          }
+
+          if (event_type === 'proposal_deposit') {
+            // MsgDeposit deposits already extracted in msgs loop — only extract here for MsgSubmitProposal initial deposits
+            const depMsgIdx = msg_index >= 0 ? msg_index : Number(findAttr(attrsPairs, 'msg_index') ?? -1);
+            const originMsg = depMsgIdx >= 0 && depMsgIdx < msgs.length ? msgs[depMsgIdx] : null;
+            const originType = originMsg?.['@type'] ?? originMsg?.type_url ?? '';
+            if (!originType.includes('MsgDeposit') || originType.includes('MsgSubmitProposal')) {
+              const pidAttr = findAttr(attrsPairs, 'proposal_id');
+              const depositor = findAttr(attrsPairs, 'depositor');
+              const amountStr = findAttr(attrsPairs, 'amount');
+              if (pidAttr && depositor && amountStr) {
+                let pid: bigint;
+                try { pid = BigInt(pidAttr); } catch { pid = 0n; }
+                const coinStrs = amountStr.split(',').filter(Boolean);
+                for (const cs of coinStrs) {
+                  const coin = parseCoin(cs.trim());
+                  if (pid > 0n && coin) {
+                    govDepositsRows.push({
+                      proposal_id: pid,
+                      depositor,
+                      denom: coin.denom,
+                      amount: coin.amount,
+                      height,
+                      tx_hash,
+                    });
+                  }
+                }
+              }
+            }
+          }
+
         }
       }
-    }
-
-    // Governance rows extraction
-    const gov = blockLine?.gov ?? {};
-    if (Array.isArray(gov.deposits)) {
-      for (const r of gov.deposits) govDepositsRows.push(r);
-    }
-    if (Array.isArray(gov.votes)) {
-      for (const r of gov.votes) govVotesRows.push(r);
-    }
-    if (Array.isArray(gov.proposals)) {
-      for (const r of gov.proposals) govProposalsRows.push(r);
     }
 
     return {
@@ -560,6 +670,8 @@ export class PostgresSink implements Sink {
   private async persistBlockAtomic(blockLine: BlockLine): Promise<void> {
     log.warn('block-atomic mode is deprecated — use batch-insert for optimal performance');
     const pool = getPgPool();
+    // Gov fields (govDepositsRows, govVotesRows, govProposalsRows) intentionally omitted —
+    // governance data is only supported via the buffered/derived-stream path.
     const {
       blockRow,
       txRows,

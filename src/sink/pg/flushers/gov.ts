@@ -82,7 +82,7 @@ export async function flushGovVotes(
   if (opts?.useCopy) {
     const dedupedRows = dedupeCopyRows(
       rows,
-      (row) => `${row.proposal_id}\x1f${row.voter}\x1f${row.height}\x1f${row.tx_hash}`,
+      (row) => `${row.proposal_id}\x1f${row.voter}\x1f${row.option}\x1f${row.height}\x1f${row.tx_hash}`,
     );
     await execCopyFrom(
       client,
