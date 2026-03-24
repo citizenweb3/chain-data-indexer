@@ -1,6 +1,7 @@
 // src/sink/pg/batch.ts
 import type { PoolClient } from 'pg';
 import { getLogger } from '../../utils/logger.js';
+import { sanitizeJsonSurrogates } from './sanitizeJson.js';
 
 const log = getLogger('sink/pg/batch');
 
@@ -42,13 +43,14 @@ export function makeMultiInsert(
 }
 
 function stringifyPgJson(value: unknown): string {
-  return JSON.stringify(value, (_key, item) => {
+  const json = JSON.stringify(value, (_key, item) => {
     if (typeof item === 'bigint') return Number(item);
     if (item instanceof Uint8Array) return Buffer.from(item).toString('base64');
     if (Buffer.isBuffer(item)) return item.toString('base64');
     if (item instanceof Date) return item.toISOString();
     return item;
   });
+  return sanitizeJsonSurrogates(json);
 }
 
 /**
@@ -91,7 +93,7 @@ export async function execBatchedInsert(
             if (v === null || v === undefined) {
               x[col] = null;
             } else if (typeof v === 'string') {
-              x[col] = v; // предполагаем валидный JSON
+              x[col] = sanitizeJsonSurrogates(v);
             } else {
               x[col] = stringifyPgJson(v);
             }

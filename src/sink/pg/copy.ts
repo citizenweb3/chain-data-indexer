@@ -3,6 +3,7 @@ import { Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { PoolClient } from 'pg';
 import { getLogger } from '../../utils/logger.js';
+import { sanitizeJsonSurrogates } from './sanitizeJson.js';
 
 const require = createRequire(import.meta.url);
 const { from: copyFrom } = require('pg-copy-streams') as { from: (sql: string) => unknown };
@@ -14,13 +15,14 @@ export type CopyColumn<Row> = {
 };
 
 function stringifyCopyJson(value: unknown): string {
-  return JSON.stringify(value, (_key, item) => {
+  const json = JSON.stringify(value, (_key, item) => {
     if (typeof item === 'bigint') return Number(item);
     if (item instanceof Uint8Array) return Buffer.from(item).toString('base64');
     if (Buffer.isBuffer(item)) return item.toString('base64');
     if (item instanceof Date) return item.toISOString();
     return item;
   });
+  return sanitizeJsonSurrogates(json);
 }
 
 function escapeCopyText(value: unknown): string {
@@ -28,7 +30,7 @@ function escapeCopyText(value: unknown): string {
 
   let text: string;
   if (typeof value === 'string') {
-    text = value;
+    text = sanitizeJsonSurrogates(value);
   } else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     text = String(value);
   } else if (value instanceof Date) {

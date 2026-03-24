@@ -36,7 +36,7 @@ export function decodeMessage(typeUrl: string, value: Uint8Array): any {
     // Resolve nested Any fields (e.g. MsgSubmitProposal.content) if proto root is available
     if (isProtoReady()) {
       try {
-        resolveNestedAny(obj, getProtoRoot());
+        resolveNestedAny(obj, getProtoRoot()!);
       } catch { /* keep as-is if resolve fails */ }
     }
     return obj;
