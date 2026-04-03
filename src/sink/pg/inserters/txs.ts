@@ -32,6 +32,7 @@ export async function insertTxs(client: PoolClient, rows: any[]): Promise<void> 
     cols,
     rows,
     'ON CONFLICT (height, tx_hash) DO UPDATE SET gas_used = EXCLUDED.gas_used, log_summary = EXCLUDED.log_summary',
+    { fee: 'jsonb', raw_tx: 'jsonb' },
   );
   await client.query(text, values);
 }

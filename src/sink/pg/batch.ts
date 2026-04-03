@@ -31,8 +31,9 @@ export function makeMultiInsert(
   for (const r of rows) {
     const tuple: string[] = [];
     for (const c of columns) {
-      values.push(r[c] ?? null);
-      const cast = types?.[c] ? `::${types[c]}` : '';
+      const type = types?.[c];
+      values.push(preparePgValue(r[c], type) ?? null);
+      const cast = type ? `::${type}` : '';
       tuple.push(`$${p++}${cast}`);
     }
     chunks.push(`(${tuple.join(',')})`);
@@ -51,6 +52,13 @@ function stringifyPgJson(value: unknown): string {
     return item;
   });
   return sanitizeJsonSurrogates(json);
+}
+
+function preparePgValue(value: unknown, type?: string): unknown {
+  if (type !== 'jsonb') return value;
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return sanitizeJsonSurrogates(value);
+  return stringifyPgJson(value);
 }
 
 /**
@@ -88,16 +96,7 @@ export async function execBatchedInsert(
     : rows.map((r) => {
         const x: any = { ...r };
         for (const [col, t] of Object.entries(types)) {
-          if (t === 'jsonb') {
-            const v = x[col];
-            if (v === null || v === undefined) {
-              x[col] = null;
-            } else if (typeof v === 'string') {
-              x[col] = sanitizeJsonSurrogates(v);
-            } else {
-              x[col] = stringifyPgJson(v);
-            }
-          }
+          x[col] = preparePgValue(x[col], t);
         }
         return x;
       });

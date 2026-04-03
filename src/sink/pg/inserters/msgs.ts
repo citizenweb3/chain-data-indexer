@@ -19,6 +19,7 @@ export async function insertMsgs(client: PoolClient, rows: any[]): Promise<void>
     cols,
     rows,
     'ON CONFLICT (height, tx_hash, msg_index) DO NOTHING',
+    { value: 'jsonb' },
   );
   await client.query(text, values);
 }

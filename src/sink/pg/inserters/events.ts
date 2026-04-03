@@ -19,6 +19,7 @@ export async function insertEvents(client: PoolClient, rows: any[]): Promise<voi
     cols,
     rows,
     'ON CONFLICT (tx_hash, msg_index, event_index) DO NOTHING',
+    { attributes: 'jsonb' },
   );
   await client.query(text, values);
 }
