@@ -1,4 +1,4 @@
-import { NoirCompiledContract } from "@aztec/aztec.js";
+import { NoirCompiledContract } from "@aztec/aztec.js/abi";
 import { verifyArtifactPayload } from "@chicmoz-pkg/contract-verification";
 import { setEntry } from "@chicmoz-pkg/redis-helper";
 import {

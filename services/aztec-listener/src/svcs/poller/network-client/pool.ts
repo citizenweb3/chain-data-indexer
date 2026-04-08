@@ -1,4 +1,4 @@
-import { AztecNode, createAztecNodeClient } from "@aztec/aztec.js";
+import { AztecNode, createAztecNodeClient } from "@aztec/aztec.js/node";
 import { AZTEC_RPC_URLS } from "../../../environment.js";
 import { AtomicCounter } from "./atomic-counter.js";
 import { onL2RpcNodeError } from "../../../events/emitted/index.js";

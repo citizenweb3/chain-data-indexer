@@ -2,6 +2,8 @@
 
 Aztec L2 blockchain indexer. Everything runs in Docker - one command to start.
 
+For deployment and developer handoff, see [PRODUCTION-HANDOFF.md](PRODUCTION-HANDOFF.md).
+
 **📚 Documentation:**
 - [MONITORING.md](MONITORING.md) - Prometheus/Grafana integration
 - [docs/TRANSACTIONS.md](docs/TRANSACTIONS.md) - Database transactions guide
@@ -27,8 +29,8 @@ Edit `.env.indexer`:
 # Format: name::url (multiple nodes separated by comma)
 AZTEC_RPC_URLS=my-node::http://YOUR_AZTEC_RPC:8080
 
-# API key (any string you want)
-API_KEYS=dev
+# Public API key used for legacy /v1/<apiKey>/l2 routes and OpenAPI links
+PUBLIC_API_KEY=dev-api-key
 
 # Network (MAINNET, TESTNET, DEVNET, SANDBOX)
 L2_NETWORK_ID=MAINNET

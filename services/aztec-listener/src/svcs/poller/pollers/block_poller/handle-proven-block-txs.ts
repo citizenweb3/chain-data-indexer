@@ -1,4 +1,5 @@
-import { AztecAddress, L2Block } from "@aztec/aztec.js";
+import { L2Block } from "@aztec/aztec.js/block";
+import { AztecAddress } from "@aztec/aztec.js/addresses";
 import { logger } from "../../../../logger.js";
 import { txsController } from "../../../database/index.js";
 import { publishMessage } from "../../../message-bus/index.js";

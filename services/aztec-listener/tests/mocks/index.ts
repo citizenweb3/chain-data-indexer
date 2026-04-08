@@ -35,7 +35,7 @@ export const createMockAztecTx = (
   txHash: string,
   feePayer = "0x1234567890abcdef",
 ) => ({
-  getTxHash: vi.fn().mockResolvedValue({ toString: () => txHash }),
+  getTxHash: vi.fn().mockReturnValue({ toString: () => txHash }),
   data: {
     feePayer: { toString: () => feePayer },
   },
@@ -59,6 +59,7 @@ export const createMockL2Block = (
   hash: vi
     .fn()
     .mockResolvedValue({ toString: () => `block-${blockNumber}-hash` }),
+  toBuffer: vi.fn().mockReturnValue(Buffer.from(`mock-block-${blockNumber}`)),
   toString: vi.fn().mockReturnValue(`mock-block-${blockNumber}`),
 });
 

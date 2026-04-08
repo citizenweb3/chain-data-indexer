@@ -1,4 +1,4 @@
-import { NodeInfo } from "@aztec/aztec.js";
+import { NodeInfo } from "@aztec/aztec.js/node";
 import { MicroserviceBaseSvc } from "@chicmoz-pkg/microservice-base";
 import { NODE_ENV, NodeEnv } from "@chicmoz-pkg/types";
 import {
@@ -29,16 +29,16 @@ export const init = async () => {
   }
   await ensureInitializedBlockHeights();
   const initResult = await initNetworkClient();
-  // Initialize with chainInfo and use type assertions to satisfy TypeScript
   nodeInfo = {
     nodeVersion: "unknown",
     l1ChainId: initResult.chainInfo.l1ChainId,
-    rollupVersion: Number(initResult.chainInfo.rollupVersion), // Convert bigint to number
+    rollupVersion: Number(initResult.chainInfo.rollupVersion),
     l1ContractAddresses: initResult.chainInfo
       .l1ContractAddresses as unknown as NodeInfo["l1ContractAddresses"],
     protocolContractAddresses: initResult.chainInfo
       .protocolContractAddresses as unknown as NodeInfo["protocolContractAddresses"],
-    enr: undefined, // Add missing required property
+    enr: undefined,
+    realProofs: false,
   };
 };
 

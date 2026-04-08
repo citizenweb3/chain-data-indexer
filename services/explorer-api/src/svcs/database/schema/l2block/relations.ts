@@ -3,7 +3,6 @@ import { relations } from "drizzle-orm";
 import { body, publicDataWrite, txEffect } from "./body.js";
 import { l2BlockFinalizationStatusTable } from "./finalization-status.js";
 import {
-  contentCommitment,
   gasFees,
   globalVariables,
   header,
@@ -65,10 +64,6 @@ export const headerRelations = relations(header, ({ one }) => ({
     fields: [header.id],
     references: [lastArchive.fk],
   }),
-  contentCommitment: one(contentCommitment, {
-    fields: [header.id],
-    references: [contentCommitment.headerId],
-  }),
   state: one(state, {
     fields: [header.id],
     references: [state.headerId],
@@ -82,13 +77,6 @@ export const headerRelations = relations(header, ({ one }) => ({
 export const lastArchiveRelations = relations(lastArchive, ({ one }) => ({
   header: one(header),
 }));
-
-export const contentCommitmentRelations = relations(
-  contentCommitment,
-  ({ one }) => ({
-    header: one(header),
-  })
-);
 
 export const stateRelations = relations(state, ({ one }) => ({
   header: one(header),

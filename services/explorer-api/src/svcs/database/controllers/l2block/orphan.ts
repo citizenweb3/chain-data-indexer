@@ -125,6 +125,17 @@ export const handleReorgOrphaning = async (
   });
 };
 
+export const unOrphanBlock = async (blockHash: HexString): Promise<void> => {
+  logger.info(`Un-orphaning block ${blockHash}`);
+  await db()
+    .update(l2Block)
+    .set({
+      orphan_timestamp: null,
+      orphan_hasOrphanedParent: false,
+    })
+    .where(eq(l2Block.hash, blockHash));
+};
+
 type DB = ReturnType<typeof db>;
 type DBTransactionFunction = DB["transaction"];
 type DBTransactionFunctionCallback = Parameters<DBTransactionFunction>[0];

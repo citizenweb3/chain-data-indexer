@@ -26,12 +26,14 @@ export const NODE_ENV: NodeEnv = nodeEnvSchema
   .default(NodeEnv.DEV)
   .parse(process.env.NODE_ENV);
 
-export enum ApiKey {
-  DEV = "dev-api-key",
-  PROD_PUBLIC = "temporary-api-key",
-}
+export const ApiKey = {
+  DEV: "dev-api-key",
+  PROD_PUBLIC: "temporary-api-key",
+} as const;
 
-const _apiSchema = z.enum([ApiKey.DEV, ApiKey.PROD_PUBLIC]);
+export type ApiKey = string;
+
+const _apiSchema = z.string().min(1);
 export const apiKeySchema = addNonProdDefault(_apiSchema, ApiKey.DEV);
 
 export const aztecNodeConfigSchema = z.object({
