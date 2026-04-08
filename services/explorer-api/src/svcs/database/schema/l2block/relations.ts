@@ -44,14 +44,14 @@ export const l1L2BlockProposedTableRelations = relations(
   l1L2BlockProposedTable,
   ({ one }) => ({
     l2Block: one(l2Block),
-  })
+  }),
 );
 
 export const l1L2ProofVerifiedTableRelations = relations(
   l1L2ProofVerifiedTable,
   ({ one }) => ({
     l2Block: one(l2Block),
-  })
+  }),
 );
 
 export const archiveRelations = relations(archive, ({ one }) => ({
@@ -94,7 +94,7 @@ export const l1ToL2MessageTreeRelations = relations(
   l1ToL2MessageTree,
   ({ one }) => ({
     state: one(state),
-  })
+  }),
 );
 
 export const partialRelations = relations(partial, ({ one }) => ({
@@ -133,7 +133,7 @@ export const globalVariablesRelations = relations(
       fields: [globalVariables.id],
       references: [gasFees.globalVariablesId],
     }),
-  })
+  }),
 );
 
 export const gasFeesRelations = relations(gasFees, ({ one }) => ({
@@ -154,12 +154,12 @@ export const publicDataWriteRelations = relations(
   publicDataWrite,
   ({ one }) => ({
     txEffect: one(txEffect),
-  })
+  }),
 );
 
 export const finalizationStatusRelations = relations(
   l2BlockFinalizationStatusTable,
   ({ one }) => ({
     l2Block: one(l2Block),
-  })
+  }),
 );

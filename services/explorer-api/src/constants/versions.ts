@@ -14,6 +14,6 @@ export const v4_1_1 = "2934756905";
 
 // Current active version to use for fetching blocks
 export const CURRENT_ROLLUP_VERSION =
-	process.env.L2_NETWORK_ID === "SANDBOX"
-		? sandbox_v4_0_0_devnet_2_patch_1
-		: v4_1_1;
+  process.env.L2_NETWORK_ID === "SANDBOX"
+    ? sandbox_v4_0_0_devnet_2_patch_1
+    : v4_1_1;

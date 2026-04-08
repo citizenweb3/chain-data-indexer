@@ -153,4 +153,3 @@ export const callRpcMethod = async <K extends keyof AztecNode>(
     return callRpcMethod(methodName, ...args);
   }
 };
-

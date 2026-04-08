@@ -20,7 +20,9 @@ export const handleDuplicateBlockError = async (
         );
         await unOrphanCallback();
       } else {
-        logger.warn(`DB duplicate for "${additionalInfo}" skipping... [${detail}]`);
+        logger.warn(
+          `DB duplicate for "${additionalInfo}" skipping... [${detail}]`,
+        );
       }
     } else if (detail.includes("(tx_hash)") || detail.includes("(height)")) {
       logger.warn(
@@ -29,7 +31,9 @@ export const handleDuplicateBlockError = async (
       await deleteBlockCallback();
       return true;
     } else {
-      logger.warn(`DB duplicate for "${additionalInfo}" skipping... [${detail}]`);
+      logger.warn(
+        `DB duplicate for "${additionalInfo}" skipping... [${detail}]`,
+      );
     }
   } else {
     handleOtherError(e as Error, additionalInfo);

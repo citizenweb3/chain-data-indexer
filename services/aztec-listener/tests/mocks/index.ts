@@ -109,4 +109,3 @@ export const resetAllMocks = () => {
   Object.values(mockNetworkClient).forEach((mock) => mock.mockReset());
   Object.values(mockLogger).forEach((mock) => mock.mockReset());
 };
-

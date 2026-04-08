@@ -42,7 +42,7 @@ const callNodeFunction = async <K extends keyof AztecNode>(
   args?: Parameters<AztecNode[K]>,
   forceNode?: RpcNode,
 ): Promise<ReturnType<AztecNode[K]>> => {
-  let currentNode = forceNode ?? await getRpcNode();
+  let currentNode = forceNode ?? (await getRpcNode());
   const res = await backOff(
     async () => {
       logger.info(
@@ -90,7 +90,9 @@ const callNodeFunction = async <K extends keyof AztecNode>(
         }
         // Get next node synchronously for retry
         if (!forceNode) {
-          void getRpcNode().then(node => { currentNode = node; });
+          void getRpcNode().then((node) => {
+            currentNode = node;
+          });
         }
         return true;
       },

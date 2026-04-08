@@ -5,9 +5,10 @@ export const REDIS_HOST = z
   .string()
   .default("redis-master")
   .parse(process.env.REDIS_HOST);
-export const REDIS_PORT = z.coerce.number().default(6379).parse(
-  process.env.REDIS_PORT,
-);
+export const REDIS_PORT = z.coerce
+  .number()
+  .default(6379)
+  .parse(process.env.REDIS_PORT);
 
 export const getConfigStr = () => {
   return `REDIS
@@ -16,5 +17,5 @@ Port: ${REDIS_PORT}`;
 };
 
 export const L2_NETWORK_ID: L2NetworkId = l2NetworkIdSchema.parse(
-  process.env.L2_NETWORK_ID
+  process.env.L2_NETWORK_ID,
 );
