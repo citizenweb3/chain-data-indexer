@@ -2,7 +2,10 @@
 
 Aztec L2 blockchain indexer. Everything runs in Docker - one command to start.
 
+For deployment and developer handoff, see [PRODUCTION-HANDOFF.md](PRODUCTION-HANDOFF.md).
+
 **📚 Documentation:**
+
 - [MONITORING.md](MONITORING.md) - Prometheus/Grafana integration
 - [docs/TRANSACTIONS.md](docs/TRANSACTIONS.md) - Database transactions guide
 - [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md) - Recent improvements cheatsheet
@@ -27,8 +30,8 @@ Edit `.env.indexer`:
 # Format: name::url (multiple nodes separated by comma)
 AZTEC_RPC_URLS=my-node::http://YOUR_AZTEC_RPC:8080
 
-# API key (any string you want)
-API_KEYS=dev
+# Public API key used for legacy /v1/<apiKey>/l2 routes and OpenAPI links
+PUBLIC_API_KEY=dev-api-key
 
 # Network (MAINNET, TESTNET, DEVNET, SANDBOX)
 L2_NETWORK_ID=MAINNET
@@ -81,7 +84,7 @@ Check if services are running properly:
 # Aztec Listener health
 curl http://localhost:8000/health
 
-# Explorer API health  
+# Explorer API health
 curl http://localhost:8000/health
 
 # Response:
@@ -482,6 +485,7 @@ docker build --build-arg SERVICE=migrations -f docker/universal.Dockerfile -t mi
 ```
 
 **Benefits:**
+
 - Single Dockerfile to maintain
 - Consistent build process
 - Easier to update dependencies
@@ -495,11 +499,11 @@ To prevent memory leaks from consuming all server resources, you can enable reso
 deploy:
   resources:
     limits:
-      cpus: '4.0'      # Maximum 4 CPU cores
-      memory: 8G       # Maximum 8GB RAM
+      cpus: "4.0" # Maximum 4 CPU cores
+      memory: 8G # Maximum 8GB RAM
     reservations:
-      cpus: '1.0'      # Reserved 1 CPU core
-      memory: 1G       # Reserved 1GB RAM
+      cpus: "1.0" # Reserved 1 CPU core
+      memory: 1G # Reserved 1GB RAM
 ```
 
 With your server specs (40 cores, 320GB RAM), high limits like these act as safety net without impacting performance.
@@ -519,5 +523,3 @@ await withTransaction(async (tx) => {
   // If any operation fails, both are rolled back
 });
 ```
-
-

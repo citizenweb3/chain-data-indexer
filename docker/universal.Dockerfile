@@ -3,12 +3,14 @@
 # Usage: docker build --build-arg SERVICE=aztec-listener -f docker/universal.Dockerfile .
 
 ARG NODE_VERSION=20
-FROM node:${NODE_VERSION}-alpine AS builder
+FROM node:${NODE_VERSION}-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apk add --no-cache python3 make g++ postgresql-client
+# Install build dependencies.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ postgresql-client ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package.json yarn.lock .yarnrc.yml ./
@@ -51,15 +53,17 @@ RUN cd services/explorer-api && yarn build
 # ============================================
 # Production image
 # ============================================
-FROM node:${NODE_VERSION}-alpine AS runner
+FROM node:${NODE_VERSION}-bookworm-slim AS runner
 
 ARG SERVICE=aztec-listener
 ENV SERVICE_NAME=${SERVICE}
 
 WORKDIR /app
 
-# Install runtime dependencies (wget for healthcheck, postgresql-client for migrations)
-RUN apk add --no-cache wget postgresql-client
+# Install runtime dependencies (wget for healthcheck, postgresql-client for migrations).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends wget postgresql-client ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 # Copy built artifacts
 COPY --from=builder /app/package.json /app/yarn.lock /app/.yarnrc.yml ./

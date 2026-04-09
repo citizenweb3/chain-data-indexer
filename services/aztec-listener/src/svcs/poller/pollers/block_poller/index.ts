@@ -47,11 +47,11 @@ export const startPolling = async ({
   if (forceStartFromProvenHeight) {
     await storeProcessedProvenBlockHeight(forceStartFromProvenHeight - 1);
   }
-  
+
   // Start worker pool and batch writer for high performance
   blockFetcherPool.start();
   batchHeightsWriter.start();
-  
+
   syncRecursivePolling(true);
 };
 
@@ -61,7 +61,7 @@ export const stopPolling = async () => {
     clearTimeout(timeoutId);
     timeoutId = undefined;
   }
-  
+
   // Graceful shutdown - save progress
   blockFetcherPool.stop();
   await batchHeightsWriter.forceFlush();
@@ -80,8 +80,8 @@ const recursivePolling = async (isFirstRun = false) => {
       await Promise.all([getLatestProposedHeight(), getLatestProvenHeight()]);
     let heights = {
       ...(await getBlockHeights()),
-      chainProposedBlockHeight,
-      chainProvenBlockHeight,
+      chainProposedBlockHeight: Number(chainProposedBlockHeight),
+      chainProvenBlockHeight: Number(chainProvenBlockHeight),
     };
 
     heights = await ensureSaneValues(heights);
@@ -103,17 +103,21 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
       heights.chainProvenBlockHeight
     } | DIFF ${provenHeightDiff}`);
     try {
-      const PREFETCH_SIZE = parseInt(process.env.BLOCK_PREFETCH_SIZE || "5", 10);
-      
+      const PREFETCH_SIZE = parseInt(
+        process.env.BLOCK_PREFETCH_SIZE || "5",
+        10,
+      );
+
       while (
         !cancelPolling &&
         heights.processedProposedBlockHeight < chainProposedBlockHeight &&
         !AZTEC_DISABLE_LISTEN_FOR_PROPOSED_BLOCKS
       ) {
         // Start prefetching next blocks in parallel
-        const remainingBlocks = chainProposedBlockHeight - heights.processedProposedBlockHeight;
+        const remainingBlocks =
+          chainProposedBlockHeight - heights.processedProposedBlockHeight;
         const prefetchCount = Math.min(PREFETCH_SIZE, remainingBlocks);
-        
+
         // Start parallel loading of next blocks
         for (let i = 1; i <= prefetchCount; i++) {
           const nextHeight = heights.processedProposedBlockHeight + i;
@@ -123,7 +127,7 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
             });
           }
         }
-        
+
         heights.processedProposedBlockHeight++;
         await pollProposedBlock(
           heights.processedProposedBlockHeight,
@@ -136,8 +140,11 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
       );
     }
     try {
-      const PREFETCH_SIZE = parseInt(process.env.BLOCK_PREFETCH_SIZE || "30", 10);
-      
+      const PREFETCH_SIZE = parseInt(
+        process.env.BLOCK_PREFETCH_SIZE || "30",
+        10,
+      );
+
       while (
         !cancelPolling &&
         heights.processedProvenBlockHeight < chainProvenBlockHeight &&
@@ -147,7 +154,7 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
         const currentHeight = heights.processedProvenBlockHeight;
         const remainingBlocks = chainProvenBlockHeight - currentHeight;
         const prefetchCount = Math.min(PREFETCH_SIZE, remainingBlocks);
-        
+
         // Load next blocks in parallel via worker pool
         for (let i = 1; i <= prefetchCount; i++) {
           const nextHeight = currentHeight + i;
@@ -155,7 +162,7 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
             blockFetcherPool.prefetchBlock(nextHeight);
           }
         }
-        
+
         heights.processedProvenBlockHeight++;
         await pollProvenBlock(heights.processedProvenBlockHeight, isFirstRun);
       }
@@ -204,14 +211,14 @@ const pollProvenBlock = async (height: number, isCatchup: boolean) => {
     if (catchupBlockCount === 0) {
       catchupStartTime = Date.now();
     }
-    
+
     await onCatchupBlock(
       block,
       ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROVEN,
     );
-    
+
     catchupBlockCount++;
-    
+
     // Log speed periodically
     if (catchupBlockCount % SPEED_LOG_INTERVAL === 0) {
       const elapsedSeconds = (Date.now() - catchupStartTime) / 1000;
@@ -219,11 +226,13 @@ const pollProvenBlock = async (height: number, isCatchup: boolean) => {
       const queueSize = blockFetcherPool.getQueueSize();
       const activeWorkers = blockFetcherPool.getActiveWorkers();
       const cacheSize = blockFetcherPool.getCacheSize();
-      logger.info(`⚡ ${blocksPerSecond} blocks/s | Queue: ${queueSize} | Workers: ${activeWorkers} | Cache: ${cacheSize}`);
+      logger.info(
+        `⚡ ${blocksPerSecond} blocks/s | Queue: ${queueSize} | Workers: ${activeWorkers} | Cache: ${cacheSize}`,
+      );
     } else {
       logger.info(`🐱 catchup proven block ${height}`);
     }
-    
+
     // REMOVED: artificial delay for maximum speed
   } else {
     // Reset counters when switching from catchup to live mode

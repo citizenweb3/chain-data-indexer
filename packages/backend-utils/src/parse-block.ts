@@ -1,11 +1,11 @@
 // TODO: perhaps move this file to chicmoz-types?
-import { L2Block } from "@aztec/aztec.js";
 import {
   ChicmozL2Block,
   ChicmozL2BlockFinalizationStatus,
   chicmozL2BlockSchema,
 } from "@chicmoz-pkg/types";
 import { parseTimeStamp } from "./time.js";
+import { L2Block } from "@aztec/aztec.js/block";
 
 const getTxEffectWithHashes = (txEffects: L2Block["body"]["txEffects"]) => {
   return txEffects.map((txEffect) => {
@@ -18,7 +18,6 @@ const getTxEffectWithHashes = (txEffects: L2Block["body"]["txEffects"]) => {
       publicLogs: txEffect.publicLogs.map((log) => ({
         contractAddress: log.contractAddress,
         fields: log.fields,
-        emittedLength: log.emittedLength,
       })),
       contractClassLogs: txEffect.contractClassLogs.map((log) => ({
         contractAddress: log.contractAddress,
@@ -30,15 +29,17 @@ const getTxEffectWithHashes = (txEffects: L2Block["body"]["txEffects"]) => {
   });
 };
 
-export const blockFromString = (stringifiedBlock: string): L2Block => {
-  return L2Block.fromString(stringifiedBlock);
+export const blockFromBuffer = (hexEncodedBlock: string): L2Block => {
+  return L2Block.fromBuffer(Buffer.from(hexEncodedBlock, "hex"));
 };
 
 export const parseBlock = async (
   b: L2Block,
   finalizationStatus: ChicmozL2BlockFinalizationStatus,
 ): Promise<ChicmozL2Block> => {
-  const blockHash = await b.hash();
+  // Use archive.root as block identifier — computed by the Aztec node,
+  // requires no bb.js native backend (avoids AVX2/QEMU compatibility issues).
+  const blockHash = b.archive.root;
 
   const blockWithTxEffectsHashesAdded = {
     ...b,
@@ -55,18 +56,13 @@ export const parseBlock = async (
     header: {
       ...blockWithTxEffectsHashesAdded.header,
       totalFees: blockWithTxEffectsHashesAdded.header.totalFees.toBigInt(),
-      contentCommitment: {
-        ...blockWithTxEffectsHashesAdded.header.contentCommitment,
-        blobsHash:
-          blockWithTxEffectsHashesAdded.header.contentCommitment.blobsHash.toString(),
-        inHash:
-          blockWithTxEffectsHashesAdded.header.contentCommitment.inHash.toString(),
-        outHash:
-          blockWithTxEffectsHashesAdded.header.contentCommitment.outHash.toString(),
-      },
       globalVariables: {
         ...blockWithTxEffectsHashesAdded.header.globalVariables,
-        timestamp: parseTimeStamp(Number(blockWithTxEffectsHashesAdded.header.globalVariables.timestamp.toString())),
+        timestamp: parseTimeStamp(
+          Number(
+            blockWithTxEffectsHashesAdded.header.globalVariables.timestamp.toString(),
+          ),
+        ),
         coinbase:
           blockWithTxEffectsHashesAdded.header.globalVariables.coinbase.toString(),
       },

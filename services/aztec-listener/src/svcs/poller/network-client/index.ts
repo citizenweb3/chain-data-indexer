@@ -1,11 +1,4 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import {
-  AztecAddress,
-  AztecNode,
-  Fr,
-  NodeInfo,
-  ProtocolContractAddress,
-} from "@aztec/aztec.js";
 import { deriveStorageSlotInMap } from "@aztec/stdlib/hash";
 import {
   ChicmozChainInfo,
@@ -36,6 +29,11 @@ import {
   getChicmozChainInfoFromNodeInfo,
   getSequencerFromNodeInfo,
 } from "./utils.js";
+import { AztecNode, NodeInfo } from "@aztec/aztec.js/node";
+import { AztecAddress } from "@aztec/stdlib/aztec-address";
+import { Fr } from "@aztec/aztec.js/fields";
+import { ProtocolContractAddress } from "@aztec/aztec.js/protocol";
+import { BlockNumber } from "@aztec/foundation/branded-types";
 
 const offlineCauses = ["Service Unavailable", "Unauthorized", "Bad Gateway"];
 
@@ -44,7 +42,7 @@ const callNodeFunction = async <K extends keyof AztecNode>(
   args?: Parameters<AztecNode[K]>,
   forceNode?: RpcNode,
 ): Promise<ReturnType<AztecNode[K]>> => {
-  let currentNode = forceNode ?? await getRpcNode();
+  let currentNode = forceNode ?? (await getRpcNode());
   const res = await backOff(
     async () => {
       logger.info(
@@ -92,7 +90,9 @@ const callNodeFunction = async <K extends keyof AztecNode>(
         }
         // Get next node synchronously for retry
         if (!forceNode) {
-          void getRpcNode().then(node => { currentNode = node; });
+          void getRpcNode().then((node) => {
+            currentNode = node;
+          });
         }
         return true;
       },
@@ -138,6 +138,7 @@ export const getFreshInfo = async (): Promise<{
         enr,
         l1ContractAddresses: l1ContractAddresses,
         protocolContractAddresses: protocolContractAddresses,
+        realProofs: false,
       };
       const cInfo = getChicmozChainInfoFromNodeInfo(L2_NETWORK_ID, nodeInfo);
       if (!chainInfo || chainInfo.rollupVersion < cInfo.rollupVersion) {
@@ -180,7 +181,7 @@ export const getFreshInfo = async (): Promise<{
 };
 
 export const getBlock = async (height: number) =>
-  callNodeFunction("getBlock", [height]);
+  callNodeFunction("getBlock", [BlockNumber(height)]);
 
 export const getBlocks = async (fromHeight: number, toHeight: number) => {
   if (toHeight - fromHeight > MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS) {
@@ -215,8 +216,10 @@ export const getBalanceOf = async (
   address: AztecAddress,
 ) => {
   const slot = await deriveStorageSlotInMap(new Fr(1), address);
+  const blockParam =
+    blockNumber === "latest" ? "latest" : BlockNumber(blockNumber);
   return callNodeFunction("getPublicStorageAt", [
-    blockNumber,
+    blockParam,
     ProtocolContractAddress.FeeJuice,
     slot,
   ]);

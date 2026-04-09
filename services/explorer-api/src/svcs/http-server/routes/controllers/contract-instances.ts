@@ -1,5 +1,5 @@
 import { generateSchema } from "@anatine/zod-openapi";
-import { NoirCompiledContract } from "@aztec/aztec.js";
+import { NoirCompiledContract } from "@aztec/aztec.js/abi";
 import {
   VerifyInstanceDeploymentPayload,
   generateVerifyArtifactPayload,

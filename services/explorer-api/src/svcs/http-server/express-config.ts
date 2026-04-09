@@ -94,6 +94,7 @@ export function setup(
   });
   initApiRoutes({ router });
   app.use(router);
+  app.use("/v1/:apiKey", router);
 
   const errorMiddleware = createErrorMiddleware(logger);
   app.use(errorMiddleware);
