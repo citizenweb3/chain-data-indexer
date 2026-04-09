@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import protobuf from 'protobufjs';
 import { getLogger } from '../utils/logger.ts';
+import { decodeCustomMessage, normalizeDecodedMessage } from './decoders/customMessages.ts';
 
 const log = getLogger('decode/dynamicProto');
 
@@ -124,8 +125,7 @@ export function resolveNestedAny(obj: any, root: protobuf.Root, depth = 0): void
         if (isUnresolvedAny(val[i])) {
           try {
             const tu = val[i].type_url ?? val[i].typeUrl;
-            const bytes =
-              typeof val[i].value === 'string' ? Buffer.from(val[i].value, 'base64') : val[i].value;
+            const bytes = typeof val[i].value === 'string' ? Buffer.from(val[i].value, 'base64') : val[i].value;
             val[i] = decodeAnyWithRoot(tu, bytes, root, depth + 1);
           } catch {
             /* keep original */
@@ -154,6 +154,9 @@ export function decodeAnyWithRoot(
   root: protobuf.Root,
   _depth = 0,
 ): Record<string, unknown> {
+  const custom = decodeCustomMessage(typeUrl, value);
+  if (custom) return custom;
+
   const fullName = typeUrlToFullName(typeUrl);
   const Type = root.lookupType(fullName);
   if (!Type) throw new Error(`Type not found in proto root: ${fullName}`);
@@ -169,5 +172,5 @@ export function decodeAnyWithRoot(
   }) as Record<string, unknown>;
   resolveNestedAny(obj, root, _depth);
   obj['@type'] = typeUrl;
-  return obj;
+  return normalizeDecodedMessage(typeUrl, obj);
 }

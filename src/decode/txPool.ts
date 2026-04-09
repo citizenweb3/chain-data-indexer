@@ -81,15 +81,24 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
     let resolveReady!: () => void;
     let rejectReady!: (e?: any) => void;
     const p = new Promise<void>((resolve, reject) => ((resolveReady = resolve), (rejectReady = reject)));
+    p.catch(() => {});
     readyPromises.push(p);
     readyResolvers.push(resolveReady);
 
+    const failWorkerInit = (reason: string, error?: unknown) => {
+      if (readyFlags[i]) return;
+
+      clearTimeout(timer);
+      readyFlags[i] = true;
+      rejectReady(error instanceof Error ? error : new Error(reason));
+      void w.terminate().catch(() => {});
+    };
+
     const timer = setTimeout(() => {
       if (!readyFlags[i]) {
-        log.error(`[txPool] worker #${i} init timeout after ${INIT_TIMEOUT_MS}ms`);
-        readyFlags[i] = true;
-        idle.push(i);
-        resolveReady();
+        const message = `[txPool] worker #${i} init timeout after ${INIT_TIMEOUT_MS}ms`;
+        log.error(message);
+        failWorkerInit(message);
       }
     }, INIT_TIMEOUT_MS);
 
@@ -111,15 +120,18 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
 
       if (m?.type === 'ready') {
         if (!readyFlags[i]) {
-          readyFlags[i] = true;
           clearTimeout(timer);
           if ((m as ReadyMsg).ok !== false) {
+            readyFlags[i] = true;
             log.info(`[txPool] worker #${i} ready`);
+            idle.push(i);
+            resolveReady();
           } else {
-            log.warn(`[txPool] worker #${i} init not-ok: ${(m as ReadyMsg).detail ?? ''}`);
+            const detail = (m as ReadyMsg).detail ?? '';
+            const message = `[txPool] worker #${i} init failed: ${detail}`;
+            log.error(message);
+            failWorkerInit(message);
           }
-          idle.push(i);
-          resolveReady();
         }
         return;
       }
@@ -142,14 +154,8 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
     w.on('error', (e) => {
       log.error(`[txPool] worker #${i} error: ${e?.message ?? e}`);
       if (!readyFlags[i]) {
-        clearTimeout(timer);
-        readyFlags[i] = true;
-        if (waiters.length > 0) {
-          waiters.shift()!(i);
-        } else {
-          idle.push(i);
-        }
-        resolveReady();
+        failWorkerInit(`[txPool] worker #${i} error before init`, e);
+        return;
       }
       for (const [id, p] of pending) {
         p.reject(e);
@@ -159,6 +165,9 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
 
     w.on('exit', (code) => {
       log.warn(`[txPool] worker #${i} exited with code ${code}`);
+      if (!readyFlags[i]) {
+        failWorkerInit(`[txPool] worker #${i} exited before init with code ${code}`);
+      }
     });
 
     w.postMessage({ type: 'init', protoDir: opts?.protoDir });

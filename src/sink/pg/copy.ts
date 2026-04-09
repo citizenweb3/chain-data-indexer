@@ -3,7 +3,7 @@ import { Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { PoolClient } from 'pg';
 import { getLogger } from '../../utils/logger.js';
-import { sanitizeJsonSurrogates } from './sanitizeJson.js';
+import { sanitizePgJson, sanitizePgText } from './sanitizeJson.js';
 
 const require = createRequire(import.meta.url);
 const { from: copyFrom } = require('pg-copy-streams') as { from: (sql: string) => unknown };
@@ -22,7 +22,7 @@ function stringifyCopyJson(value: unknown): string {
     if (item instanceof Date) return item.toISOString();
     return item;
   });
-  return sanitizeJsonSurrogates(json);
+  return sanitizePgJson(json);
 }
 
 function escapeCopyText(value: unknown): string {
@@ -30,7 +30,7 @@ function escapeCopyText(value: unknown): string {
 
   let text: string;
   if (typeof value === 'string') {
-    text = sanitizeJsonSurrogates(value);
+    text = sanitizePgText(value);
   } else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     text = String(value);
   } else if (value instanceof Date) {

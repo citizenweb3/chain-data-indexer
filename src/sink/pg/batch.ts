@@ -1,7 +1,7 @@
 // src/sink/pg/batch.ts
 import type { PoolClient } from 'pg';
 import { getLogger } from '../../utils/logger.js';
-import { sanitizeJsonSurrogates } from './sanitizeJson.js';
+import { sanitizePgJson, sanitizePgText } from './sanitizeJson.js';
 
 const log = getLogger('sink/pg/batch');
 
@@ -51,14 +51,17 @@ function stringifyPgJson(value: unknown): string {
     if (item instanceof Date) return item.toISOString();
     return item;
   });
-  return sanitizeJsonSurrogates(json);
+  return sanitizePgJson(json);
 }
 
 function preparePgValue(value: unknown, type?: string): unknown {
-  if (type !== 'jsonb') return value;
   if (value === null || value === undefined) return null;
-  if (typeof value === 'string') return sanitizeJsonSurrogates(value);
-  return stringifyPgJson(value);
+  if (type === 'jsonb') {
+    if (typeof value === 'string') return sanitizePgJson(value);
+    return stringifyPgJson(value);
+  }
+  if (typeof value === 'string') return sanitizePgText(value);
+  return value;
 }
 
 /**

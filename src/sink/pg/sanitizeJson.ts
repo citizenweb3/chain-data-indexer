@@ -1,28 +1,30 @@
 // src/sink/pg/sanitizeJson.ts
 
-/**
- * Matches lone surrogate code units when a string contains raw UTF-16 data.
- */
+const NULL_RE = /\u0000/g;
+
 const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-/**
- * Matches lone surrogate escape sequences inside JSON text such as "\uDE2E".
- *
- * JSON.stringify emits lone surrogates as escaped text, not raw UTF-16 code
- * units. PostgreSQL JSONB rejects those escapes unless they form a valid pair.
- */
+const ESCAPED_NULL_RE = /\\u0000/gi;
+
 const ESCAPED_LONE_SURROGATE_RE =
   /\\u(?:d[89ab][0-9a-f]{2})(?!\\u(?:d[cdef][0-9a-f]{2}))|(?<!\\u(?:d[89ab][0-9a-f]{2}))\\u(?:d[cdef][0-9a-f]{2})/gi;
 
 /**
- * Replaces lone Unicode surrogates in a string with the Unicode replacement
- * character (U+FFFD). This makes the string safe for PostgreSQL JSONB columns.
- *
- * Should be applied to the output of JSON.stringify before sending to PostgreSQL.
- *
- * @param json - A JSON string that may contain lone surrogates.
- * @returns The sanitized JSON string.
+ * Makes a string safe for PostgreSQL text columns by replacing raw NUL bytes
+ * and lone surrogate code units with U+FFFD.
  */
+export function sanitizePgText(text: string): string {
+  return text.replace(NULL_RE, '\uFFFD').replace(LONE_SURROGATE_RE, '\uFFFD');
+}
+
+/**
+ * Makes JSON text safe for PostgreSQL JSONB by sanitizing raw text issues and
+ * escaped sequences that PostgreSQL rejects during JSON parsing.
+ */
+export function sanitizePgJson(json: string): string {
+  return sanitizePgText(json).replace(ESCAPED_NULL_RE, '\\uFFFD').replace(ESCAPED_LONE_SURROGATE_RE, '\\uFFFD');
+}
+
 export function sanitizeJsonSurrogates(json: string): string {
-  return json.replace(LONE_SURROGATE_RE, '\uFFFD').replace(ESCAPED_LONE_SURROGATE_RE, '\\uFFFD');
+  return sanitizePgJson(json);
 }
