@@ -16,7 +16,18 @@ export const start = async () => {
   await deleteAllTxs(); // TODO: perhaps a more specific deleteAllTxs should be created, also some logs could be good.
   await removeDroppedThatHaveTxEffects();
   await initializeRollupVersionCache();
-  await initializeProtocolContracts();
+  // initializeProtocolContracts() uses @aztec/bb.js (Poseidon2 + VK hashing) which requires
+  // the native barretenberg binary or a WASM backend with CRS data.
+  // On VMs without AVX2 support (or arm64 images under QEMU), this may fail.
+  // Wrap in try-catch so the service continues — protocol contract metadata will be absent
+  // but core block/tx indexing is unaffected.
+  try {
+    await initializeProtocolContracts();
+  } catch (e) {
+    logger.warn(
+      `⚠️  initializeProtocolContracts failed (bb.js backend unavailable): ${(e as Error).message}. Protocol contract metadata will be missing.`,
+    );
+  }
   const aztecScanNotes = AZTEC_SCAN_NOTES[L2_NETWORK_ID];
   if (aztecScanNotes) {
     for (const [contractInstanceAddress, notes] of Object.entries(

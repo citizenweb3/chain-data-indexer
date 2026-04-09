@@ -37,7 +37,9 @@ export const parseBlock = async (
   b: L2Block,
   finalizationStatus: ChicmozL2BlockFinalizationStatus,
 ): Promise<ChicmozL2Block> => {
-  const blockHash = await b.hash();
+  // Use archive.root as block identifier — computed by the Aztec node,
+  // requires no bb.js native backend (avoids AVX2/QEMU compatibility issues).
+  const blockHash = b.archive.root;
 
   const blockWithTxEffectsHashesAdded = {
     ...b,
