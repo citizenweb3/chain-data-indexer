@@ -46,6 +46,11 @@ export const createMockL2Block = (
   blockNumber: number,
   txHashes: string[] = [],
 ) => ({
+  archive: {
+    root: {
+      toString: () => `0x${blockNumber.toString(16).padStart(64, "0")}`,
+    },
+  },
   header: {
     globalVariables: {
       blockNumber: BigInt(blockNumber),

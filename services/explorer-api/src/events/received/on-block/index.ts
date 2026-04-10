@@ -81,7 +81,12 @@ const onBlock = async ({
       parsedBlock.header.globalVariables.version,
     ),
   );
-  await storeContracts(b, parsedBlock.hash);
+  await storeContracts(b, parsedBlock.hash).catch((e) => {
+    logger.error(
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+      `Failed to store contracts for block ${blockNumber}: ${(e as Error)?.stack ?? e}`,
+    );
+  });
   await pendingTxsHook(parsedBlock.body.txEffects);
 };
 

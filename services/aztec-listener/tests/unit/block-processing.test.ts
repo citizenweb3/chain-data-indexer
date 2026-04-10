@@ -215,4 +215,33 @@ describe("onBlock Function", () => {
       ),
     );
   });
+
+  it("should not require block.hash() to publish a block", async () => {
+    const mockBlock = createMockL2Block(105, ["tx-1"]);
+    mockBlock.hash.mockRejectedValue(new Error("bb.js unavailable"));
+
+    mockTxsController.getTxs.mockResolvedValue([]);
+    mockMessageBus.publishMessage.mockResolvedValue(undefined);
+
+    await onBlock(
+      // @ts-expect-error - Mock object doesn't implement full L2Block interface
+      mockBlock,
+      ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROPOSED,
+    );
+
+    expect(mockBlock.hash).not.toHaveBeenCalled();
+    expect(mockMessageBus.publishMessage).toHaveBeenCalledWith(
+      "NEW_BLOCK_EVENT",
+      expect.objectContaining({
+        blockNumber: 105,
+        finalizationStatus:
+          ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROPOSED,
+      }),
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "🦊 publishing (L2_NODE_SEEN_PROPOSED) block 105 (hash: 0x",
+      ),
+    );
+  });
 });

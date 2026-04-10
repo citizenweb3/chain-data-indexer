@@ -94,9 +94,21 @@ export const storeContracts = async (b: L2Block, blockHash: string) => {
     )
     .map((log) => ContractClassPublishedEvent.fromLog(log));
 
-  const contractClasses = await Promise.all(
+  // toContractClassPublic() invokes Poseidon2 via bb.js (native barretenberg).
+  // Use allSettled so a single failing entry does not abort processing of the whole block.
+  const contractClassSettled = await Promise.allSettled(
     contractClassRegisteredEvents.map((e) => e.toContractClassPublic()),
   );
+  const contractClasses = contractClassSettled.flatMap((r) => {
+    if (r.status === "rejected") {
+      logger.error(
+        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        `Failed to compute contract class for block ${blockHash}: ${(r.reason as Error)?.stack ?? r.reason}`,
+      );
+      return [];
+    }
+    return [r.value];
+  });
 
   const privateFnEvents = contractClassLogs
     .filter((log) =>

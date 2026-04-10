@@ -21,11 +21,11 @@ class BlockFetcherPool {
   }
 
   private async processQueue() {
-    if (!this.isRunning) return;
+    if (!this.isRunning) {return;}
 
     while (this.queue.length > 0 && this.activeWorkers < this.maxWorkers) {
       const task = this.queue.shift();
-      if (!task) break;
+      if (!task) {break;}
 
       this.activeWorkers++;
       this.executeTask(task).finally(() => {

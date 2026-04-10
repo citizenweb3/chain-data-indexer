@@ -3,7 +3,12 @@
 # Usage: docker build --build-arg SERVICE=aztec-listener -f docker/universal.Dockerfile .
 
 ARG NODE_VERSION=20
-FROM node:${NODE_VERSION}-bookworm-slim AS builder
+# NOTE: trixie (Debian 13 testing) is required because the native barretenberg (bb) binary
+# bundled with @aztec/bb.js@2.1.2 requires GLIBC_2.38+/GLIBC_2.39+ and GLIBCXX_3.4.31+.
+# bookworm (Debian 12 stable) only provides glibc 2.36, which is too old.
+# trixie provides glibc 2.41 which satisfies all ABI requirements for bb.js native mode.
+# Replace with a newer stable Debian/Ubuntu base once one with glibc >= 2.38 is available.
+FROM node:${NODE_VERSION}-trixie-slim AS builder
 
 WORKDIR /app
 
@@ -53,7 +58,8 @@ RUN cd services/explorer-api && yarn build
 # ============================================
 # Production image
 # ============================================
-FROM node:${NODE_VERSION}-bookworm-slim AS runner
+# Keep in sync with builder stage — same glibc requirement.
+FROM node:${NODE_VERSION}-trixie-slim AS runner
 
 ARG SERVICE=aztec-listener
 ENV SERVICE_NAME=${SERVICE}

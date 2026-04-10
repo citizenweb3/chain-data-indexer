@@ -20,15 +20,16 @@ export const onBlock = async (
   finalizationStatus: ChicmozL2BlockFinalizationStatus,
 ) => {
   const height = Number(block.header.globalVariables.blockNumber);
+  // archive.root is already computed by the node and avoids initializing bb.js
+  // in the listener hot path just for logging.
+  const blockHash = block.archive.root.toString();
   const finalizationStatusStr =
     finalizationStatus ===
     ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROPOSED
       ? `🦊 publishing (${ChicmozL2BlockFinalizationStatus[finalizationStatus]})`
       : `🐴 publishing (${ChicmozL2BlockFinalizationStatus[finalizationStatus]})`;
   logger.info(
-    `${finalizationStatusStr} block ${height} (hash: ${(
-      await block.hash()
-    ).toString()})...`,
+    `${finalizationStatusStr} block ${height} (hash: ${blockHash})...`,
   );
   const blockBuffer = block.toBuffer() as Uint8Array;
   const blockStr = Buffer.from(blockBuffer).toString("hex");
