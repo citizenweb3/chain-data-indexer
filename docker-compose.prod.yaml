@@ -75,6 +75,12 @@ services:
       - "tcp_keepalives_interval=10"
       - "-c"
       - "tcp_keepalives_count=6"
+      # WAL sync (off = async commit, safe for append-only ingest)
+      - "-c"
+      - "synchronous_commit=off"
+      # GIN pending list — larger = fewer index flushes during bulk insert
+      - "-c"
+      - "gin_pending_list_limit=65536"
       # Random page cost (lower for SSD/NVMe)
       - "-c"
       - "random_page_cost=1.1"

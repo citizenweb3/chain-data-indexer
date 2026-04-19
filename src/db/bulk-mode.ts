@@ -26,126 +26,126 @@ const INDEXES: Array<{ name: string; drop: string; create: string }> = [
   // core.blocks (3)
   {
     name: 'idx_blocks_time',
-    drop: 'DROP INDEX IF EXISTS idx_blocks_time',
+    drop: 'DROP INDEX IF EXISTS core.idx_blocks_time',
     create: 'CREATE INDEX IF NOT EXISTS idx_blocks_time ON core.blocks USING BTREE (time)',
   },
   {
     name: 'idx_blocks_proposer',
-    drop: 'DROP INDEX IF EXISTS idx_blocks_proposer',
+    drop: 'DROP INDEX IF EXISTS core.idx_blocks_proposer',
     create: 'CREATE INDEX IF NOT EXISTS idx_blocks_proposer ON core.blocks (proposer_address)',
   },
   {
     name: 'idx_blocks_brin_height',
-    drop: 'DROP INDEX IF EXISTS idx_blocks_brin_height',
+    drop: 'DROP INDEX IF EXISTS core.idx_blocks_brin_height',
     create: 'CREATE INDEX IF NOT EXISTS idx_blocks_brin_height ON core.blocks USING BRIN (height)',
   },
 
   // core.transactions (5) — uq_txs_height_pos intentionally NOT dropped
   {
     name: 'idx_txs_code',
-    drop: 'DROP INDEX IF EXISTS idx_txs_code',
+    drop: 'DROP INDEX IF EXISTS core.idx_txs_code',
     create: 'CREATE INDEX IF NOT EXISTS idx_txs_code ON core.transactions (code)',
   },
   {
     name: 'idx_txs_signers_gin',
-    drop: 'DROP INDEX IF EXISTS idx_txs_signers_gin',
+    drop: 'DROP INDEX IF EXISTS core.idx_txs_signers_gin',
     create: 'CREATE INDEX IF NOT EXISTS idx_txs_signers_gin ON core.transactions USING GIN (signers)',
   },
   {
     name: 'idx_txs_time',
-    drop: 'DROP INDEX IF EXISTS idx_txs_time',
+    drop: 'DROP INDEX IF EXISTS core.idx_txs_time',
     create: 'CREATE INDEX IF NOT EXISTS idx_txs_time ON core.transactions (time DESC)',
   },
   {
     name: 'idx_txs_success',
-    drop: 'DROP INDEX IF EXISTS idx_txs_success',
+    drop: 'DROP INDEX IF EXISTS core.idx_txs_success',
     create: 'CREATE INDEX IF NOT EXISTS idx_txs_success ON core.transactions (height DESC, tx_index) WHERE code = 0',
   },
   {
     name: 'idx_txs_hash',
-    drop: 'DROP INDEX IF EXISTS idx_txs_hash',
+    drop: 'DROP INDEX IF EXISTS core.idx_txs_hash',
     create: 'CREATE INDEX IF NOT EXISTS idx_txs_hash ON core.transactions (tx_hash)',
   },
 
   // core.messages (4)
   {
     name: 'idx_msgs_height_type',
-    drop: 'DROP INDEX IF EXISTS idx_msgs_height_type',
+    drop: 'DROP INDEX IF EXISTS core.idx_msgs_height_type',
     create: 'CREATE INDEX IF NOT EXISTS idx_msgs_height_type ON core.messages (height DESC, type_url)',
   },
   {
     name: 'idx_msgs_signer',
-    drop: 'DROP INDEX IF EXISTS idx_msgs_signer',
+    drop: 'DROP INDEX IF EXISTS core.idx_msgs_signer',
     create: 'CREATE INDEX IF NOT EXISTS idx_msgs_signer ON core.messages (signer, height DESC)',
   },
   {
     name: 'idx_msgs_value_path',
-    drop: 'DROP INDEX IF EXISTS idx_msgs_value_path',
+    drop: 'DROP INDEX IF EXISTS core.idx_msgs_value_path CASCADE',
     create: 'CREATE INDEX IF NOT EXISTS idx_msgs_value_path ON core.messages USING GIN (value jsonb_path_ops)',
   },
   {
     name: 'idx_msgs_txhash_msg',
-    drop: 'DROP INDEX IF EXISTS idx_msgs_txhash_msg',
+    drop: 'DROP INDEX IF EXISTS core.idx_msgs_txhash_msg',
     create: 'CREATE INDEX IF NOT EXISTS idx_msgs_txhash_msg ON core.messages (tx_hash, msg_index)',
   },
 
   // core.events (1)
   {
     name: 'idx_events_type',
-    drop: 'DROP INDEX IF EXISTS idx_events_type',
+    drop: 'DROP INDEX IF EXISTS core.idx_events_type',
     create: 'CREATE INDEX IF NOT EXISTS idx_events_type ON core.events (event_type)',
   },
 
   // bank.transfers (4)
   {
     name: 'idx_transfers_from',
-    drop: 'DROP INDEX IF EXISTS idx_transfers_from',
+    drop: 'DROP INDEX IF EXISTS bank.idx_transfers_from',
     create: 'CREATE INDEX IF NOT EXISTS idx_transfers_from ON bank.transfers (from_addr, height DESC)',
   },
   {
     name: 'idx_transfers_to',
-    drop: 'DROP INDEX IF EXISTS idx_transfers_to',
+    drop: 'DROP INDEX IF EXISTS bank.idx_transfers_to',
     create: 'CREATE INDEX IF NOT EXISTS idx_transfers_to ON bank.transfers (to_addr, height DESC)',
   },
   {
     name: 'idx_transfers_denom',
-    drop: 'DROP INDEX IF EXISTS idx_transfers_denom',
+    drop: 'DROP INDEX IF EXISTS bank.idx_transfers_denom',
     create: 'CREATE INDEX IF NOT EXISTS idx_transfers_denom ON bank.transfers (denom)',
   },
   {
     name: 'idx_transfers_brin_height',
-    drop: 'DROP INDEX IF EXISTS idx_transfers_brin_height',
+    drop: 'DROP INDEX IF EXISTS bank.idx_transfers_brin_height',
     create: 'CREATE INDEX IF NOT EXISTS idx_transfers_brin_height ON bank.transfers USING BRIN (height)',
   },
 
   // stake.delegation_events (3)
   {
     name: 'idx_del_ev_delegator',
-    drop: 'DROP INDEX IF EXISTS idx_del_ev_delegator',
+    drop: 'DROP INDEX IF EXISTS stake.idx_del_ev_delegator',
     create:
       'CREATE INDEX IF NOT EXISTS idx_del_ev_delegator ON stake.delegation_events (delegator_address, height DESC)',
   },
   {
     name: 'idx_del_ev_valdst',
-    drop: 'DROP INDEX IF EXISTS idx_del_ev_valdst',
+    drop: 'DROP INDEX IF EXISTS stake.idx_del_ev_valdst',
     create: 'CREATE INDEX IF NOT EXISTS idx_del_ev_valdst ON stake.delegation_events (validator_dst, height DESC)',
   },
   {
     name: 'idx_del_ev_valsrc',
-    drop: 'DROP INDEX IF EXISTS idx_del_ev_valsrc',
+    drop: 'DROP INDEX IF EXISTS stake.idx_del_ev_valsrc',
     create: 'CREATE INDEX IF NOT EXISTS idx_del_ev_valsrc ON stake.delegation_events (validator_src, height DESC)',
   },
 
   // stake.distribution_events (2)
   {
     name: 'idx_dist_ev_validator',
-    drop: 'DROP INDEX IF EXISTS idx_dist_ev_validator',
+    drop: 'DROP INDEX IF EXISTS stake.idx_dist_ev_validator',
     create:
       'CREATE INDEX IF NOT EXISTS idx_dist_ev_validator ON stake.distribution_events (validator_address, height DESC)',
   },
   {
     name: 'idx_dist_ev_delegator',
-    drop: 'DROP INDEX IF EXISTS idx_dist_ev_delegator',
+    drop: 'DROP INDEX IF EXISTS stake.idx_dist_ev_delegator',
     create:
       'CREATE INDEX IF NOT EXISTS idx_dist_ev_delegator ON stake.distribution_events (delegator_address, height DESC)',
   },
@@ -153,65 +153,65 @@ const INDEXES: Array<{ name: string; drop: string; create: string }> = [
   // gov.proposals (1)
   {
     name: 'idx_gov_status',
-    drop: 'DROP INDEX IF EXISTS idx_gov_status',
+    drop: 'DROP INDEX IF EXISTS gov.idx_gov_status',
     create: 'CREATE INDEX IF NOT EXISTS idx_gov_status ON gov.proposals (status)',
   },
 
   // gov.deposits (1)
   {
     name: 'idx_gov_dep_depositor',
-    drop: 'DROP INDEX IF EXISTS idx_gov_dep_depositor',
+    drop: 'DROP INDEX IF EXISTS gov.idx_gov_dep_depositor',
     create: 'CREATE INDEX IF NOT EXISTS idx_gov_dep_depositor ON gov.deposits (depositor, height DESC)',
   },
 
   // gov.votes (2)
   {
     name: 'idx_gov_votes_voter',
-    drop: 'DROP INDEX IF EXISTS idx_gov_votes_voter',
+    drop: 'DROP INDEX IF EXISTS gov.idx_gov_votes_voter',
     create: 'CREATE INDEX IF NOT EXISTS idx_gov_votes_voter ON gov.votes (voter, height DESC)',
   },
   {
     name: 'idx_gov_votes_prop',
-    drop: 'DROP INDEX IF EXISTS idx_gov_votes_prop',
+    drop: 'DROP INDEX IF EXISTS gov.idx_gov_votes_prop',
     create: 'CREATE INDEX IF NOT EXISTS idx_gov_votes_prop ON gov.votes (proposal_id, option)',
   },
 
   // wasm.executions (4)
   {
     name: 'idx_wasm_exec_contract',
-    drop: 'DROP INDEX IF EXISTS idx_wasm_exec_contract',
+    drop: 'DROP INDEX IF EXISTS wasm.idx_wasm_exec_contract',
     create: 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_contract ON wasm.executions (contract, height DESC)',
   },
   {
     name: 'idx_wasm_exec_msg_gin',
-    drop: 'DROP INDEX IF EXISTS idx_wasm_exec_msg_gin',
+    drop: 'DROP INDEX IF EXISTS wasm.idx_wasm_exec_msg_gin',
     create: 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_msg_gin ON wasm.executions USING GIN (msg jsonb_path_ops)',
   },
   {
     name: 'idx_wasm_exec_success',
-    drop: 'DROP INDEX IF EXISTS idx_wasm_exec_success',
+    drop: 'DROP INDEX IF EXISTS wasm.idx_wasm_exec_success',
     create: 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_success ON wasm.executions (success)',
   },
   {
     name: 'idx_wasm_exec_tx_msg',
-    drop: 'DROP INDEX IF EXISTS idx_wasm_exec_tx_msg',
+    drop: 'DROP INDEX IF EXISTS wasm.idx_wasm_exec_tx_msg',
     create: 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_tx_msg ON wasm.executions (tx_hash, msg_index)',
   },
 
   // wasm.events (3)
   {
     name: 'idx_wasm_events_contract',
-    drop: 'DROP INDEX IF EXISTS idx_wasm_events_contract',
+    drop: 'DROP INDEX IF EXISTS wasm.idx_wasm_events_contract',
     create: 'CREATE INDEX IF NOT EXISTS idx_wasm_events_contract ON wasm.events (contract, height DESC)',
   },
   {
     name: 'idx_wasm_events_type',
-    drop: 'DROP INDEX IF EXISTS idx_wasm_events_type',
+    drop: 'DROP INDEX IF EXISTS wasm.idx_wasm_events_type',
     create: 'CREATE INDEX IF NOT EXISTS idx_wasm_events_type ON wasm.events (event_type)',
   },
   {
     name: 'idx_wasm_events_tx_msg',
-    drop: 'DROP INDEX IF EXISTS idx_wasm_events_tx_msg',
+    drop: 'DROP INDEX IF EXISTS wasm.idx_wasm_events_tx_msg',
     create: 'CREATE INDEX IF NOT EXISTS idx_wasm_events_tx_msg ON wasm.events (tx_hash, msg_index)',
   },
 ];
