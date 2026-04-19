@@ -4,51 +4,74 @@ services:
     container_name: cosmosindexer
     restart: unless-stopped
     command:
-      - postgres
-      - -c
-      - shared_buffers=2GB
-      - -c
-      - effective_cache_size=6GB
-      - -c
-      - work_mem=32MB
-      - -c
-      - maintenance_work_mem=512MB
-      - -c
-      - max_wal_size=${PG_MAX_WAL_SIZE:-6GB}
-      - -c
-      - min_wal_size=${PG_MIN_WAL_SIZE:-1GB}
-      - -c
-      - wal_buffers=${PG_WAL_BUFFERS:-16MB}
-      - -c
-      - max_connections=100
-      - -c
-      - max_worker_processes=12
-      - -c
-      - max_parallel_workers_per_gather=2
-      - -c
-      - max_parallel_workers=6
-      - -c
-      - random_page_cost=1.1
-      - -c
-      - effective_io_concurrency=64
-      - -c
-      - checkpoint_completion_target=${PG_CHECKPOINT_COMPLETION_TARGET:-0.9}
-      - -c
-      - checkpoint_timeout=${PG_CHECKPOINT_TIMEOUT:-15min}
-      - -c
-      - synchronous_commit=${PG_SYNCHRONOUS_COMMIT:-off}
-      - -c
-      - fsync=${PG_FSYNC:-on}
-      - -c
-      - full_page_writes=${PG_FULL_PAGE_WRITES:-on}
-      - -c
-      - wal_level=${PG_WAL_LEVEL:-replica}
-      - -c
-      - max_wal_senders=${PG_MAX_WAL_SENDERS:-10}
-      - -c
-      - autovacuum=${PG_AUTOVACUUM:-on}
-      - -c
-      - app.defer_heavy_indexes=${PG_DEFER_HEAVY_INDEXES:-off}
+      - "postgres"
+      # Networking
+      - "-c"
+      - "listen_addresses=*"
+      - "-c"
+      - "max_connections=500"
+      # Memory (tuned for 314 GB RAM server)
+      - "-c"
+      - "shared_buffers=64GB"
+      - "-c"
+      - "effective_cache_size=200GB"
+      - "-c"
+      - "work_mem=256MB"
+      - "-c"
+      - "maintenance_work_mem=4GB"
+      - "-c"
+      - "huge_pages=try"
+      # WAL tuning for batch inserts
+      - "-c"
+      - "wal_buffers=64MB"
+      - "-c"
+      - "max_wal_size=16GB"
+      - "-c"
+      - "min_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "checkpoint_timeout=15min"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "fsync=on"
+      - "-c"
+      - "full_page_writes=on"
+      # GIN pending list — larger = fewer flushes during bulk insert
+      - "-c"
+      - "gin_pending_list_limit=65536"
+      # Parallelism
+      - "-c"
+      - "max_worker_processes=40"
+      - "-c"
+      - "max_parallel_workers_per_gather=8"
+      - "-c"
+      - "max_parallel_workers=20"
+      - "-c"
+      - "max_parallel_maintenance_workers=8"
+      # Storage (SSD/NVMe)
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      # Autovacuum
+      - "-c"
+      - "autovacuum=on"
+      # Connection keepalives (for external ValidatorInfo connections)
+      - "-c"
+      - "tcp_keepalives_idle=60"
+      - "-c"
+      - "tcp_keepalives_interval=10"
+      - "-c"
+      - "tcp_keepalives_count=6"
+      # Logging (only slow queries and checkpoint events)
+      - "-c"
+      - "log_statement=none"
+      - "-c"
+      - "log_min_duration_statement=1000"
+      - "-c"
+      - "log_checkpoints=on"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
@@ -57,16 +80,29 @@ services:
     environment:
       # Official postgres envs used by the image during init:
       # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD are REQUIRED to create the DB and user.
-      # POSTGRES_INITDB_ARGS is optional (e.g. "--locale=C --encoding=UTF8").
       POSTGRES_DB: ${PG_DB}
       POSTGRES_USER: ${PG_USER}
       POSTGRES_PASSWORD: ${PG_PASSWORD}
       POSTGRES_INITDB_ARGS: ${PG_INITDB_ARGS}
+    # Bind to all interfaces so ValidatorInfo can connect from external IP.
+    # IMPORTANT: Secure with firewall rules (allow only validatorinfo server IP):
+    #   sudo ufw allow from <VALIDATORINFO_IP> to any port ${PG_PORT:-2432}
     ports:
-      - "${PG_PORT:-5432}:5432"
+      - "${PG_EXTERNAL_HOST:-0.0.0.0}:${PG_PORT:-2432}:5432"
     volumes:
       - pgdata_cosmosindexer:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          memory: 200G
+        reservations:
+          memory: 64G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500m"
+        max-file: "10"
 
   indexer:
     build:
@@ -88,7 +124,7 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       PG_DB: ${PG_DB}
       # Optional: override RPC_URL if you want the indexer to target a remote node
-      RPC_URL: ${RPC_URL}
+      RPC_URL: http://192.168.5.217:14457
       # Node memory default (can be overridden at compose run time)
       NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=24576}
       # Performance tuning (from .env)
@@ -137,6 +173,17 @@ services:
     # the container unless you add a dedicated dev override with an anonymous
     # node_modules volume to prevent native binary mismatches.
     working_dir: /usr/src/app
+    deploy:
+      resources:
+        limits:
+          memory: 100G
+        reservations:
+          memory: 32G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "500m"
+        max-file: "20"
 
 
 volumes:

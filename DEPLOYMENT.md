@@ -130,10 +130,8 @@ NODE_OPTIONS=--max-old-space-size=24576
 ### Start with Production Configuration
 
 ```bash
-# Start with external PostgreSQL access
-docker compose -f docker-compose.yaml \
-               -f docker-compose.prod.yaml \
-               --env-file .env up --build -d
+# Start (or rebuild) everything
+docker compose --env-file .env up --build -d
 
 # Indexer logs only
 docker compose logs -f indexer
@@ -144,37 +142,14 @@ docker compose logs -f
 
 ### Bulk Backfill Mode
 
-If your goal is raw backfill throughput on a fresh database, you can skip the
-heaviest secondary indexes during initialization and rebuild them after the
-backfill completes.
+Set `PG_BULK_MODE=true` in `.env` to drop secondary indexes during backfill and recreate them when done. This significantly improves ingestion throughput for large historical ranges.
 
-Start a fixed backfill range:
-
-```bash
-INDEXER_RESTART_POLICY=no \
-PG_DEFER_HEAVY_INDEXES=on \
-RESUME=false \
-FROM=9000000 \
-TO=9002499 \
-docker compose --env-file .env up --build -d
+```env
+PG_BULK_MODE=true
+RESUME=true
 ```
 
-After the range is done:
-
-```bash
-docker compose --env-file .env up -d db
-make rebuild-heavy-indexes
-```
-
-Deferred indexes in this mode:
-
-- `core.transactions(signers)` GIN
-- `core.messages(value jsonb_path_ops)` GIN
-- `core.event_attrs(key, md5(value))`
-- `wasm.executions(msg jsonb_path_ops)` GIN
-
-This mode preserves indexed data content. It only changes whether those heavy
-secondary indexes are maintained during the initial backfill.
+The indexer will call `bulkModeOn()` at startup (drops ~32 secondary indexes, disables autovacuum on hot tables) and `bulkModeOff()` when the range is complete (recreates indexes, runs VACUUM ANALYZE).
 
 ### Firewall Configuration
 
@@ -376,13 +351,6 @@ SELECT util.ensure_next_height_partition('core', 'blocks');
 1. Check firewall:
    ```bash
    sudo ufw status
-   ```
-
-2. Verify you're using `docker-compose.prod.yaml`:
-   ```bash
-   docker compose -f docker-compose.yaml \
-                  -f docker-compose.prod.yaml \
-                  --env-file .env up -d
    ```
 
 3. Check port mapping:
