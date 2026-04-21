@@ -297,13 +297,17 @@ export async function syncRange(
   await new Promise<void>((resolve) => {
     const maybeSpawn = () => {
       while (inFlight < concurrency && (nextHeight <= to || retryQueue.length > 0)) {
-        // [FIX] Prevent unbounded memory growth (OOM Loop) if RPC times out frequently
-        if (nextHeight - nextToFlush > concurrency * 2) {
+        // Retries must always be allowed through — their heights are already counted in
+        // the gap (nextHeight was incremented when first spawned), so processing them
+        // never increases the gap. Blocking retries causes a deadlock: nextToFlush stalls
+        // waiting for the retry height, flush never advances, queue stays "full" forever.
+        const isRetry = retryQueue.length > 0;
+        if (!isRetry && nextHeight - nextToFlush > concurrency * 2) {
           log.warn(`[syncRange] queue full, pausing fetch (head=${nextHeight}, tail=${nextToFlush})`);
           break;
         }
 
-        const h = retryQueue.length > 0 ? (retryQueue.shift() as number) : nextHeight++;
+        const h = isRetry ? (retryQueue.shift() as number) : nextHeight++;
         inFlight++;
         processHeight(h).finally(() => {
           inFlight--;
