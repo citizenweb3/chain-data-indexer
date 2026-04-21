@@ -856,7 +856,7 @@ export class PostgresSink implements Sink {
       await this.ensurePartitionsIfNeeded(client, minH, maxH);
 
       await client.query('BEGIN');
-      await client.query(`SET LOCAL statement_timeout = '30s'`);
+      await client.query(`SET LOCAL statement_timeout = '5min'`);
       await client.query(`SET LOCAL lock_timeout = '5s'`);
 
       const t0 = Date.now();
@@ -904,7 +904,7 @@ export class PostgresSink implements Sink {
       await this.ensurePartitionsIfNeeded(client, batch.minH, batch.maxH);
 
       await client.query('BEGIN');
-      await client.query(`SET LOCAL statement_timeout = '30s'`);
+      await client.query(`SET LOCAL statement_timeout = '5min'`);
       await client.query(`SET LOCAL lock_timeout = '5s'`);
 
       const t0 = Date.now();
