@@ -259,6 +259,83 @@ async function getPartitionChildren(pool: Pool, parents: string[]): Promise<stri
 }
 
 // ---------------------------------------------------------------------------
+// UNLOGGED partition handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Tables whose new partitions are created UNLOGGED during bulk mode.
+ * Must match `UNLOGGED_ELIGIBLE` in src/db/partitions.ts.
+ *
+ * UNLOGGED tables skip WAL writes — major throughput win during backfill.
+ * Trade-off: contents are TRUNCATED on unclean PostgreSQL shutdown / crash.
+ * The indexer resumes from `core.indexer_progress`, so any lost rows are
+ * re-fetched from RPC. `bulkSetLogged()` converts everything back before
+ * the indexer transitions to follow mode.
+ */
+const UNLOGGED_PARENT_TABLES = [
+  'core.transactions',
+  'core.events',
+  'core.event_attrs',
+  'core.messages',
+  'bank.transfers',
+  'stake.delegation_events',
+  'stake.distribution_events',
+  'wasm.executions',
+  'wasm.events',
+];
+
+/**
+ * Returns child partition names that are currently UNLOGGED (relpersistence='u').
+ */
+async function getUnloggedChildren(pool: Pool, parents: string[]): Promise<string[]> {
+  const conditions = parents
+    .map((p) => {
+      const [schema, table] = p.split('.');
+      return `(pn.nspname = '${schema}' AND parent.relname = '${table}')`;
+    })
+    .join(' OR ');
+
+  const { rows } = await pool.query(`
+    SELECT pcn.nspname || '.' || child.relname AS child
+    FROM pg_inherits i
+    JOIN pg_class parent ON parent.oid = i.inhparent
+    JOIN pg_namespace pn ON pn.oid = parent.relnamespace
+    JOIN pg_class child ON child.oid = i.inhrelid
+    JOIN pg_namespace pcn ON pcn.oid = child.relnamespace
+    WHERE (${conditions}) AND child.relpersistence = 'u'
+    ORDER BY child
+  `);
+
+  return rows.map((r: any) => r.child as string);
+}
+
+/**
+ * Converts all UNLOGGED partitions of hot tables back to LOGGED.
+ *
+ * `ALTER TABLE ... SET LOGGED` rewrites the entire table and writes the
+ * full contents to WAL — slow for large partitions. Called before
+ * recreating indexes in `bulkModeOff()` so follow mode operates on
+ * crash-safe storage.
+ */
+export async function bulkSetLogged(pool: Pool): Promise<void> {
+  const t0 = Date.now();
+  const children = await getUnloggedChildren(pool, UNLOGGED_PARENT_TABLES);
+  if (children.length === 0) {
+    log.info('bulkSetLogged: no UNLOGGED partitions found, skipping');
+    return;
+  }
+
+  log.info('bulkSetLogged: converting %d UNLOGGED partitions back to LOGGED (this rewrites tables and may take a long time)', children.length);
+  for (const child of children) {
+    const childT0 = Date.now();
+    log.info('SET LOGGED %s...', child);
+    await pool.query(`ALTER TABLE ${child} SET LOGGED`);
+    log.info('SET LOGGED %s done (%d ms)', child, Date.now() - childT0);
+  }
+  log.info('bulkSetLogged: converted %d partitions in %d ms', children.length, Date.now() - t0);
+}
+
+// ---------------------------------------------------------------------------
 // bulkModeOn — prepare database for fast backfill
 // ---------------------------------------------------------------------------
 
@@ -300,6 +377,8 @@ export async function bulkModeOn(pool: Pool): Promise<void> {
 export async function bulkModeOff(pool: Pool): Promise<void> {
   const t0 = Date.now();
   let created = 0;
+
+  await bulkSetLogged(pool);
 
   for (const idx of INDEXES) {
     const idxT0 = Date.now();

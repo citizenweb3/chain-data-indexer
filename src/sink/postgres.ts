@@ -267,7 +267,7 @@ export class PostgresSink implements Sink {
     }
     if (!missing) return;
 
-    await ensureCorePartitions(client, minH, maxH);
+    await ensureCorePartitions(client, minH, maxH, this.bulkMode);
     this.markPartitionsEnsured(minH, maxH);
   }
 
