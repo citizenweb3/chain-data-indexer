@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: logos_indexer
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logos -d logos_indexer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  indexer:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_URL: ${NODE_URL:-http://host.docker.internal:8080}
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DB: logos_indexer
+      PG_USER: logos
+      PG_PASSWORD: ${PG_PASSWORD}
+      FROM_SLOT: ${FROM_SLOT:-0}
+      FOLLOW: ${FOLLOW:-true}
+      BATCH_SIZE: ${BATCH_SIZE:-500}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pgdata:
