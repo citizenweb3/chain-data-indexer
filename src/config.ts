@@ -16,9 +16,9 @@ const ConfigSchema = z.object({
   PG_PASSWORD: z.string().min(1).default('CHANGE_ME'),
   INDEXER_HTTP_PORT: z.coerce.number().int().positive().default(3001),
   START_BLOCK: optionalNonNegativeInt,
-  BATCH_SIZE: z.coerce.number().int().positive().default(100),
+  BATCH_SIZE: z.coerce.number().int().positive().default(200),
   POLL_INTERVAL_MS: z.coerce.number().int().min(100).default(1_500),
-  BACKFILL_CONCURRENCY: z.coerce.number().int().positive().max(100).default(1),
+  BACKFILL_CONCURRENCY: z.coerce.number().int().positive().max(100).default(16),
   MAX_LAG_BLOCKS_BEFORE_BATCH: z.coerce.number().int().nonnegative().default(5),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
