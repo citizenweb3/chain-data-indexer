@@ -259,6 +259,46 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA gov GRANT SELECT ON TABLES TO validatorinfo_r
 
 ## Monitoring & Maintenance
 
+### Health Endpoint (Level 1)
+
+The indexer exposes a JSON health endpoint that checks real progress, not
+just process aliveness — this is what catches silent stalls (frozen flush,
+RPC outage, DB unresponsive) that previously went unnoticed.
+
+```bash
+# Check from the host (default port 3000, mapped via HEALTH_PORT)
+curl -sS http://127.0.0.1:${HEALTH_PORT:-3000}/health
+
+# Container-level health (driven by the same endpoint)
+docker inspect cosmos-indexer-app --format '{{.State.Health.Status}}'
+```
+
+The endpoint returns HTTP 200 (`healthy`) or 503 (`degraded`) and a JSON
+body with three checks:
+
+- **db**: `SELECT last_height, updated_at FROM core.indexer_progress`
+- **progress**: `now() - updated_at <= HEALTH_STALE_SECONDS` (default 180s)
+- **rpc**: in-memory `rpcReachable` flag updated by `waitForRpcStatus()`
+
+Tunables (in `.env`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HEALTH_PORT` | `3000` | TCP port inside the container |
+| `HEALTH_EXTERNAL_HOST` | `127.0.0.1` | Bind address on the host (set `0.0.0.0` to expose externally) |
+| `HEALTH_STALE_SECONDS` | `180` | How long without progress before `degraded` |
+| `HEALTH_STARTUP_GRACE_SECONDS` | `300` | No 503 during cold start |
+| `HEALTH_ENABLED` | `true` | Set `false` to disable the server |
+
+The compose file wires this into a Docker `healthcheck:` (interval 30s,
+start_period 5m, retries 3). With `restart: unless-stopped`, a container
+that returns 503 three times in a row is rebooted automatically.
+
+> **Roadmap**: Level 2 (Prometheus `/metrics` via prom-client on the same
+> port) and Level 4 (Grafana Alloy → Loki log shipping) are tracked in the
+> session plan but not yet implemented. Alerting (Level 3) is delegated to
+> the external Grafana stack.
+
 ### Useful SQL Queries
 
 ```sql

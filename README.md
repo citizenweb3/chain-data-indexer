@@ -159,6 +159,9 @@ See `.env.example` for a complete list.
 | RPC_URL      | Blockchain RPC endpoint            | `https://rpc.cosmoshub-4-archive.citizenweb3.com` |
 | SINK         | Data sink type                     | `postgres`               |
 | RESUME       | Resume from last indexed block     | `true`                   |
+| PG_BULK_MODE | Drop indexes + UNLOGGED partitions for fast backfill (auto-restored on follow) | `true` |
+| HEALTH_PORT  | TCP port for `/health` endpoint    | `3000`                   |
+| HEALTH_STALE_SECONDS | Block-progress freshness threshold | `180`            |
 | NODE_OPTIONS | Node.js runtime options            | `--max-old-space-size=24576` |
 
 ---
@@ -242,6 +245,12 @@ secondary indexes from the write path during the backfill.
 - Indexer fails due to memory? Increase `NODE_OPTIONS`.
 - Check your `.env` for correct DB and RPC settings.
 - Use `make reset` to reinitialize your database if needed.
+- Container keeps exiting? Check `curl http://127.0.0.1:${HEALTH_PORT:-3000}/health`
+  and `docker inspect cosmos-indexer-app --format '{{.State.Health.Status}}'`.
+  See the **Monitoring & Maintenance** section in [DEPLOYMENT.md](DEPLOYMENT.md).
+- RPC archive node temporarily unavailable? The indexer now waits and resumes
+  automatically (no crash loop) — see logs for `[rpc] startup: RPC unavailable`
+  / `RPC is available again`.
 
 ---
 

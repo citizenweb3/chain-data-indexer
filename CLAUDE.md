@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AGENTS when working with code in this repository.
 
 ## Code Search & Documentation
 
@@ -136,9 +136,10 @@ docker compose down -v && docker compose --env-file .env up --build -d
 | Tx Decoder  | `src/decode/txPool.ts`      | Worker thread pool for parallel protobuf decoding              |
 | Assembly    | `src/assemble/blockJson.ts` | Combines RPC responses + decoded txs into `BlockJson`          |
 | Normalize   | `src/normalize/`            | Event normalization (base64→UTF8) and governance data parsing  |
-| Database    | `src/db/`                   | PostgreSQL pooling, partitioning, progress tracking            |
+| Database    | `src/db/`                   | PostgreSQL pooling, partitioning, progress tracking, bulk mode |
 | Sink        | `src/sink/`                 | Output backends: stdout, file, postgres, clickhouse, null      |
 | Runner      | `src/runner/`               | `syncRange` (backfill) and `follow` (real-time polling) modes  |
+| Health      | `src/health/`               | HTTP `/health` endpoint + shared liveness state (Level 1 mon.) |
 
 ### Key Types
 
@@ -156,7 +157,38 @@ Defined in `src/sink/types.ts`:
 - Undici agent with 128 connections pool, 10-60s keepalive
 - Token bucket rate limiting (`src/rpc/ratelimit.ts`)
 - Exponential backoff with jitter for 5xx/429 errors
-- Retries ECONNRESET, ETIMEDOUT, AbortError
+- Broad transient classifier `isRetryableRpcError()` covers `fetch failed`,
+  `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`, `EAI_AGAIN`,
+  `UND_ERR_*`, HTTP 429/5xx — walks `error.cause` chain (undici wraps real
+  cause inside `TypeError: fetch failed`)
+- `waitForRpcStatus()` polls `/status` with infinite exponential backoff
+  (capped at 30s) — used at startup, in follow loop, and indirectly by
+  `syncRange` retry path. Indexer no longer crashes when archive node goes
+  away; it pauses and resumes automatically.
+- Updates `healthState.rpcReachable` so `/health` reflects the real archive
+  node state.
+
+**Bulk Mode** (`src/db/bulk-mode.ts`, `PG_BULK_MODE=true`):
+- On startup: drops 33 secondary indexes and creates new range partitions
+  as `UNLOGGED` (no WAL) — drastically speeds up backfill into ICS-era
+  blocks (heights 18.5M+).
+- On entering follow mode (or if `FOLLOW=false` exits): converts UNLOGGED
+  partitions back to LOGGED and recreates indexes via `bulkModeOff()`.
+- Never drops primary keys.
+- Updates `healthState.bulkMode` for `/health` reporting.
+
+**Health Endpoint** (`src/health/`):
+- Lightweight node:http server on `HEALTH_PORT` (default 3000).
+- `GET /health`, `/healthz` → 200/503 + JSON.
+- Three checks: db query against `core.indexer_progress`, progress
+  freshness (`now() - updated_at <= HEALTH_STALE_SECONDS`, default 180s),
+  in-memory `rpcReachable` flag.
+- 5-minute startup grace prevents flapping on cold starts.
+- Tracks `phase` (`starting → backfill → follow → shutdown`) and
+  `bulk_mode`. State lives in `src/health/state.ts` and is mutated by
+  `rpc/client.ts` and the runners (avoid circular imports).
+- Wired to docker-compose `healthcheck:` so `restart: unless-stopped` will
+  reboot the container if it stops making progress.
 
 **Worker Thread Pool** (`src/decode/txPool.ts`):
 - N workers from `txWorker.ts` using `node:worker_threads`
@@ -208,6 +240,12 @@ Key variables (see `.env.example` for full list):
 - `CONCURRENCY` - Max in-flight requests
 - `RPS` - Requests per second limit
 - `PG_*` - PostgreSQL connection settings
+- `PG_BULK_MODE=true` - Drop indexes + UNLOGGED partitions for fast backfill,
+  auto-restored when entering follow mode
+- `HEALTH_PORT` (default 3000) - HTTP port for `/health`
+- `HEALTH_STALE_SECONDS` (default 180) - Block-progress freshness threshold
+- `HEALTH_STARTUP_GRACE_SECONDS` (default 300) - No 503 during cold start
+- `HEALTH_ENABLED` (default true) - Disable to skip starting the server
 
 ---
 
