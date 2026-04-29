@@ -1,105 +1,82 @@
-> ⚠️ This file is the inherited Logos AGENTS.md. It will be rewritten for Miden by the agents-context subagent. Until then, treat all rules as guidelines, not invariants.
+# AGENTS.md — Miden indexer operating context
 
-# Agent Roles — Logos Indexer
+## Mission
 
-This file describes the recommended sub-agent workflow for working on this project.
-Any agent picking up work here should follow the **research → execute → review** pattern.
+This branch implements the Miden L2 indexer. Live target: `miden-node 0.13.4` (proto in `proto/`).
 
----
+The indexer follows a live Miden node over public gRPC, persists explorer-visible data in Postgres, and serves a read-only HTTP API for block-explorer consumers.
 
-## Roles
+## Repo conventions
 
-### `research`
-- Read `docs/api.md` before touching any RPC or network code.
-- Read `docs/indexer-api.md` before touching the explorer API.
-- Read `docs/operations.md` before changing deployment, env, Docker, or health checks.
-- Read `docs/network-upgrades.md` before adapting the indexer to a new Logos release.
-- Verify upstream Logos release notes at https://github.com/logos-blockchain/logos-blockchain/releases
-  before changing anything that depends on block structure or API behaviour.
-- Do NOT invent API fields, endpoints, or block schemas. If unsure, check the node directly:
-  ```
-  curl http://localhost:8080/cryptarchia/info
-  curl "http://localhost:8080/cryptarchia/blocks?slot_from=X&slot_to=Y"
-  ```
-- Check `docs/future.md` before implementing anything related to transactions or balances —
-  those features are deliberately deferred.
+- This repository is a branch-per-network monorepo. Network branches are intentionally independent, for example `logos-indexer-v0.1.2` and `miden-indexer-v0.13.4`.
+- The current branch is the Miden branch for `miden-node 0.13.4`.
+- Do **not** cross-port code, schema, Docker, or documentation from `main` or another network branch without explicit instruction.
+- Treat Miden-specific protocol facts as branch-local facts. Logos/Namada/other-network assumptions do not apply here.
 
-### `executor`
-- Make one logical change at a time. Run `npm run build` or `tsx src/index.ts` to verify.
-- Always use explicit types from `src/types.d.ts`; do not use `any`.
-- Keep server paths explicit: node binary at `/pool0/logos`, indexer at `/pool0/logos-indexer`.
-- Log every significant action at `info` level; use `debug` for per-block noise.
-- Never commit `.env` files or any secrets.
+## Don't-touch list
 
-### `review`
-- After any change to `src/sink/postgres.ts`, verify SQL matches `initdb/001-schema.sql`.
-- After any change to `src/rpc/client.ts`, test against the live node at `localhost:8080`.
-- Confirm `ON CONFLICT DO NOTHING` / `DO UPDATE` semantics are correct for each upsert.
-- Check that `processBlock()` handles `block.header.id === undefined`
-  (blocks from `/storage/block` lack an `id` field).
-- Crash safety: `processBlock()` wraps block + leader writes in one transaction.
-  If the process crashes mid-block, the transaction rolls back and restart
-  re-indexes the same slot range idempotently.
-- Live processing errors should close/reconnect SSE instead of silently
-  continuing; gap-fill on reconnect recovers missed slots.
-- Public explorer views should default to finalized blocks unless a caller
-  explicitly requests `finalized=all`.
+- `proto/` — upstream pin for `miden-node 0.13.4`; bump only on an explicit version-upgrade task.
+- `docs/api.md`, `docs/data-model.md`, `docs/schema.md` — truth sources; coordinate any change with a research subagent.
+- `initdb/001-schema.sql` — shipped base schema; after release, use additive migrations only and do not destructively edit existing columns.
 
----
+## Architecture map
 
-## Key constraints (do not violate)
+- `src/config.ts` exports `config` and `Config`; it validates runtime environment with zod and owns defaults for node, Postgres, runner, HTTP, and logging settings.
+- `src/rpc/client.ts` exports `MidenRpcClient` and `createMidenRpcClient`; it loads `proto/proto/rpc.proto`, wraps public unary gRPC methods, retries transient gRPC failures, converts wire digests/accounts to Buffers, and warns that `SyncState` v0.13.4 ignores nullifier prefixes.
+- `src/rpc/types.ts` exports RPC-layer TypeScript types matching `miden-node 0.13.4` lower-camel proto-loader output; `src/rpc/digest.ts` owns digest/account hex and felt-lane conversion helpers.
+- `src/sink/postgres.ts` exports `processBlock`, `processBatch`, and row types; it inserts block bundles and optional full-scope rows into Postgres, derives `block_hash` as `SHA-256(raw_block_bytes)`, and updates progress with `GREATEST`.
+- `src/runner/index.ts`, `src/runner/syncRange.ts`, and `src/runner/follow.ts` export `startRunner`, `syncRange`, and `startFollow`; they choose a start block, fetch headers plus raw blocks, use bounded concurrency, backfill to tip, then poll-follow.
+- `src/api.ts` exports `createApiServer` and `startApiServer`; it serves `/health` and read-only `/api/v1/*` explorer endpoints from Postgres, hex-encodes `BYTEA`, paginates list endpoints, and returns stable error bodies.
+- `src/db/pg.ts` exports `getPool`, `withTx`, and `closePool`; `src/db/progress.ts` exports `getLastBlock` and `setLastBlock` using the singleton `miden_indexer_progress` row.
+- `src/utils/logger.ts` exports the Winston `logger`; `src/utils/retry.ts` exports `withRetry` for retryable network/5xx/429 failures.
 
-| Constraint | Reason |
-|---|---|
-| No `any` types | TypeScript strict mode — use types from `types.d.ts` |
-| No wallet balance polling | Privacy limitation — see `docs/future.md` |
-| No inventing API fields | Logos API is underdocumented; stick to what `docs/api.md` confirms |
-| `ON CONFLICT DO NOTHING` on block insert | Re-runs from same slot must be idempotent |
-| `processBlock` wraps block+leader in one transaction | Prevents partial state on crash |
-| `processBatch` for backfill | Single transaction per batch; bulk unnest INSERT |
-| `setLastSlot` uses `GREATEST` | Progress never goes backwards (safe for concurrent updates) |
-| Progress table always updated after each batch | Enables safe restart without re-indexing |
-| `lib-stream` is NDJSON not SSE | Use `http.request` + readline, not EventSource |
+## Live deps
 
----
+- Host `miden-node` public gRPC: `127.0.0.1:57291`.
+- Postgres: whatever the deployment dictates (`DATABASE_URL` or `PG_HOST`/`PG_PORT`/`PG_DB`/`PG_USER`/`PG_PASSWORD`).
 
-## Quick-start for a new agent
+## Confidence guard
 
-```bash
-cd /pool0/logos-indexer
-cat docs/api.md          # understand the node API
-cat src/types.d.ts       # understand data shapes
-cat initdb/001-schema.sql  # understand the DB schema
-cat src/sink/postgres.ts   # understand write path (processBlock / processBatch)
-cat src/runner/follow.ts   # understand gap-fill + serial SSE queue
-cat docs/indexer-api.md    # understand explorer API contract
-cat docs/operations.md     # understand env, Docker, troubleshooting
-cat docs/network-upgrades.md # understand future release workflow
-npm install
-cp .env.example .env     # fill in PG_PASSWORD
-psql $DATABASE_URL -f initdb/001-schema.sql
-npm run dev
-```
+Every change must satisfy:
 
-Health check: `curl http://localhost:3001/health`
-Explorer API: `curl http://localhost:3001/api/v1/stats`
+1. Fields/methods exist in `proto/` (not assumed from generic Miden knowledge).
+2. `npm run build` is green.
+3. For sink/runner changes: idempotent re-run produces no new rows; progress monotonic via `GREATEST`.
+4. No secrets in diff.
 
-## Current status (v0.1.2)
+## How to add a new RPC method
 
-- [x] Block indexing (slot, height, leader_key, raw JSON)
-- [x] Leader/validator statistics
-- [x] Backfill with resume
-- [x] Live SSE follow
-- [x] Gap-free operation: gap-fill on every connect/reconnect
-- [x] Serial SSE event queue (no out-of-order progress)
-- [x] Atomic block + leader transactions (idempotent on restart)
-- [x] Bulk INSERT for backfill (`processBatch` with unnest)
-- [x] Retry with exponential backoff on all RPC calls
-- [x] Exponential backoff on SSE reconnect (5s → 60s)
-- [x] SSE stall detection via fetchInfo heartbeat
-- [x] Finality tracking via `/cryptarchia/lib-stream` (NDJSON)
-- [x] Health endpoint `GET /health` (lag, node_mode, uptime)
-- [x] Explorer API: `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/validators`
-- [x] API, operations, and network-upgrade documentation
-- [ ] Transactions — deferred to v0.2 (see `docs/future.md`)
-- [ ] Wallet balances — blocked by privacy design (see `docs/future.md`)
+1. Confirm the method, request, response, and field names in `proto/proto/rpc.proto` and imported files under `proto/proto/types/`.
+2. Add or extend typed request/response shapes in `src/rpc/types.ts`; keep lower-camel field names because proto-loader is configured that way.
+3. Add a typed wrapper and wire encoder/decoder in `src/rpc/client.ts`; do not expose raw `unknown` beyond the client boundary.
+4. Add a smoke call or focused assertion in `scripts/smoke-rpc.ts` against `127.0.0.1:57291` when the method is read-only. Do not invoke write endpoints unless explicitly instructed.
+5. Document the method and live verification result in `docs/api.md`.
+6. Run `npm run build`; run the relevant smoke script if live dependencies are available.
+
+## How to add a new column
+
+1. Add an additive migration file such as `initdb/002-add-example-column.sql`; do not destructively edit `initdb/001-schema.sql` after it is shipped.
+2. Make the new column `NULLABLE` on add unless a safe backfill and deployment plan exists.
+3. Document the column, proto source, nullability, and scope in `docs/schema.md`.
+4. Populate it in `src/sink/postgres.ts` only from data actually available through `src/rpc/` or decoded bytes.
+5. Expose it in `src/api.ts` if explorer consumers need it, and update `docs/indexer-api.md`.
+6. Run `npm run build`; for sink/API changes, run the relevant smoke script and verify duplicate indexing stays idempotent.
+
+## Open questions
+
+1. **Digest byte order for canonical hex.** Proto exposes digest lanes as `fixed64 d0..d3`, but this document's `0x` encoding convention must be verified against the official Rust SDK/CLI display format before freezing URLs and DB unique keys.
+2. **Global transaction enumeration.** v0.13.4 public proto lacks a global transaction list or `GetTransactionById`; confirm whether raw `GetBlockByNumber` bytes contain decodable transaction IDs/headers and whether indexing them is stable across v0.13.x.
+3. **Complete note discovery.** `SyncNotes` is tag-based and tags are best-effort filters. Define an official strategy for full-public-note coverage (all tags? raw block decode? store internals?) before claiming explorer-wide note completeness.
+4. **Private-note consumption payload visibility.** Public docs/protos confirm nullifiers are public and private note details are required by the consumer, but do not clearly state which private-note data, if any, is retained in node/block storage after submitting a proven transaction. Confirm with live v0.13.4 raw block decode before documenting beyond the matrix above.
+5. **Finality/L1 settlement.** No separate finalized/LIB field was found in public v0.13.4 RPC. Confirm whether Miden testnet/devnet has any finality or L1 settlement notion that should be exposed later.
+6. **Account storage-mode decoding.** Docs state storage mode is encoded in the 3rd/4th most significant bits of account ID; implement and test decoding with official SDK examples before schema constraints or UI labels depend on it.
+7. **Public account exhaustive indexing limits.** `GetAccount`, `SyncAccountVault`, and `SyncAccountStorageMaps` have thresholds/pagination and near-tip restrictions; future agents must test live RPC limits and decide backfill policy for large public accounts.
+
+## Pointers
+
+- `docs/api.md` — live-verified public gRPC surface for `miden-node 0.13.4`.
+- `docs/schema.md` — Postgres schema rationale and migration policy.
+- `docs/indexer-api.md` — read-only HTTP explorer API contract.
+- `docs/operations.md` — Docker/runtime operations, deployment, backup, restore, troubleshooting.
+- `docs/network-upgrades.md` — procedure for bumping to a new `miden-node` version.
+- `docs/future.md` — prioritized future work and acceptance notes.
