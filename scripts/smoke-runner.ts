@@ -98,7 +98,11 @@ async function main(): Promise<void> {
   try {
     await initSchema(pool);
     const tip = chainTip(await rpc.status());
-    const startBlock = Number(process.env.START_BLOCK ?? Math.max(0, tip - 100));
+    const startBlockEnv = process.env.START_BLOCK;
+    const startBlock =
+      startBlockEnv === undefined || startBlockEnv === ''
+        ? Math.max(0, tip - 100)
+        : Number(startBlockEnv);
     const smokeConfig: Config = {
       NODE_URL: process.env.NODE_URL ?? 'http://127.0.0.1:57291',
       DATABASE_URL: databaseUrl,

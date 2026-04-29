@@ -27,7 +27,7 @@ Purpose: one row per canonical block header. MVP stores structured `BlockHeader`
 | name | type | nullable | meaning | proto source | scope |
 |---|---|---:|---|---|---|
 | `block_num` | `BIGINT` | no | Sequential block number. | `blockchain.BlockHeader.block_num` (`fixed32`) | MVP |
-| `block_hash` | `BYTEA` | no | Derived canonical header/block commitment used as explorer hash. | Not a direct v0.13.4 field; computed by indexer from the header. | MVP |
+| `block_hash` | `BYTEA` | no | Derived canonical block hash used as explorer hash. | Not a direct v0.13.4 field; computed by indexer as `SHA-256(GetBlockByNumber.block)` over the raw block bytes (see derivation note below). | MVP |
 | `prev_block_commitment` | `BYTEA` | no | Commitment of the previous block header. | `blockchain.BlockHeader.prev_block_commitment` | MVP |
 | `chain_commitment` | `BYTEA` | no | MMR commitment for the chain. | `blockchain.BlockHeader.chain_commitment` | MVP |
 | `account_root` | `BYTEA` | no | Account database root. | `blockchain.BlockHeader.account_root` | MVP |
