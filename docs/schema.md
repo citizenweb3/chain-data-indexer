@@ -179,3 +179,7 @@ The child tables use `ON DELETE CASCADE` for block-scoped transactions, notes, a
 ## Migration policy
 
 Schema files are versioned by filename: `001-schema.sql`, then future changes as `002-...sql`, `003-...sql`, and so on. After `001-schema.sql` is deployed, future changes should be additive migrations in new files rather than edits to `001`, except when rebuilding a throwaway development database before release.
+
+## `block_hash` derivation
+
+`miden-node v0.13.4` does not expose a current-block hash field in `BlockHeader`. The sink derives `miden_blocks.block_hash` as `SHA-256(GetBlockByNumber.block)` over the raw serialized block bytes. This uses the canonical bytes returned by the node, avoids inventing a header-root concatenation format, and gives explorer queries a stable collision-resistant identifier.
