@@ -24,14 +24,41 @@ Startup is normally under a minute once the image is built. Large backfills take
 docker compose logs -f indexer
 ```
 
-## Verify
+## Local override (host firewall blocks Docker bridge → miden-node)
+
+If the indexer container can reach Postgres but `host.docker.internal:57291` times out (UFW/firewalld blocks the Docker bridge), use a local-only override that joins the indexer to the host network. The override file is gitignored.
 
 ```sh
-curl http://localhost:15080/health
-curl http://localhost:15080/api/v1/stats
+cat > docker-compose.override.yaml <<'EOF'
+services:
+  indexer:
+    network_mode: host
+    extra_hosts: !reset []
+    ports: !reset []
+    environment:
+      NODE_URL: http://127.0.0.1:57291
+      DATABASE_URL: postgres://${POSTGRES_USER:-miden}:${POSTGRES_PASSWORD:-changeme}@127.0.0.1:${POSTGRES_HOST_PORT:-15433}/${POSTGRES_DB:-miden_indexer}
+      PG_HOST: 127.0.0.1
+      PG_PORT: ${POSTGRES_HOST_PORT:-15433}
+      API_PORT: ${API_HOST_PORT:-15080}
+      INDEXER_HTTP_PORT: ${API_HOST_PORT:-15080}
+EOF
+docker compose up -d
 ```
 
-The stats response should be JSON. During live operation, `last_block` should advance as the local `miden-node` advances.
+In this mode the indexer's API binds directly to the host on `API_HOST_PORT` (15080 by default). Open the port in the host firewall (`ufw allow 15080/tcp`) if external explorer access is required.
+
+## Crash and RPC-disconnect recovery
+
+The indexer is designed to resume from where it stopped without manual intervention:
+
+- Every batch is one Postgres transaction; progress (`miden_indexer_progress.last_block`) is upserted with `GREATEST` inside that transaction. A crash mid-batch rolls the whole batch back, so progress is never ahead of committed data.
+- On startup the runner reads `last_block` from the DB and gap-fills from `last_block + 1` to current chain tip via `syncRange` before entering the live-follow loop.
+- The follow loop catches transient RPC errors and retries with exponential backoff (2s … 60s). It does not exit on RPC errors.
+- Sink writes use `ON CONFLICT DO NOTHING`, so a re-run over already-indexed blocks is a no-op.
+- Compose uses `restart: unless-stopped`. If the process exits anyway (uncaught error during initial gap-fill, OOM, etc.), Docker restarts the container and the same gap-fill kicks in.
+
+To verify locally: `docker kill miden-indexer-indexer-1` mid-backfill, watch the container restart, confirm `last_block` continues from where it stopped with no gaps (`SELECT count(*) FROM miden_blocks` matches `last_block + 1`).
 
 ## Backfill from a specific block
 

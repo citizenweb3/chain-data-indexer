@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 *.log
+docker-compose.override.yaml
+docker-compose.override.yml
