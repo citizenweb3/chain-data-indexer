@@ -40,9 +40,11 @@ See [`.env.example`](.env.example) for all scaffold defaults.
 | `DATABASE_URL` | `postgresql://miden:CHANGE_ME@localhost:5432/miden_indexer` | PostgreSQL URL for `npm run db:init`. |
 | `PG_*` | see `.env.example` | PostgreSQL connection used by the runtime pool. |
 | `INDEXER_HTTP_PORT` | `3001` | HTTP port for `/health` and stub `/api/v1/*` routes. |
-| `START_BLOCK` | `0` | First block number when no saved progress exists. TBD by runner agent. |
-| `BATCH_SIZE` | `100` | Placeholder batch size. TBD by runner/RPC agents. |
-| `POLL_INTERVAL_MS` | `5000` | Placeholder polling interval. TBD by runner agent. |
+| `START_BLOCK` | unset | Optional first block number; when unset, resumes from saved progress + 1. |
+| `BATCH_SIZE` | `100` | Backfill batch size. |
+| `POLL_INTERVAL_MS` | `1500` | Live-follow polling interval in milliseconds. |
+| `BACKFILL_CONCURRENCY` | `1` | Maximum concurrent RPC block fetches within one batch. |
+| `MAX_LAG_BLOCKS_BEFORE_BATCH` | `5` | Lag threshold for switching follow mode from small batches (1–5) to `BATCH_SIZE`. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
 
 ## Current scaffold status

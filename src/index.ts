@@ -1,7 +1,8 @@
 import { config } from './config.js';
 import { startApiServer } from './api.js';
 import { getPool, closePool } from './db/pg.js';
-import { startFollow } from './runner/follow.js';
+import { createMidenRpcClient } from './rpc/client.js';
+import { startRunner } from './runner/index.js';
 import { logger } from './utils/logger.js';
 
 function printHelp(): void {
@@ -14,7 +15,7 @@ Usage:
 Environment:
   NODE_URL=${config.NODE_URL}
   INDEXER_HTTP_PORT=${config.INDEXER_HTTP_PORT}
-  START_BLOCK=${config.START_BLOCK}
+  START_BLOCK=${config.START_BLOCK ?? '(saved progress + 1)'}
 `);
 }
 
@@ -28,19 +29,31 @@ async function main(): Promise<void> {
     node_url: config.NODE_URL,
     start_block: config.START_BLOCK,
     batch_size: config.BATCH_SIZE,
+    poll_interval_ms: config.POLL_INTERVAL_MS,
   });
 
-  getPool();
+  const pool = getPool();
   logger.info('PostgreSQL pool initialized');
 
-  const stopRunner = await startFollow();
+  const rpc = createMidenRpcClient({ url: config.NODE_URL, requestTimeoutMs: 30_000 });
+  logger.info('Miden RPC client initialized', { node_url: config.NODE_URL });
+
   const stopApi = startApiServer();
+  const runner = await startRunner(rpc, pool, config);
+  let shuttingDown = false;
 
   async function shutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info('Shutting down', { signal });
-    stopRunner();
+    logger.info('Stopping runner');
+    await runner.stop();
+    logger.info('Stopping HTTP API');
     stopApi();
+    logger.info('Closing PostgreSQL pool');
     await closePool();
+    logger.info('Closing Miden RPC client');
+    rpc.close();
     process.exit(0);
   }
 

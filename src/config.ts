@@ -1,6 +1,11 @@
 import { z } from 'zod';
 import 'dotenv/config';
 
+const optionalNonNegativeInt = z.preprocess(
+  (value) => (value === '' || value === undefined ? undefined : value),
+  z.coerce.number().int().nonnegative().optional(),
+);
+
 const ConfigSchema = z.object({
   NODE_URL: z.string().url().default('http://127.0.0.1:57291'),
   DATABASE_URL: z.string().url().optional(),
@@ -10,9 +15,11 @@ const ConfigSchema = z.object({
   PG_USER: z.string().default('miden'),
   PG_PASSWORD: z.string().min(1).default('CHANGE_ME'),
   INDEXER_HTTP_PORT: z.coerce.number().int().positive().default(3001),
-  START_BLOCK: z.coerce.number().int().nonnegative().default(0),
+  START_BLOCK: optionalNonNegativeInt,
   BATCH_SIZE: z.coerce.number().int().positive().default(100),
-  POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5_000),
+  POLL_INTERVAL_MS: z.coerce.number().int().min(100).default(1_500),
+  BACKFILL_CONCURRENCY: z.coerce.number().int().positive().max(100).default(1),
+  MAX_LAG_BLOCKS_BEFORE_BATCH: z.coerce.number().int().nonnegative().default(5),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });
 
