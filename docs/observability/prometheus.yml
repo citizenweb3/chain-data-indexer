@@ -1,0 +1,40 @@
+# Reference Prometheus scrape configuration for chain-data-indexer.
+#
+# Use this if you are running classic Prometheus instead of Grafana Alloy.
+# Drop into /etc/prometheus/prometheus.yml or merge with your existing
+# scrape_configs section.
+#
+# Replace the static_configs target if your indexer is reachable on a
+# different host/port (HEALTH_PORT in the indexer .env file).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+  external_labels:
+    app: cosmos-indexer
+
+scrape_configs:
+  - job_name: cdi
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 127.0.0.1:3030  # adjust to match HEALTH_PORT
+        labels:
+          instance: cdi-host
+
+  # Host metrics. Either keep node_exporter as-is, or migrate to Alloy
+  # (see docs/observability/alloy.river — Alloy can replace node_exporter
+  # via prometheus.exporter.unix and ship metrics + logs from one binary).
+  - job_name: node
+    static_configs:
+      - targets:
+          - 127.0.0.1:9100
+
+# remote_write is optional. Enable if you want to ship to a central
+# Prometheus / Mimir / Grafana Cloud:
+#
+# remote_write:
+#   - url: ${PROM_REMOTE_WRITE_URL}
+#     basic_auth:
+#       username: ${PROM_REMOTE_WRITE_USERNAME}
+#       password: ${PROM_REMOTE_WRITE_PASSWORD}

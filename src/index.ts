@@ -20,6 +20,7 @@ import { syncRange } from './runner/syncRange.ts';
 import { followLoop } from './runner/follow.ts';
 import { startHealthServer, stopHealthServer } from './health/server.ts';
 import { setPhase, setBulkMode } from './health/state.ts';
+import { startMetricsSampler, type SamplerHandle } from './metrics/sampler.ts';
 import type { Server } from 'node:http';
 
 EventEmitter.defaultMaxListeners = 0;
@@ -28,6 +29,7 @@ const log = getLogger('index');
 let activeSink: Sink | null = null;
 let activePool: TxDecodePool | null = null;
 let activeHealthServer: Server | null = null;
+let activeSampler: SamplerHandle | null = null;
 let shuttingDown = false;
 
 async function gracefulShutdown(signal: string) {
@@ -36,6 +38,7 @@ async function gracefulShutdown(signal: string) {
   setPhase('shutdown');
   log.warn(`${signal} received, flushing buffers…`);
   try {
+    activeSampler?.stop();
     await activeSink?.flush?.();
     await activeSink?.close();
     await activePool?.close();
@@ -65,6 +68,7 @@ async function main() {
   // Start health server first so /health is reachable even while RPC/DB are still
   // coming up. Returns 503 with details until everything is wired.
   const healthEnabled = (process.env.HEALTH_ENABLED ?? 'true').toLowerCase() !== 'false';
+  const metricsEnabled = (process.env.METRICS_ENABLED ?? 'true').toLowerCase() !== 'false';
   if (healthEnabled) {
     const port = Number(process.env.HEALTH_PORT ?? 3000);
     const staleSeconds = Number(process.env.HEALTH_STALE_SECONDS ?? 180);
@@ -74,6 +78,7 @@ async function main() {
       staleSeconds,
       startupGraceSeconds,
       progressId: cfg.pg?.progressId ?? 'default',
+      metricsEnabled,
       getDbPool: () => {
         try {
           return getPgPool();
@@ -156,6 +161,22 @@ async function main() {
   activeSink = sink;
   activePool = decodePool;
 
+  if (metricsEnabled) {
+    const samplerIntervalMs = Number(process.env.METRICS_SAMPLE_INTERVAL_MS ?? 5_000);
+    activeSampler = startMetricsSampler({
+      intervalMs: samplerIntervalMs,
+      rpc,
+      decodePool,
+      getDbPool: () => {
+        try {
+          return getPgPool();
+        } catch {
+          return null;
+        }
+      },
+    });
+  }
+
   setPhase('backfill');
   const backfill = await syncRange(rpc, decodePool, sink, {
     from: startFrom,
@@ -193,6 +214,7 @@ async function main() {
   await decodePool.close();
   await sink.flush?.();
   await sink.close();
+  activeSampler?.stop();
   await stopHealthServer(activeHealthServer);
 }
 

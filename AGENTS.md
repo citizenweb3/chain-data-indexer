@@ -140,6 +140,7 @@ docker compose down -v && docker compose --env-file .env up --build -d
 | Sink        | `src/sink/`                 | Output backends: stdout, file, postgres, clickhouse, null      |
 | Runner      | `src/runner/`               | `syncRange` (backfill) and `follow` (real-time polling) modes  |
 | Health      | `src/health/`               | HTTP `/health` endpoint + shared liveness state (Level 1 mon.) |
+| Metrics     | `src/metrics/`              | Prometheus `/metrics` registry + 5s sampler (Level 2 mon.)     |
 
 ### Key Types
 
@@ -176,6 +177,28 @@ Defined in `src/sink/types.ts`:
   partitions back to LOGGED and recreates indexes via `bulkModeOff()`.
 - Never drops primary keys.
 - Updates `healthState.bulkMode` for `/health` reporting.
+
+**Prometheus Metrics** (`src/metrics/`):
+- `registry.ts` owns an isolated `prom-client` Registry (not the global one)
+  with all `cdi_*` series — counters, histograms, gauges — plus
+  `collectDefaultMetrics({prefix:'cdi_node_'})` for Node.js process stats.
+- `sampler.ts` ticks every `METRICS_SAMPLE_INTERVAL_MS` (default 5000) to
+  refresh pg pool stats, decode pool busy count, and the chain tip via
+  `rpc.fetchStatus()` (single-in-flight, 4s timeout, `unref()`'d interval).
+- Hook points: `src/sink/postgres.ts` (`observeFlush`), `src/rpc/client.ts`
+  (`observeRpc` in try/finally around `getJson`), `src/runner/syncRange.ts`
+  (`observeBlock`), `src/health/state.ts` (forwards `phase`, `bulk_mode`,
+  `rpc_outage`, `indexed_height` to gauges so the existing state object is
+  the single write site).
+- Exposed at `GET /metrics` on the same `HEALTH_PORT` as `/health`.
+- Cardinality discipline: only label by `module`, `level`, `endpoint`,
+  `group`, `table`, `phase`. Never `height`, `tx_hash`, or `validator_addr`.
+
+**Structured Logs** (`src/utils/logger.ts`):
+- `LOG_FORMAT` env var (`pretty` | `json`, default `pretty`) chooses the
+  Winston encoder explicitly — no auto-detection. `json` emits
+  `{ts, level, label, message, metadata}` newline-delimited, ready for
+  Loki / ELK ingestion.
 
 **Health Endpoint** (`src/health/`):
 - Lightweight node:http server on `HEALTH_PORT` (default 3000).
@@ -242,10 +265,13 @@ Key variables (see `.env.example` for full list):
 - `PG_*` - PostgreSQL connection settings
 - `PG_BULK_MODE=true` - Drop indexes + UNLOGGED partitions for fast backfill,
   auto-restored when entering follow mode
-- `HEALTH_PORT` (default 3000) - HTTP port for `/health`
+- `HEALTH_PORT` (default 3000) - HTTP port for `/health` and `/metrics`
 - `HEALTH_STALE_SECONDS` (default 180) - Block-progress freshness threshold
 - `HEALTH_STARTUP_GRACE_SECONDS` (default 300) - No 503 during cold start
 - `HEALTH_ENABLED` (default true) - Disable to skip starting the server
+- `METRICS_ENABLED` (default true) - Toggle the Prometheus `/metrics` route + sampler
+- `METRICS_SAMPLE_INTERVAL_MS` (default 5000) - Sampler refresh interval
+- `LOG_FORMAT` (default `pretty`) - Set to `json` for machine-parseable logs (Loki/ELK)
 
 ---
 

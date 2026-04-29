@@ -9,6 +9,7 @@ import { createTokenBucket, TokenBucket } from './ratelimit.js';
 import { getLogger } from '../utils/logger.js';
 import { LogLevel } from '../types.js';
 import { markRpcOk, markRpcDown } from '../health/state.ts';
+import { observeRpc } from '../metrics/registry.ts';
 
 const agent = new Agent({
   connections: 128,
@@ -208,46 +209,55 @@ export function createRpcClient(opts: RpcClientOptions): RpcClient {
     params?: Record<string, string | number | boolean | undefined>,
   ): Promise<T> {
     const url = buildUrl(opts.baseUrl, path, params);
+    const endpoint = path.replace(/^\/+/, '/').split('?')[0] || '/';
+    const startedAt = Date.now();
+    let outcome: 'ok' | 'error' | 'timeout' = 'error';
 
-    for (let attempt = 0; attempt <= opts.retries; attempt++) {
-      await bucket.take(1);
+    try {
+      for (let attempt = 0; attempt <= opts.retries; attempt++) {
+        await bucket.take(1);
 
-      const ac = new AbortController();
-      const t = setTimeout(() => ac.abort(), opts.timeoutMs);
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), opts.timeoutMs);
 
-      try {
-        const res = await fetch(url, { method: 'GET', headers, signal: ac.signal });
-        clearTimeout(t);
+        try {
+          const res = await fetch(url, { method: 'GET', headers, signal: ac.signal });
+          clearTimeout(t);
 
-        if (!res.ok) {
-          const text = await res.text().catch(() => '');
-          const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} :: ${text.slice(0, 200)}`);
-          if ((res.status >= 500 || res.status === 429) && attempt < opts.retries) {
-            markRpcDown(err);
+          if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} :: ${text.slice(0, 200)}`);
+            if ((res.status >= 500 || res.status === 429) && attempt < opts.retries) {
+              markRpcDown(err);
+              const delay = jitter(opts.backoffMs * Math.pow(2, attempt), opts.backoffJitter);
+              log.debug('retry http', { attempt, delay, status: res.status });
+              await sleep(delay);
+              continue;
+            }
+            throw err;
+          }
+
+          markRpcOk();
+          outcome = 'ok';
+          return (await res.json()) as T;
+        } catch (e: any) {
+          clearTimeout(t);
+          const transient = isRetryableRpcError(e);
+          if (transient) markRpcDown(e);
+          if (transient && attempt < opts.retries) {
             const delay = jitter(opts.backoffMs * Math.pow(2, attempt), opts.backoffJitter);
-            log.debug('retry http', { attempt, delay, status: res.status });
+            log.debug('retry net', { attempt, delay, error: String(e?.message ?? e) });
             await sleep(delay);
             continue;
           }
-          throw err;
+          if (e?.name === 'AbortError' || /timeout/i.test(String(e?.message ?? ''))) outcome = 'timeout';
+          throw e;
         }
-
-        markRpcOk();
-        return (await res.json()) as T;
-      } catch (e: any) {
-        clearTimeout(t);
-        const transient = isRetryableRpcError(e);
-        if (transient) markRpcDown(e);
-        if (transient && attempt < opts.retries) {
-          const delay = jitter(opts.backoffMs * Math.pow(2, attempt), opts.backoffJitter);
-          log.debug('retry net', { attempt, delay, error: String(e?.message ?? e) });
-          await sleep(delay);
-          continue;
-        }
-        throw e;
       }
+      throw new Error('unreachable');
+    } finally {
+      observeRpc(endpoint, outcome, (Date.now() - startedAt) / 1000);
     }
-    throw new Error('unreachable');
   }
 
   async function fetchBlock(height: number): Promise<any> {

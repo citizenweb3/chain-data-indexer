@@ -29,6 +29,7 @@ type AnyOut = ProgressMsg | ReadyMsg | OkMsg | ErrMsg;
 export type TxDecodePool = {
   submit: (txBase64: string, timeoutMs?: number) => Promise<any>;
   close: () => Promise<void>;
+  stats: () => { size: number; busy: number; idle: number; pending: number };
 };
 
 const INIT_TIMEOUT_MS = 30000;
@@ -210,5 +211,14 @@ export function createTxDecodePool(size: number, opts?: { protoDir?: string }): 
     await Promise.all(workers.map((w) => w.terminate()));
   }
 
-  return { submit, close };
+  function stats() {
+    return {
+      size,
+      busy: size - idle.length,
+      idle: idle.length,
+      pending: pending.size,
+    };
+  }
+
+  return { submit, close, stats };
 }

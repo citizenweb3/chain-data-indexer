@@ -294,10 +294,99 @@ The compose file wires this into a Docker `healthcheck:` (interval 30s,
 start_period 5m, retries 3). With `restart: unless-stopped`, a container
 that returns 503 three times in a row is rebooted automatically.
 
-> **Roadmap**: Level 2 (Prometheus `/metrics` via prom-client on the same
-> port) and Level 4 (Grafana Alloy → Loki log shipping) are tracked in the
-> session plan but not yet implemented. Alerting (Level 3) is delegated to
-> the external Grafana stack.
+### Prometheus Metrics (Level 2)
+
+The same `HEALTH_PORT` also serves Prometheus text exposition at `/metrics`,
+populated by [`prom-client`](https://github.com/siimon/prom-client). All
+indexer-domain series are prefixed `cdi_*`; Node.js process defaults are
+prefixed `cdi_node_*`.
+
+```bash
+curl -sS http://127.0.0.1:${HEALTH_PORT:-3000}/metrics | head
+```
+
+| Variable | Default | Notes |
+|---|---|---|
+| `METRICS_ENABLED` | `true` | Set `false` to disable the `/metrics` route and the sampler |
+| `METRICS_SAMPLE_INTERVAL_MS` | `5000` | How often the sampler refreshes pg pool / decode pool / chain tip gauges |
+
+Selected series (full list in `src/metrics/registry.ts`):
+
+- `cdi_indexed_height`, `cdi_chain_tip_height`, `cdi_lag_blocks`
+- `cdi_blocks_processed_total`, `cdi_block_process_duration_seconds`
+- `cdi_flush_duration_seconds{group}`, `cdi_flush_rows_total{table}`
+- `cdi_rpc_requests_total{endpoint,status}`, `cdi_rpc_request_duration_seconds{endpoint}`
+- `cdi_rpc_outage_state` (1 while RPC is down)
+- `cdi_decode_pool_busy`, `cdi_decode_pool_size`
+- `cdi_pg_pool_active`, `cdi_pg_pool_idle`, `cdi_pg_pool_waiting`
+- `cdi_bulk_mode`, `cdi_phase_info{phase}`
+
+> **Cardinality discipline**: never label series by `height`, `tx_hash`, or
+> `validator_addr` — use only low-cardinality dimensions (`module`, `level`,
+> `endpoint`, `group`, `table`, `phase`).
+
+### Structured Logs (Level 4)
+
+`LOG_FORMAT` controls the log encoder explicitly (no auto-detection):
+
+| Value | Meaning |
+|---|---|
+| `pretty` (default) | Colorized printf, human-readable. Use locally. |
+| `json` | One JSON object per line: `{ts, level, label, message, metadata}`. Required for Loki / ELK ingestion. |
+
+The shipped `docker-compose.yaml` defaults to `LOG_FORMAT=json` so production
+containers emit machine-parseable lines out of the box.
+
+### Observability Integration
+
+The indexer exposes neutral interfaces (`/metrics` Prometheus text,
+JSON stdout) so any standard collector can consume them. Two reference
+configs live under `docs/observability/`:
+
+#### (a) Grafana Alloy on the host (recommended)
+
+`docs/observability/alloy.river` — single-binary collector that replaces
+`prometheus + node_exporter + promtail` on the host. It scrapes:
+
+- the indexer at `127.0.0.1:${HEALTH_PORT}/metrics`
+- host metrics via `prometheus.exporter.unix` (drop-in node_exporter replacement)
+- container stdout logs via `loki.source.docker` filtered to
+  `cosmos-indexer-app`, with a JSON parsing stage extracting `level` and
+  `label` (= module name from Winston's `getLogger(label)`)
+
+Before starting Alloy on the host, export your central-stack credentials
+(the config only references env vars — never hardcode URLs in the repo):
+
+```bash
+export PROM_REMOTE_WRITE_URL=...
+export PROM_REMOTE_WRITE_USERNAME=...
+export PROM_REMOTE_WRITE_PASSWORD=...
+export LOKI_WRITE_URL=...
+export LOKI_WRITE_USERNAME=...
+export LOKI_WRITE_PASSWORD=...
+```
+
+Migration from existing `prometheus + node_exporter`:
+
+```bash
+# 1. Install Alloy (https://grafana.com/docs/alloy/latest/set-up/install/)
+# 2. Copy the config
+sudo cp docs/observability/alloy.river /etc/alloy/config.alloy
+# 3. Start Alloy
+sudo systemctl enable --now alloy
+# 4. Verify scrape in central Grafana, then stop the legacy stack
+sudo systemctl disable --now prometheus node_exporter
+```
+
+#### (b) Classic Prometheus + Promtail (for OSS users)
+
+For sites that don't run the Grafana stack:
+
+- `docs/observability/prometheus.yml` — minimal scrape config for the indexer
+- `docs/observability/promtail-config.yml` — Docker SD + JSON pipeline equivalent
+
+Note that Grafana Agent / Promtail are in maintenance mode upstream; new
+deployments should prefer Alloy.
 
 ### Useful SQL Queries
 

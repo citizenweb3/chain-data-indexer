@@ -20,6 +20,7 @@ import { createServer, type Server } from 'node:http';
 import type { Pool } from 'pg';
 import { getLogger } from '../utils/logger.ts';
 import { healthState } from './state.ts';
+import { renderMetrics, METRICS_CONTENT_TYPE } from '../metrics/registry.ts';
 
 const log = getLogger('health');
 
@@ -29,6 +30,7 @@ export interface HealthServerOptions {
   startupGraceSeconds?: number;
   progressId: string;
   getDbPool: () => Pool | null;
+  metricsEnabled?: boolean;
 }
 
 interface CheckResult {
@@ -73,6 +75,22 @@ async function handleRequest(
 ): Promise<void> {
   const url = req.url ?? '/';
   const path = url.split('?')[0];
+
+  if (path === '/metrics' && opts.metricsEnabled !== false) {
+    try {
+      const body = await renderMetrics();
+      res.statusCode = 200;
+      res.setHeader('Content-Type', METRICS_CONTENT_TYPE);
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(body);
+    } catch (e) {
+      log.error(`metrics render failed: ${e}`);
+      res.statusCode = 500;
+      res.end('metrics error\n');
+    }
+    return;
+  }
+
   if (path !== '/health' && path !== '/healthz' && path !== '/') {
     res.statusCode = 404;
     res.end('not found\n');

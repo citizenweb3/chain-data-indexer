@@ -12,6 +12,7 @@ import { createRpcClientFromConfig, isRetryableRpcError, waitForRpcStatus } from
 import { createTxDecodePool } from '../decode/txPool.ts';
 import { createSink } from '../sink/index.ts';
 import { setLastIndexedHeight } from '../health/state.ts';
+import { observeBlock } from '../metrics/registry.ts';
 
 const log = getLogger('runner/syncRange');
 
@@ -240,6 +241,7 @@ export async function syncRange(
    * @returns {Promise<void>}
    */
   async function processHeight(h: number) {
+    const startedAt = Date.now();
     let tFetchBlock = 0;
     let tFetchResults = 0;
     let tDecode = 0;
@@ -313,6 +315,7 @@ export async function syncRange(
         timingAcc.flushMs += tFlush;
         timingAcc.txCount += txCount;
         timingAcc.evCount += evCount;
+        observeBlock((Date.now() - startedAt) / 1000);
       }
     }
   }

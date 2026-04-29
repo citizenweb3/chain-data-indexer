@@ -160,8 +160,11 @@ See `.env.example` for a complete list.
 | SINK         | Data sink type                     | `postgres`               |
 | RESUME       | Resume from last indexed block     | `true`                   |
 | PG_BULK_MODE | Drop indexes + UNLOGGED partitions for fast backfill (auto-restored on follow) | `true` |
-| HEALTH_PORT  | TCP port for `/health` endpoint    | `3000`                   |
+| HEALTH_PORT  | TCP port for `/health` and `/metrics` endpoints | `3000`        |
 | HEALTH_STALE_SECONDS | Block-progress freshness threshold | `180`            |
+| METRICS_ENABLED | Expose Prometheus `/metrics` on `HEALTH_PORT` | `true`        |
+| METRICS_SAMPLE_INTERVAL_MS | Sampler refresh interval (pg pool, decode pool, chain tip) | `5000` |
+| LOG_FORMAT   | `pretty` (default, human-readable) or `json` (Loki/ELK) | `pretty` |
 | NODE_OPTIONS | Node.js runtime options            | `--max-old-space-size=24576` |
 
 ---
@@ -248,6 +251,10 @@ secondary indexes from the write path during the backfill.
 - Container keeps exiting? Check `curl http://127.0.0.1:${HEALTH_PORT:-3000}/health`
   and `docker inspect cosmos-indexer-app --format '{{.State.Health.Status}}'`.
   See the **Monitoring & Maintenance** section in [DEPLOYMENT.md](DEPLOYMENT.md).
+- Need Prometheus metrics or log shipping? `curl http://127.0.0.1:${HEALTH_PORT:-3000}/metrics`
+  for the `cdi_*` series, set `LOG_FORMAT=json` for structured logs, and use
+  the reference collector configs in [`docs/observability/`](docs/observability/)
+  (Grafana Alloy or classic Prometheus + Promtail).
 - RPC archive node temporarily unavailable? The indexer now waits and resumes
   automatically (no crash loop) — see logs for `[rpc] startup: RPC unavailable`
   / `RPC is available again`.

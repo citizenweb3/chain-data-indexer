@@ -20,6 +20,7 @@ import { ensureCorePartitions } from '../db/partitions.js';
 import type { PoolClient } from 'pg';
 import { upsertProgress } from '../db/progress.js';
 import { getLogger } from '../utils/logger.js';
+import { observeFlush } from '../metrics/registry.ts';
 import { makeMultiInsert, execBatchedInsert } from './pg/batch.ts';
 import {
   normArray,
@@ -873,10 +874,17 @@ export class PostgresSink implements Sink {
       await upsertProgress(client, this.cfg.pg?.progressId ?? 'default', maxH);
 
       await client.query('COMMIT');
+      const tookMs = Date.now() - t0;
+      observeFlush('core', tookMs / 1000, {
+        blocks: snapshotCounts.blocks,
+        transactions: snapshotCounts.txs,
+        messages: snapshotCounts.msgs,
+        events: snapshotCounts.events,
+      });
       log.info('flushed core', {
         span: `[${minH}, ${maxH}]`,
         rows: snapshotCounts,
-        tookMs: Date.now() - t0,
+        tookMs,
       });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -923,9 +931,20 @@ export class PostgresSink implements Sink {
       await upsertGovProposals(client, batch.govProposals);
 
       await client.query('COMMIT');
+      const tookMs = Date.now() - t0;
+      observeFlush('derived', tookMs / 1000, {
+        transfers: batch.transfers.length,
+        stake_deleg: batch.stakeDeleg.length,
+        stake_distr: batch.stakeDistr.length,
+        wasm_exec: batch.wasmExec.length,
+        wasm_events: batch.wasmEvents.length,
+        gov_deposits: batch.govDeposits.length,
+        gov_votes: batch.govVotes.length,
+        gov_proposals: batch.govProposals.length,
+      });
       log.debug('flushed derived', {
         span: `[${batch.minH}, ${batch.maxH}]`,
-        tookMs: Date.now() - t0,
+        tookMs,
         queueRemaining: this.derivedQueue.length,
       });
     } catch (e) {
