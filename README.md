@@ -68,11 +68,13 @@ See [`.env.example`](.env.example) for all options.
 |---|---|---|
 | `NODE_URL` | `http://localhost:8080` | Logos node HTTP API |
 | `PG_*` | see .env.example | PostgreSQL connection |
+| `PG_HOST_PORT` | `5432` | Docker Compose host port for PostgreSQL |
 | `FROM_SLOT` | `0` | Start slot (overridden by saved progress) |
 | `FOLLOW` | `true` | Subscribe to live blocks after backfill |
 | `BATCH_SIZE` | `500` | Slots per backfill request |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `API_PORT` | `3001` | HTTP port for `GET /health` and `GET /api/*` |
+| `API_HOST_PORT` | `3001` | Docker Compose host port for the indexer API |
 
 ---
 

@@ -15,13 +15,15 @@ Copy `.env.example` to `.env` and set at least `PG_PASSWORD`.
 | `NODE_URL` | no | `http://localhost:8080` | Logos node HTTP API endpoint. |
 | `PG_HOST` | no | `localhost` | PostgreSQL host. Docker Compose sets this to `postgres`. |
 | `PG_PORT` | no | `5432` | PostgreSQL port. |
+| `PG_HOST_PORT` | no | `5432` | Host port published by Docker Compose for PostgreSQL. Does not change the internal container port. |
 | `PG_DB` | no | `logos_indexer` | PostgreSQL database. |
 | `PG_USER` | no | `logos` | PostgreSQL user. |
 | `FROM_SLOT` | no | `0` | First slot used only when no saved progress exists. Saved progress takes precedence. |
 | `FOLLOW` | no | `true` | When `true`, backfill then follow live blocks. When `false`, backfill then exit. |
 | `BATCH_SIZE` | no | `500` | Slot range size per `/cryptarchia/blocks` request. Lower it if the node times out. |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error`. |
-| `API_PORT` | no | `3001` | HTTP port for `/health` and `/api/v1/*`. |
+| `API_PORT` | no | `3001` | Internal/container HTTP port for `/health` and `/api/v1/*`. |
+| `API_HOST_PORT` | no | `3001` | Host port published by Docker Compose for the indexer API. |
 
 `HEALTH_PORT` is accepted as a backward-compatible alias for `API_PORT`, but new
 deployments should use `API_PORT`.
@@ -62,8 +64,20 @@ The Compose setup starts PostgreSQL and the indexer. It exposes:
 
 | Port | Service |
 |---|---|
-| `5432` | PostgreSQL |
-| `3001` or `API_PORT` | Indexer API + health |
+| `5432` or `PG_HOST_PORT` | PostgreSQL |
+| `3001` or `API_HOST_PORT` | Indexer API + health |
+
+If local PostgreSQL already uses port `5432`, set:
+
+```env
+PG_HOST_PORT=15432
+```
+
+If local port `3001` is busy, set:
+
+```env
+API_HOST_PORT=13001
+```
 
 ### Docker networking
 
@@ -212,7 +226,7 @@ If it persists:
 Set a different port:
 
 ```env
-API_PORT=3010
+API_HOST_PORT=3010
 ```
 
 In Docker Compose, update `.env` before `docker compose up -d`.
