@@ -1,1 +1,1 @@
-// Miden indexer shared types — populated by sink/rpc-client agents.
+export type * from './rpc/types.js';

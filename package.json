@@ -11,6 +11,8 @@
     "db:init": "psql $DATABASE_URL -f initdb/001-schema.sql"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.7.15",
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
     "eventsource": "^2.0.2",
