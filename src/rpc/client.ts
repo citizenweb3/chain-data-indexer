@@ -8,6 +8,7 @@ import { Agent, setGlobalDispatcher, fetch } from 'undici';
 import { createTokenBucket, TokenBucket } from './ratelimit.js';
 import { getLogger } from '../utils/logger.js';
 import { LogLevel } from '../types.js';
+import { markRpcOk, markRpcDown } from '../health/state.ts';
 
 const agent = new Agent({
   connections: 128,
@@ -147,12 +148,17 @@ export async function waitForRpcStatus(
   for (;;) {
     try {
       const status = await rpc.fetchStatus();
+      markRpcOk();
       if (attempt > 0) {
         log.info(`[rpc] ${label}: RPC is available again after ${attempt} retries`);
       }
       return status;
     } catch (e) {
-      if (!isRetryableRpcError(e)) throw e;
+      if (!isRetryableRpcError(e)) {
+        markRpcDown(e);
+        throw e;
+      }
+      markRpcDown(e);
 
       attempt++;
       const waitMs = Math.max(100, Math.floor(jitter(Math.min(delayMs, maxDelayMs), jitterFactor)));
@@ -217,6 +223,7 @@ export function createRpcClient(opts: RpcClientOptions): RpcClient {
           const text = await res.text().catch(() => '');
           const err = new Error(`HTTP ${res.status} ${res.statusText} for ${url} :: ${text.slice(0, 200)}`);
           if ((res.status >= 500 || res.status === 429) && attempt < opts.retries) {
+            markRpcDown(err);
             const delay = jitter(opts.backoffMs * Math.pow(2, attempt), opts.backoffJitter);
             log.debug('retry http', { attempt, delay, status: res.status });
             await sleep(delay);
@@ -225,10 +232,12 @@ export function createRpcClient(opts: RpcClientOptions): RpcClient {
           throw err;
         }
 
+        markRpcOk();
         return (await res.json()) as T;
       } catch (e: any) {
         clearTimeout(t);
         const transient = isRetryableRpcError(e);
+        if (transient) markRpcDown(e);
         if (transient && attempt < opts.retries) {
           const delay = jitter(opts.backoffMs * Math.pow(2, attempt), opts.backoffJitter);
           log.debug('retry net', { attempt, delay, error: String(e?.message ?? e) });

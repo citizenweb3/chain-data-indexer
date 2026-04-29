@@ -18,22 +18,28 @@ import { getProgress } from './db/progress.ts';
 import { getLogger } from './utils/logger.ts';
 import { syncRange } from './runner/syncRange.ts';
 import { followLoop } from './runner/follow.ts';
+import { startHealthServer, stopHealthServer } from './health/server.ts';
+import { setPhase, setBulkMode } from './health/state.ts';
+import type { Server } from 'node:http';
 
 EventEmitter.defaultMaxListeners = 0;
 const log = getLogger('index');
 
 let activeSink: Sink | null = null;
 let activePool: TxDecodePool | null = null;
+let activeHealthServer: Server | null = null;
 let shuttingDown = false;
 
 async function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
+  setPhase('shutdown');
   log.warn(`${signal} received, flushing buffers…`);
   try {
     await activeSink?.flush?.();
     await activeSink?.close();
     await activePool?.close();
+    await stopHealthServer(activeHealthServer);
     log.info('graceful shutdown complete');
   } catch (e) {
     log.error(`shutdown error: ${e}`);
@@ -55,6 +61,28 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 async function main() {
   const cfg = getConfig();
   printConfig(cfg);
+
+  // Start health server first so /health is reachable even while RPC/DB are still
+  // coming up. Returns 503 with details until everything is wired.
+  const healthEnabled = (process.env.HEALTH_ENABLED ?? 'true').toLowerCase() !== 'false';
+  if (healthEnabled) {
+    const port = Number(process.env.HEALTH_PORT ?? 3000);
+    const staleSeconds = Number(process.env.HEALTH_STALE_SECONDS ?? 180);
+    const startupGraceSeconds = Number(process.env.HEALTH_STARTUP_GRACE_SECONDS ?? 300);
+    activeHealthServer = startHealthServer({
+      port,
+      staleSeconds,
+      startupGraceSeconds,
+      progressId: cfg.pg?.progressId ?? 'default',
+      getDbPool: () => {
+        try {
+          return getPgPool();
+        } catch {
+          return null;
+        }
+      },
+    });
+  }
 
   const rpc = createRpcClientFromConfig(cfg);
   const status = await waitForRpcStatus(rpc, { label: 'startup' });
@@ -122,11 +150,13 @@ async function main() {
     const pool = getPgPool();
     await recoverDerived(pool);
     await bulkModeOn(pool);
+    setBulkMode(true);
   }
 
   activeSink = sink;
   activePool = decodePool;
 
+  setPhase('backfill');
   const backfill = await syncRange(rpc, decodePool, sink, {
     from: startFrom,
     to: endHeight,
@@ -144,6 +174,7 @@ async function main() {
 
   if (cfg.follow !== false) {
     const pollMs = cfg.followIntervalMs ?? 1500;
+    setPhase('follow');
     await followLoop(rpc, decodePool, sink, {
       startNext: endHeight + 1,
       pollMs,
@@ -156,11 +187,13 @@ async function main() {
     await sink.flush?.();
     (sink as any).setBulkMode?.(false);
     await bulkModeOff(getPgPool());
+    setBulkMode(false);
   }
 
   await decodePool.close();
   await sink.flush?.();
   await sink.close();
+  await stopHealthServer(activeHealthServer);
 }
 
 main().catch((e) => {

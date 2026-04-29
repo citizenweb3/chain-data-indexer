@@ -11,6 +11,7 @@ import { getLogger } from '../utils/logger.ts';
 import { createRpcClientFromConfig, isRetryableRpcError, waitForRpcStatus } from '../rpc/client.ts';
 import { createTxDecodePool } from '../decode/txPool.ts';
 import { createSink } from '../sink/index.ts';
+import { setLastIndexedHeight } from '../health/state.ts';
 
 const log = getLogger('runner/syncRange');
 
@@ -222,7 +223,10 @@ export async function syncRange(
       flushed++;
       processed++;
     }
-    if (flushed > 0) maybeReportProgress(false, h, inFlight, retryQueue.length, nextHeight);
+    if (flushed > 0) {
+      setLastIndexedHeight(nextToFlush - 1);
+      maybeReportProgress(false, h, inFlight, retryQueue.length, nextHeight);
+    }
   }
 
   const attempts = new Map<number, number>();

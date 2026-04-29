@@ -169,6 +169,21 @@ services:
       PG_BATCH_GOV_DEPOSITS: ${PG_BATCH_GOV_DEPOSITS:-5000}
       PG_BATCH_GOV_VOTES: ${PG_BATCH_GOV_VOTES:-5000}
       PG_BATCH_GOV_PROPOSALS: ${PG_BATCH_GOV_PROPOSALS:-1000}
+      # Health endpoint
+      HEALTH_PORT: ${HEALTH_PORT:-3000}
+      HEALTH_STALE_SECONDS: ${HEALTH_STALE_SECONDS:-180}
+      HEALTH_STARTUP_GRACE_SECONDS: ${HEALTH_STARTUP_GRACE_SECONDS:-300}
+      HEALTH_ENABLED: ${HEALTH_ENABLED:-true}
+    ports:
+      - "${HEALTH_EXTERNAL_HOST:-127.0.0.1}:${HEALTH_PORT:-3000}:${HEALTH_PORT:-3000}"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "wget -qO- --tries=1 --timeout=5 http://127.0.0.1:${HEALTH_PORT:-3000}/health > /dev/null || exit 1"
+      interval: 30s
+      timeout: 10s
+      start_period: 5m
+      retries: 3
     # The image contains the app and dependencies. Avoid bind-mounting the repo into
     # the container unless you add a dedicated dev override with an anonymous
     # node_modules volume to prevent native binary mismatches.

@@ -11,6 +11,7 @@ import { syncRange, CaseMode } from './syncRange.ts';
 import { sleep } from '../utils/sleep.ts';
 import { bulkModeOff } from '../db/bulk-mode.ts';
 import { getPgPool } from '../db/pg.ts';
+import { setBulkMode } from '../health/state.ts';
 
 const log = getLogger('follow');
 
@@ -54,6 +55,7 @@ export async function followLoop(
     await sink.flush?.();
     (sink as any).setBulkMode?.(false);
     await bulkModeOff(getPgPool());
+    setBulkMode(false);
     log.info('[follow] bulk mode off, entering live mode with INSERT');
   }
 
