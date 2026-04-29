@@ -8,7 +8,7 @@
 import { EventEmitter } from 'node:events';
 import { cpus } from 'node:os';
 import { getConfig, printConfig } from './config.ts';
-import { createRpcClientFromConfig } from './rpc/client.ts';
+import { createRpcClientFromConfig, waitForRpcStatus } from './rpc/client.ts';
 import { createTxDecodePool, TxDecodePool } from './decode/txPool.ts';
 import { createSink } from './sink/index.ts';
 import { Sink } from './sink/types.ts';
@@ -57,7 +57,7 @@ async function main() {
   printConfig(cfg);
 
   const rpc = createRpcClientFromConfig(cfg);
-  const status = await rpc.fetchStatus();
+  const status = await waitForRpcStatus(rpc, { label: 'startup' });
 
   let startFrom = cfg.from as number | undefined;
   const wantResume =

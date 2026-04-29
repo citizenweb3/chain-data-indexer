@@ -8,7 +8,7 @@
 import { assembleBlockJsonFromParts } from '../assemble/blockJson.ts';
 import { formatDuration } from '../utils/time.ts';
 import { getLogger } from '../utils/logger.ts';
-import { createRpcClientFromConfig } from '../rpc/client.ts';
+import { createRpcClientFromConfig, isRetryableRpcError, waitForRpcStatus } from '../rpc/client.ts';
 import { createTxDecodePool } from '../decode/txPool.ts';
 import { createSink } from '../sink/index.ts';
 
@@ -102,6 +102,7 @@ export async function syncRange(
   let processed = 0;
   const t0 = Date.now();
   let lastLogAt = t0;
+  let rpcRecovery: Promise<void> | null = null;
 
   // ── Timing instrumentation ──
   const timingAcc = {
@@ -125,6 +126,22 @@ export async function syncRange(
     if (Array.isArray(br?.begin_block_events)) n += br.begin_block_events.length;
     if (Array.isArray(br?.end_block_events)) n += br.end_block_events.length;
     return n;
+  }
+
+  function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
+
+  function waitForRpcRecovery(e: unknown): Promise<void> {
+    if (!rpcRecovery) {
+      log.warn(`[syncRange] transient RPC failure, pausing backfill until RPC recovers: ${errorMessage(e)}`);
+      rpcRecovery = waitForRpcStatus(rpc, { label: 'backfill' })
+        .then(() => undefined)
+        .finally(() => {
+          rpcRecovery = null;
+        });
+    }
+    return rpcRecovery;
   }
 
   function drainTimings(): string {
@@ -248,9 +265,7 @@ export async function syncRange(
       evCount = countEvents(br);
 
       const s1 = Date.now();
-      const decoded = await Promise.all(
-        txsB64.map((x) => pool.submit(x, blockTimeoutMs)),
-      );
+      const decoded = await Promise.all(txsB64.map((x) => pool.submit(x, blockTimeoutMs)));
       tDecode = Date.now() - s1;
 
       const s2 = Date.now();
@@ -264,6 +279,13 @@ export async function syncRange(
       ready.set(h, assembled);
       ok = true;
     } catch (e: any) {
+      if (isRetryableRpcError(e)) {
+        retryQueue.push(h);
+        log.warn(`retry after RPC recovery for height ${h}: ${String(e?.message ?? e)}`);
+        await waitForRpcRecovery(e);
+        return;
+      }
+
       const n = (attempts.get(h) ?? 0) + 1;
       attempts.set(h, n);
       if (n <= maxBlockRetries) {

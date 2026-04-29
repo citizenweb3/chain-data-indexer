@@ -4,7 +4,7 @@
 
 // src/runner/follow.ts
 import { getLogger } from '../utils/logger.ts';
-import { createRpcClientFromConfig } from '../rpc/client.ts';
+import { createRpcClientFromConfig, waitForRpcStatus } from '../rpc/client.ts';
 import { createTxDecodePool } from '../decode/txPool.ts';
 import { createSink } from '../sink/index.ts';
 import { syncRange, CaseMode } from './syncRange.ts';
@@ -58,7 +58,7 @@ export async function followLoop(
   }
 
   for (;;) {
-    const st = await rpc.fetchStatus();
+    const st = await waitForRpcStatus(rpc, { label: 'follow' });
     const latest = Number(st['sync_info']['latest_block_height']);
     if (next <= latest) {
       const to = latest;

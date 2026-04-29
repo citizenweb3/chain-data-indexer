@@ -74,6 +74,97 @@ function jitter(base: number, j: number) {
   return base + (Math.random() * 2 - 1) * delta;
 }
 
+const RETRYABLE_RPC_ERROR_CODES = new Set([
+  'ABORT_ERR',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ETIMEDOUT',
+  'EPIPE',
+]);
+
+function collectErrorChain(e: unknown): unknown[] {
+  const chain: unknown[] = [];
+  let current: unknown = e;
+
+  while (current && typeof current === 'object' && chain.length < 8) {
+    chain.push(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  if (chain.length === 0) chain.push(e);
+  return chain;
+}
+
+export function isRetryableRpcError(e: unknown): boolean {
+  for (const item of collectErrorChain(e)) {
+    const err = item as { name?: unknown; code?: unknown; message?: unknown };
+    const name = typeof err.name === 'string' ? err.name : '';
+    const code = typeof err.code === 'string' ? err.code : '';
+    const message = typeof err.message === 'string' ? err.message : String(item);
+
+    if (name === 'AbortError') return true;
+    if (RETRYABLE_RPC_ERROR_CODES.has(code) || code.startsWith('UND_ERR_')) return true;
+    if (/^HTTP (429|5\d\d)\b/.test(message)) return true;
+    if (/^timeout: fetch(Block|BlockResults|Status)?@?.* after \d+ms/.test(message)) return true;
+    if (
+      /fetch failed|other side closed|socket hang up|terminated|connect timeout|headers timeout|body timeout/i.test(
+        message,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+export async function waitForRpcStatus(
+  rpc: Pick<RpcClient, 'fetchStatus'>,
+  opts: {
+    label?: string;
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+    jitter?: number;
+    logEveryAttempts?: number;
+  } = {},
+): Promise<any> {
+  const label = opts.label ?? 'rpc';
+  const maxDelayMs = opts.maxDelayMs ?? 30_000;
+  const jitterFactor = opts.jitter ?? 0.3;
+  const logEveryAttempts = opts.logEveryAttempts ?? 10;
+  let delayMs = opts.initialDelayMs ?? 1_000;
+  let attempt = 0;
+
+  for (;;) {
+    try {
+      const status = await rpc.fetchStatus();
+      if (attempt > 0) {
+        log.info(`[rpc] ${label}: RPC is available again after ${attempt} retries`);
+      }
+      return status;
+    } catch (e) {
+      if (!isRetryableRpcError(e)) throw e;
+
+      attempt++;
+      const waitMs = Math.max(100, Math.floor(jitter(Math.min(delayMs, maxDelayMs), jitterFactor)));
+      if (attempt === 1 || attempt % logEveryAttempts === 0) {
+        log.warn(`[rpc] ${label}: RPC unavailable, retrying in ${waitMs}ms (attempt ${attempt}): ${errorMessage(e)}`);
+      }
+      await sleep(waitMs);
+      delayMs = Math.min(maxDelayMs, delayMs * 2);
+    }
+  }
+}
+
 /**
  * Builds a full URL from a base URL, path, and optional query parameters.
  * @param {string} base - Base URL.
@@ -137,7 +228,7 @@ export function createRpcClient(opts: RpcClientOptions): RpcClient {
         return (await res.json()) as T;
       } catch (e: any) {
         clearTimeout(t);
-        const transient = e?.name === 'AbortError' || e?.code === 'ECONNRESET' || e?.code === 'ETIMEDOUT';
+        const transient = isRetryableRpcError(e);
         if (transient && attempt < opts.retries) {
           const delay = jitter(opts.backoffMs * Math.pow(2, attempt), opts.backoffJitter);
           log.debug('retry net', { attempt, delay, error: String(e?.message ?? e) });
