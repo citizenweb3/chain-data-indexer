@@ -49,6 +49,15 @@ export interface LogosBlock {
 
 export type BlockSseEvent = LogosBlock;
 
+// ─── LIB-stream event (application/x-ndjson) ─────────────────────────────────
+// Emitted by GET /cryptarchia/lib-stream each time the Last Irreversible Block advances.
+// Verified against live testnet node (v0.1.2).
+
+export interface LibStreamEvent {
+  height:    number;   // finalized block height
+  header_id: string;   // finalized block header id (hex)
+}
+
 // ─── Database row shapes (returned from queries) ──────────────────────────────
 
 export interface BlockRow {
@@ -62,6 +71,7 @@ export interface BlockRow {
   entropy: string;
   tx_count: number;
   raw: LogosBlock;
+  finalized: boolean;
   indexed_at: Date;
 }
 

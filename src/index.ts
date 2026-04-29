@@ -3,6 +3,8 @@ import { logger } from './utils/logger.js';
 import { getPool, closePool } from './db/pg.js';
 import { syncFromProgress } from './runner/syncRange.js';
 import { followBlocks, waitForOnline } from './runner/follow.js';
+import { followLib } from './runner/followLib.js';
+import { startApiServer } from './api.js';
 import { fetchInfo } from './rpc/client.js';
 
 async function main(): Promise<void> {
@@ -17,34 +19,38 @@ async function main(): Promise<void> {
   await pool.query('SELECT 1');
   logger.info('Database connected');
 
+  // Explorer API + health endpoint (always active)
+  const stopApi = startApiServer();
+
   // Wait until node is Online before indexing
   await waitForOnline();
 
-  // Determine current tip slot for backfill upper bound
+  // Initial bulk backfill up to current tip
   const info = await fetchInfo();
   logger.info('Starting backfill to current tip', { slot: info.slot, height: info.height });
-
   await syncFromProgress(info.slot);
 
   if (config.FOLLOW) {
-    const stopFollow = followBlocks();
+    // followBlocks fills the gap from backfill end to current tip, then subscribes.
+    // followLib marks blocks as finalized via the LIB NDJSON stream.
+    const stopBlocks = followBlocks();
+    const stopLib    = followLib();
 
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
+    async function shutdown(): Promise<void> {
       logger.info('Shutting down…');
-      stopFollow();
+      stopBlocks();
+      stopLib();
+      stopApi();
       await closePool();
       process.exit(0);
-    });
-    process.on('SIGTERM', async () => {
-      logger.info('Shutting down…');
-      stopFollow();
-      await closePool();
-      process.exit(0);
-    });
+    }
+
+    process.on('SIGINT',  () => { shutdown().catch(console.error); });
+    process.on('SIGTERM', () => { shutdown().catch(console.error); });
 
     logger.info('Following live blocks — press Ctrl+C to stop');
   } else {
+    stopApi();
     await closePool();
     logger.info('Backfill-only mode complete');
   }

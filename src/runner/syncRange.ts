@@ -1,12 +1,14 @@
 import { fetchBlocks } from '../rpc/client.js';
-import { processBlock } from '../sink/postgres.js';
+import { processBatch } from '../sink/postgres.js';
 import { getLastSlot, setLastSlot } from '../db/progress.js';
+import { withRetry } from '../utils/retry.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 /**
  * Backfill blocks from `fromSlot` up to `toSlot` (inclusive) in batches.
  * Saves progress after each batch for resume support.
+ * Fetches each batch with retry + exponential backoff.
  */
 export async function syncRange(fromSlot: number, toSlot: number): Promise<void> {
   const batchSize = config.BATCH_SIZE;
@@ -17,17 +19,19 @@ export async function syncRange(fromSlot: number, toSlot: number): Promise<void>
 
   while (cursor <= toSlot) {
     const batchEnd = Math.min(cursor + batchSize - 1, toSlot);
-    const blocks = await fetchBlocks(cursor, batchEnd);
+
+    const blocks = await withRetry(() => fetchBlocks(cursor, batchEnd));
+    const inserted = await processBatch(blocks);
 
     for (const block of blocks) {
-      await processBlock(block);
-      lastHeight = block.header.height ?? lastHeight;
+      if (block.header.height != null) lastHeight = block.header.height;
     }
 
     logger.info('Backfill batch complete', {
       slot_from: cursor,
       slot_to: batchEnd,
       blocks_in_batch: blocks.length,
+      new_blocks: inserted,
       height: lastHeight,
     });
 
@@ -39,7 +43,7 @@ export async function syncRange(fromSlot: number, toSlot: number): Promise<void>
 }
 
 /**
- * Resume backfill from the last saved slot.
+ * Resume backfill from the last saved slot up to `toSlot`.
  * If no progress exists, starts from config.FROM_SLOT.
  */
 export async function syncFromProgress(toSlot: number): Promise<void> {

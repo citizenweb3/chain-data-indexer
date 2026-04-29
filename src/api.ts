@@ -1,0 +1,365 @@
+import http from 'node:http';
+import { getPool } from './db/pg.js';
+import { getLastSlot } from './db/progress.js';
+import { fetchInfo } from './rpc/client.js';
+import { config } from './config.js';
+import { logger } from './utils/logger.js';
+
+const startedAt = Date.now();
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
+
+interface BlockApiRow {
+  id: string;
+  parent_block: string;
+  slot: string;
+  height: string | null;
+  block_root: string;
+  leader_key: string;
+  voucher_cm: string;
+  entropy: string;
+  tx_count: number;
+  finalized: boolean;
+  indexed_at: Date;
+}
+
+interface BlockDetailApiRow extends BlockApiRow {
+  raw: unknown;
+}
+
+interface LeaderApiRow {
+  leader_key: string;
+  blocks_produced: string;
+  first_block_slot: string | null;
+  last_block_slot: string | null;
+  updated_at: Date;
+}
+
+interface StatsApiRow {
+  total_blocks: string;
+  finalized_blocks: string;
+  latest_slot: string | null;
+  latest_height: string | null;
+  leaders_count: string;
+}
+
+function parseLimit(url: URL): number {
+  const n = Number(url.searchParams.get('limit') ?? DEFAULT_LIMIT);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_LIMIT;
+  return Math.min(Math.floor(n), MAX_LIMIT);
+}
+
+function parseOffset(url: URL): number {
+  const n = Number(url.searchParams.get('offset') ?? 0);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+function parseFinalized(url: URL): boolean | null {
+  const value = url.searchParams.get('finalized') ?? 'true';
+  if (value === 'all') return null;
+  return value !== 'false';
+}
+
+function toNumber(value: string | null): number | null {
+  return value === null ? null : Number(value);
+}
+
+function blockSummary(row: BlockApiRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    parent_block: row.parent_block,
+    slot: Number(row.slot),
+    height: toNumber(row.height),
+    block_root: row.block_root,
+    leader_key: row.leader_key,
+    voucher_cm: row.voucher_cm,
+    entropy: row.entropy,
+    tx_count: row.tx_count,
+    finalized: row.finalized,
+    indexed_at: row.indexed_at,
+  };
+}
+
+function leaderSummary(row: LeaderApiRow): Record<string, unknown> {
+  return {
+    leader_key: row.leader_key,
+    blocks_produced: Number(row.blocks_produced),
+    first_block_slot: toNumber(row.first_block_slot),
+    last_block_slot: toNumber(row.last_block_slot),
+    updated_at: row.updated_at,
+  };
+}
+
+function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  });
+  res.end(JSON.stringify(body));
+}
+
+function sendNotFound(res: http.ServerResponse): void {
+  sendJson(res, 404, { error: 'not_found' });
+}
+
+function sendMethodNotAllowed(res: http.ServerResponse): void {
+  sendJson(res, 405, { error: 'method_not_allowed' });
+}
+
+async function handleHealth(res: http.ServerResponse): Promise<void> {
+  try {
+    const [lastSlot, info] = await Promise.all([
+      getLastSlot(),
+      fetchInfo().catch(() => null),
+    ]);
+
+    const lagSlots = info ? Math.max(0, info.slot - lastSlot) : null;
+    const healthy = info !== null;
+
+    sendJson(res, healthy ? 200 : 503, {
+      status: healthy ? 'ok' : 'degraded',
+      last_slot: lastSlot,
+      node_tip_slot: info?.slot ?? null,
+      node_height: info?.height ?? null,
+      node_mode: info?.mode ?? null,
+      lag_slots: lagSlots,
+      uptime_s: Math.floor((Date.now() - startedAt) / 1_000),
+    });
+  } catch (err) {
+    sendJson(res, 503, { status: 'error', error: String(err) });
+  }
+}
+
+async function handleStats(res: http.ServerResponse): Promise<void> {
+  const pool = getPool();
+  const [statsResult, progressResult, nodeInfo] = await Promise.all([
+    pool.query<StatsApiRow>(
+      `SELECT
+         COUNT(*)::text AS total_blocks,
+         COUNT(*) FILTER (WHERE finalized)::text AS finalized_blocks,
+         MAX(slot)::text AS latest_slot,
+         MAX(height)::text AS latest_height,
+         (SELECT COUNT(*)::text FROM logos_leaders) AS leaders_count
+       FROM logos_blocks`,
+    ),
+    getLastSlot(),
+    fetchInfo().catch(() => null),
+  ]);
+
+  const stats = statsResult.rows[0];
+  sendJson(res, 200, {
+    total_blocks: Number(stats.total_blocks),
+    finalized_blocks: Number(stats.finalized_blocks),
+    latest_slot: toNumber(stats.latest_slot),
+    latest_height: toNumber(stats.latest_height),
+    leaders_count: Number(stats.leaders_count),
+    last_indexed_slot: progressResult,
+    node_tip_slot: nodeInfo?.slot ?? null,
+    node_height: nodeInfo?.height ?? null,
+    node_mode: nodeInfo?.mode ?? null,
+    lag_slots: nodeInfo ? Math.max(0, nodeInfo.slot - progressResult) : null,
+  });
+}
+
+async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
+  const limit = parseLimit(url);
+  const offset = parseOffset(url);
+  const finalized = parseFinalized(url);
+  const leaderKey = url.searchParams.get('leader_key');
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (finalized !== null) {
+    values.push(finalized);
+    conditions.push(`finalized = $${values.length}`);
+  }
+  if (leaderKey) {
+    values.push(leaderKey);
+    conditions.push(`leader_key = $${values.length}`);
+  }
+
+  values.push(limit, offset);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limitParam = values.length - 1;
+  const offsetParam = values.length;
+
+  const pool = getPool();
+  const [blocksResult, countResult] = await Promise.all([
+    pool.query<BlockApiRow>(
+      `SELECT id, parent_block, slot::text, height::text, block_root, leader_key,
+              voucher_cm, entropy, tx_count, finalized, indexed_at
+         FROM logos_blocks
+         ${where}
+         ORDER BY slot DESC, id DESC
+         LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      values,
+    ),
+    pool.query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM logos_blocks ${where}`,
+      values.slice(0, values.length - 2),
+    ),
+  ]);
+
+  const total = Number(countResult.rows[0].total);
+
+  sendJson(res, 200, {
+    data: blocksResult.rows.map(blockSummary),
+    pagination: {
+      limit,
+      offset,
+      total,
+      has_more: offset + blocksResult.rows.length < total,
+    },
+  });
+}
+
+async function handleBlockById(id: string, res: http.ServerResponse): Promise<void> {
+  const { rows } = await getPool().query<BlockDetailApiRow>(
+    `SELECT id, parent_block, slot::text, height::text, block_root, leader_key,
+            voucher_cm, entropy, tx_count, finalized, indexed_at, raw
+       FROM logos_blocks
+       WHERE id = $1`,
+    [id],
+  );
+
+  if (rows.length === 0) {
+    sendNotFound(res);
+    return;
+  }
+
+  sendJson(res, 200, {
+    ...blockSummary(rows[0]),
+    raw: rows[0].raw,
+  });
+}
+
+async function handleValidators(url: URL, res: http.ServerResponse): Promise<void> {
+  const limit = parseLimit(url);
+  const offset = parseOffset(url);
+  const pool = getPool();
+  const [leadersResult, countResult] = await Promise.all([
+    pool.query<LeaderApiRow>(
+      `SELECT leader_key, blocks_produced::text, first_block_slot::text,
+              last_block_slot::text, updated_at
+         FROM logos_leaders
+         ORDER BY blocks_produced DESC, leader_key ASC
+         LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    ),
+    pool.query<{ total: string }>('SELECT COUNT(*)::text AS total FROM logos_leaders'),
+  ]);
+
+  const total = Number(countResult.rows[0].total);
+
+  sendJson(res, 200, {
+    data: leadersResult.rows.map(leaderSummary),
+    pagination: {
+      limit,
+      offset,
+      total,
+      has_more: offset + leadersResult.rows.length < total,
+    },
+  });
+}
+
+async function handleValidator(leaderKey: string, res: http.ServerResponse): Promise<void> {
+  const { rows } = await getPool().query<LeaderApiRow>(
+    `SELECT leader_key, blocks_produced::text, first_block_slot::text,
+            last_block_slot::text, updated_at
+       FROM logos_leaders
+       WHERE leader_key = $1`,
+    [leaderKey],
+  );
+
+  if (rows.length === 0) {
+    sendNotFound(res);
+    return;
+  }
+
+  sendJson(res, 200, leaderSummary(rows[0]));
+}
+
+async function route(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'GET') {
+    sendMethodNotAllowed(res);
+    return;
+  }
+
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  const routeParts = parts[0] === 'api' && parts[1] === 'v1'
+    ? ['api', ...parts.slice(2)]
+    : parts;
+
+  if (url.pathname === '/health') {
+    await handleHealth(res);
+    return;
+  }
+
+  if (routeParts[0] !== 'api') {
+    sendNotFound(res);
+    return;
+  }
+
+  if (routeParts.length === 2 && routeParts[1] === 'stats') {
+    await handleStats(res);
+    return;
+  }
+
+  if (routeParts.length === 2 && routeParts[1] === 'blocks') {
+    await handleBlocks(url, res);
+    return;
+  }
+
+  if (routeParts.length === 3 && routeParts[1] === 'blocks') {
+    await handleBlockById(routeParts[2], res);
+    return;
+  }
+
+  if (routeParts.length === 2 && routeParts[1] === 'validators') {
+    await handleValidators(url, res);
+    return;
+  }
+
+  if (routeParts.length === 3 && routeParts[1] === 'validators') {
+    await handleValidator(routeParts[2], res);
+    return;
+  }
+
+  if (routeParts.length === 4 && routeParts[1] === 'validators' && routeParts[3] === 'blocks') {
+    url.searchParams.set('leader_key', routeParts[2]);
+    await handleBlocks(url, res);
+    return;
+  }
+
+  sendNotFound(res);
+}
+
+/**
+ * Start the explorer API server on API_PORT (default: 3001).
+ *
+ * Endpoints:
+ *   GET /health
+ *   GET /api/stats
+ *   GET /api/v1/stats
+ *   GET /api/blocks?limit=20&offset=0&finalized=true|false|all
+ *   GET /api/blocks/:id
+ *   GET /api/validators?limit=20&offset=0
+ *   GET /api/validators/:leader_key
+ *   GET /api/validators/:leader_key/blocks
+ */
+export function startApiServer(): () => void {
+  const server = http.createServer((req, res) => {
+    route(req, res).catch((err) => {
+      logger.error('API request failed', { err });
+      sendJson(res, 500, { error: 'internal_server_error' });
+    });
+  });
+
+  server.listen(config.API_PORT, () => {
+    logger.info('Explorer API server listening', { port: config.API_PORT });
+  });
+
+  return () => { server.close(); };
+}

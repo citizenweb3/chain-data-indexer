@@ -1,5 +1,8 @@
 # Logos Blockchain Node — HTTP API Reference
 
+This document describes the upstream Logos node API consumed by the indexer.
+For the indexer's own explorer API, see [`docs/indexer-api.md`](indexer-api.md).
+
 Node version: **0.1.2** (testnet)  
 Default listen address: `0.0.0.0:8080` (configurable via `api.backend.listen_address` in `user_config.yaml`)  
 All endpoints are unauthenticated and local-only by default.
@@ -14,7 +17,7 @@ Source of truth: [`nodes/api-common/src/paths.rs`](https://github.com/logos-bloc
 |--------|------|-----------------|-------------|
 | GET | `/cryptarchia/info` | ✅ | Consensus + sync state |
 | GET | `/cryptarchia/headers` | ✅ | Recent fork-choice header IDs |
-| GET | `/cryptarchia/lib-stream` | ✅ SSE | Last irreversible block stream |
+| GET | `/cryptarchia/lib-stream` | ✅ NDJSON | Last irreversible block stream |
 | GET | `/cryptarchia/blocks` | ✅ | Blocks in slot range |
 | GET | `/cryptarchia/events/blocks/stream` | ✅ SSE | Live block stream |
 | GET | `/network/info` | ✅ | P2P peer + connection info |
@@ -155,11 +158,20 @@ Returns `[]` if no blocks were produced in the given range.
 
 ### GET `/cryptarchia/lib-stream`
 
-Server-Sent Events (SSE) stream that emits each new last irreversible block (LIB) update.
+NDJSON stream that emits each new last irreversible block (LIB) update.
 
 ```bash
 curl -N http://localhost:8080/cryptarchia/lib-stream
 ```
+
+Observed response line:
+
+```json
+{"height":59390,"header_id":"77bcd6960f6c5e9f824733137c87298ce6d35d3c1fc8b2be44ab1d235cff26ef"}
+```
+
+The HTTP response content type is `application/x-ndjson`. Use a streaming HTTP
+client plus line parsing; do not use EventSource for this endpoint.
 
 ---
 

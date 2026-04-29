@@ -32,6 +32,28 @@ Starting in v0.2, blocks will contain `mantle_tx` objects. Each transaction will
 4. In `processBlock()`, parse `block.transactions` and call those functions
 5. Re-run indexer from slot 0 on the new genesis
 
+For the full network upgrade workflow, including when to edit `001-schema.sql`
+versus creating a new migration file, see [`network-upgrades.md`](network-upgrades.md).
+
+---
+
+## Schema Migrations
+
+For Logos testnet resets with a new genesis, the preferred approach is usually a
+fresh database or full truncate/re-index from slot 0. For networks where data
+must be preserved, create additive migration files (`initdb/002-*.sql`) instead
+of rewriting the already-applied schema.
+
+Recommended procedure for transaction support:
+
+1. Stop the indexer.
+2. Confirm the new block/transaction JSON shape against a live upgraded node.
+3. Add or apply a migration for transaction/note tables.
+4. Update `src/types.d.ts`, `src/sink/postgres.ts`, and `docs/indexer-api.md`.
+5. Reset progress only if the network has restarted from a new genesis.
+6. Run `npm run build` and Docker build validation.
+7. Restart the indexer and verify `/health` plus `/api/v1/stats`.
+
 ---
 
 ## Wallet Balances (privacy limitation)

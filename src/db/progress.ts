@@ -14,9 +14,12 @@ export async function setLastSlot(
 ): Promise<void> {
   const pool = getPool();
   await pool.query(
-    `UPDATE logos_indexer_progress
-        SET last_slot = $1, last_height = $2, updated_at = now()
-      WHERE id = 'default'`,
+    `INSERT INTO logos_indexer_progress (id, last_slot, last_height, updated_at)
+       VALUES ('default', $1, $2, now())
+     ON CONFLICT (id) DO UPDATE
+       SET last_slot   = GREATEST(logos_indexer_progress.last_slot, EXCLUDED.last_slot),
+           last_height = EXCLUDED.last_height,
+           updated_at  = now()`,
     [slot, height],
   );
 }

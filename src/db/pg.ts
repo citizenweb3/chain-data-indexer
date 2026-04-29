@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
 
 const { Pool } = pg;
 
@@ -14,6 +15,9 @@ export function getPool(): pg.Pool {
       user: config.PG_USER,
       password: config.PG_PASSWORD,
       max: 10,
+    });
+    pool.on('error', (err) => {
+      logger.error('PostgreSQL pool idle client error', { err });
     });
   }
   return pool;

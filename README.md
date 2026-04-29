@@ -14,6 +14,7 @@ Designed for integration with the [validatorinfo](https://validatorinfo.com) exp
 | Data | Source | Table |
 |---|---|---|
 | All blocks (slot, height, leader, raw JSON) | `/cryptarchia/blocks` | `logos_blocks` |
+| Block finality status | `/cryptarchia/lib-stream` | `logos_blocks.finalized` |
 | Validator stats (blocks produced, first/last slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
 | Indexer resume position | internal | `logos_indexer_progress` |
 
@@ -71,6 +72,7 @@ See [`.env.example`](.env.example) for all options.
 | `FOLLOW` | `true` | Subscribe to live blocks after backfill |
 | `BATCH_SIZE` | `500` | Slots per backfill request |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `API_PORT` | `3001` | HTTP port for `GET /health` and `GET /api/*` |
 
 ---
 
@@ -78,36 +80,103 @@ See [`.env.example`](.env.example) for all options.
 
 ```
 src/
-├── index.ts             Entry point: wait for Online → backfill → follow
+├── index.ts             Entry point: wait for Online → backfill → follow + followLib
 ├── config.ts            Env-based config (zod)
-├── types.d.ts           Logos API types
-├── rpc/client.ts        HTTP client for Logos node REST + SSE
+├── types.d.ts           Logos API types (incl. LibStreamEvent)
+├── api.ts               HTTP explorer API + health server
+├── rpc/client.ts        HTTP client: REST + SSE (blocks) + NDJSON (lib-stream)
 ├── db/
-│   ├── pg.ts            PostgreSQL pool
-│   └── progress.ts      Resume: last indexed slot
-├── sink/postgres.ts     Upsert blocks, leaders
-└── runner/
-    ├── syncRange.ts     Slot-range backfill with resume
-    └── follow.ts        SSE stream follower
+│   ├── pg.ts            PostgreSQL pool (with error handler)
+│   └── progress.ts      Resume: last indexed slot (UPSERT + GREATEST)
+├── sink/postgres.ts     processBlock (tx), processBatch (bulk unnest), markBlocksFinalized
+├── runner/
+│   ├── syncRange.ts     Slot-range backfill with retry + resume
+│   ├── follow.ts        SSE follower: gap-fill → subscribe → serial queue + exp. backoff
+│   └── followLib.ts     LIB NDJSON follower: marks blocks finalized
+└── utils/
+    ├── logger.ts        Winston logger (Error-safe JSON)
+    └── retry.ts         withRetry: exp. backoff, retries only transient errors
 ```
 
 ---
 
-## Explorer queries
+## Explorer API
+
+The indexer exposes an HTTP API for explorer frontends on `API_PORT` (default `3001`).
+Full endpoint schemas, parameters, response fields, and error responses are in
+[`docs/indexer-api.md`](docs/indexer-api.md).
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/stats` | Network/indexer summary: counts, latest slots/heights, lag |
+| `GET /api/v1/blocks?limit=20&offset=0&finalized=true` | Latest blocks (`finalized=all` includes non-finalized blocks) |
+| `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
+| `GET /api/v1/validators?limit=20&offset=0` | Validators ordered by blocks produced |
+| `GET /api/v1/validators/:leader_key` | Validator stats by leader key |
+| `GET /api/v1/validators/:leader_key/blocks` | Blocks produced by one validator |
+
+Example:
+
+```bash
+curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true"
+curl http://localhost:3001/api/v1/stats
+```
+
+Unversioned `/api/*` routes are kept as aliases for local tooling.
+Use `/api/v1/*` for all new code.
+
+---
+
+## Explorer SQL queries
 
 ```sql
--- Latest blocks
+-- Latest blocks (finalized only)
 SELECT slot, height, leader_key, tx_count, indexed_at
-FROM logos_blocks ORDER BY slot DESC LIMIT 20;
+FROM logos_blocks WHERE finalized ORDER BY slot DESC LIMIT 20;
 
 -- Top validators by blocks produced
 SELECT leader_key, blocks_produced, first_block_slot, last_block_slot
 FROM logos_leaders ORDER BY blocks_produced DESC LIMIT 20;
 
 -- Network summary
-SELECT COUNT(*) AS total_blocks, MAX(slot) AS latest_slot, MAX(height) AS latest_height
+SELECT COUNT(*) AS total_blocks,
+       COUNT(*) FILTER (WHERE finalized) AS finalized_blocks,
+       MAX(slot) AS latest_slot,
+       MAX(height) AS latest_height
 FROM logos_blocks;
 ```
+
+---
+
+## Health check
+
+```bash
+curl http://localhost:3001/health
+```
+```json
+{
+  "status": "ok",
+  "last_slot": 1148474,
+  "node_tip_slot": 1148480,
+  "node_height": 58062,
+  "node_mode": "Online",
+  "lag_slots": 6,
+  "uptime_s": 3600
+}
+```
+Returns `200` when healthy, `503` when node unreachable. Useful for Docker / K8s liveness probes.
+
+---
+
+## Operations and upgrades
+
+- [`docs/operations.md`](docs/operations.md) — environment variables, Docker
+  networking, health interpretation, troubleshooting, and deployment notes.
+- [`docs/network-upgrades.md`](docs/network-upgrades.md) — release upgrade
+  checklist for future Logos network versions.
+- [`docs/api.md`](docs/api.md) — upstream Logos node API consumed by the indexer.
+- [`docs/future.md`](docs/future.md) — deliberately deferred transaction and
+  balance work.
 
 ---
 
