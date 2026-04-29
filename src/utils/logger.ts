@@ -12,6 +12,7 @@ function safeSerialize(obj: unknown): string {
 
 export const logger = winston.createLogger({
   level: config.LOG_LEVEL,
+  defaultMeta: { service: 'miden-indexer' },
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(({ timestamp, level, message, ...meta }) => {

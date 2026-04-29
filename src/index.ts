@@ -1,62 +1,54 @@
 import { config } from './config.js';
-import { logger } from './utils/logger.js';
-import { getPool, closePool } from './db/pg.js';
-import { syncFromProgress } from './runner/syncRange.js';
-import { followBlocks, waitForOnline } from './runner/follow.js';
-import { followLib } from './runner/followLib.js';
 import { startApiServer } from './api.js';
-import { fetchInfo } from './rpc/client.js';
+import { getPool, closePool } from './db/pg.js';
+import { startFollow } from './runner/follow.js';
+import { logger } from './utils/logger.js';
 
-async function main(): Promise<void> {
-  logger.info('logos-indexer starting', {
-    node: config.NODE_URL,
-    follow: config.FOLLOW,
-    from_slot: config.FROM_SLOT,
-  });
+function printHelp(): void {
+  console.log(`miden-indexer
 
-  // Verify DB connection
-  const pool = getPool();
-  await pool.query('SELECT 1');
-  logger.info('Database connected');
+Usage:
+  npm run dev
+  npm run build && npm start
 
-  // Explorer API + health endpoint (always active)
-  const stopApi = startApiServer();
-
-  // Wait until node is Online before indexing
-  await waitForOnline();
-
-  // Initial bulk backfill up to current tip
-  const info = await fetchInfo();
-  logger.info('Starting backfill to current tip', { slot: info.slot, height: info.height });
-  await syncFromProgress(info.slot);
-
-  if (config.FOLLOW) {
-    // followBlocks fills the gap from backfill end to current tip, then subscribes.
-    // followLib marks blocks as finalized via the LIB NDJSON stream.
-    const stopBlocks = followBlocks();
-    const stopLib    = followLib();
-
-    async function shutdown(): Promise<void> {
-      logger.info('Shutting down…');
-      stopBlocks();
-      stopLib();
-      stopApi();
-      await closePool();
-      process.exit(0);
-    }
-
-    process.on('SIGINT',  () => { shutdown().catch(console.error); });
-    process.on('SIGTERM', () => { shutdown().catch(console.error); });
-
-    logger.info('Following live blocks — press Ctrl+C to stop');
-  } else {
-    stopApi();
-    await closePool();
-    logger.info('Backfill-only mode complete');
-  }
+Environment:
+  NODE_URL=${config.NODE_URL}
+  INDEXER_HTTP_PORT=${config.INDEXER_HTTP_PORT}
+  START_BLOCK=${config.START_BLOCK}
+`);
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
+async function main(): Promise<void> {
+  if (process.argv.includes('--help') || process.argv.includes('-h')) {
+    printHelp();
+    return;
+  }
+
+  logger.info('miden-indexer starting', {
+    node_url: config.NODE_URL,
+    start_block: config.START_BLOCK,
+    batch_size: config.BATCH_SIZE,
+  });
+
+  getPool();
+  logger.info('PostgreSQL pool initialized');
+
+  const stopRunner = await startFollow();
+  const stopApi = startApiServer();
+
+  async function shutdown(signal: string): Promise<void> {
+    logger.info('Shutting down', { signal });
+    stopRunner();
+    stopApi();
+    await closePool();
+    process.exit(0);
+  }
+
+  process.on('SIGINT', () => { shutdown('SIGINT').catch((err) => logger.error('Shutdown failed', { err })); });
+  process.on('SIGTERM', () => { shutdown('SIGTERM').catch((err) => logger.error('Shutdown failed', { err })); });
+}
+
+main().catch((err: unknown) => {
+  logger.error('Fatal error', { err });
   process.exit(1);
 });

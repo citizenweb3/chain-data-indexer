@@ -1,7 +1,7 @@
 {
-  "name": "logos-indexer",
-  "version": "0.1.2",
-  "description": "Block indexer for Logos Blockchain testnet",
+  "name": "miden-indexer",
+  "version": "0.0.1",
+  "description": "Block indexer for Polygon Miden",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

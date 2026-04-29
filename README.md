@@ -1,196 +1,53 @@
-# logos-indexer
+# miden-indexer
 
-Block indexer for the [Logos Blockchain](https://github.com/logos-blockchain/logos-blockchain) testnet.
+Block indexer for Polygon Miden.
 
-Indexes all blocks and validator (leader) statistics from a local Logos node into PostgreSQL.
-Designed for integration with the [validatorinfo](https://validatorinfo.com) explorer.
+> Scaffold in progress, see `docs/` and `AGENTS.md`.
 
-**Supported:** Logos testnet v0.1.2+
-
----
-
-## What it indexes
-
-| Data | Source | Table |
-|---|---|---|
-| All blocks (slot, height, leader, raw JSON) | `/cryptarchia/blocks` | `logos_blocks` |
-| Block finality status | `/cryptarchia/lib-stream` | `logos_blocks.finalized` |
-| Validator stats (blocks produced, first/last slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
-| Indexer resume position | internal | `logos_indexer_progress` |
-
-Transactions and wallet balances are not indexed in v0.1.2 — see [`docs/future.md`](docs/future.md).
-
----
-
-## Prerequisites
-
-- Node.js ≥ 20 with npm
-- PostgreSQL ≥ 14
-- A running Logos node (v0.1.2 testnet) accessible at `NODE_URL`
-
----
+This repository is a Miden-named skeleton branched from the inherited indexer code. Network-specific RPC, schema, sink, runner, Docker operations, and API details are intentionally stubbed for downstream agents to fill in.
 
 ## Quick start
 
 ```bash
-# 1. Install dependencies
+cd /pool0/miden-indexer
 npm install
-
-# 2. Configure
 cp .env.example .env
-# Edit .env: set PG_PASSWORD and NODE_URL
-
-# 3. Initialise database
-psql "postgresql://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/$PG_DB" -f initdb/001-schema.sql
-
-# 4. Run (dev mode)
+# Edit .env: set PG_PASSWORD and DATABASE_URL for your PostgreSQL instance.
+npm run db:init
 npm run dev
-
-# 5. Build and run (production)
-npm run build
-npm start
 ```
 
-### With Docker Compose
+TBD by downstream agents: confirmed Miden node prerequisites, schema initialization beyond progress tracking, and full indexing workflow.
+
+## With Docker
 
 ```bash
-cp .env.example .env   # set PG_PASSWORD
-docker compose up -d
+cd /pool0/miden-indexer
+cp .env.example .env
+# Edit .env: set PG_PASSWORD and Miden NODE_URL if not using the placeholder.
+docker compose up -d --build
 ```
 
----
+TBD by `docker-ops` agent: final Docker image, service layout, health checks, and production operations guidance.
 
 ## Configuration
 
-See [`.env.example`](.env.example) for all options.
+See [`.env.example`](.env.example) for all scaffold defaults.
 
 | Variable | Default | Description |
 |---|---|---|
-| `NODE_URL` | `http://localhost:8080` | Logos node HTTP API |
-| `PG_*` | see .env.example | PostgreSQL connection |
-| `PG_HOST_PORT` | `5432` | Docker Compose host port for PostgreSQL |
-| `FROM_SLOT` | `0` | Start slot (overridden by saved progress) |
-| `FOLLOW` | `true` | Subscribe to live blocks after backfill |
-| `BATCH_SIZE` | `500` | Slots per backfill request |
-| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-| `API_PORT` | `3001` | HTTP port for `GET /health` and `GET /api/*` |
-| `API_HOST_PORT` | `3001` | Docker Compose host port for the indexer API |
+| `NODE_URL` | `http://127.0.0.1:57291` | Placeholder Miden node endpoint. TBD by RPC agent. |
+| `DATABASE_URL` | `postgresql://miden:CHANGE_ME@localhost:5432/miden_indexer` | PostgreSQL URL for `npm run db:init`. |
+| `PG_*` | see `.env.example` | PostgreSQL connection used by the runtime pool. |
+| `INDEXER_HTTP_PORT` | `3001` | HTTP port for `/health` and stub `/api/v1/*` routes. |
+| `START_BLOCK` | `0` | First block number when no saved progress exists. TBD by runner agent. |
+| `BATCH_SIZE` | `100` | Placeholder batch size. TBD by runner/RPC agents. |
+| `POLL_INTERVAL_MS` | `5000` | Placeholder polling interval. TBD by runner agent. |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
 
----
+## Current scaffold status
 
-## Architecture
-
-```
-src/
-├── index.ts             Entry point: wait for Online → backfill → follow + followLib
-├── config.ts            Env-based config (zod)
-├── types.d.ts           Logos API types (incl. LibStreamEvent)
-├── api.ts               HTTP explorer API + health server
-├── rpc/client.ts        HTTP client: REST + SSE (blocks) + NDJSON (lib-stream)
-├── db/
-│   ├── pg.ts            PostgreSQL pool (with error handler)
-│   └── progress.ts      Resume: last indexed slot (UPSERT + GREATEST)
-├── sink/postgres.ts     processBlock (tx), processBatch (bulk unnest), markBlocksFinalized
-├── runner/
-│   ├── syncRange.ts     Slot-range backfill with retry + resume
-│   ├── follow.ts        SSE follower: gap-fill → subscribe → serial queue + exp. backoff
-│   └── followLib.ts     LIB NDJSON follower: marks blocks finalized
-└── utils/
-    ├── logger.ts        Winston logger (Error-safe JSON)
-    └── retry.ts         withRetry: exp. backoff, retries only transient errors
-```
-
----
-
-## Explorer API
-
-The indexer exposes an HTTP API for explorer frontends on `API_PORT` (default `3001`).
-Full endpoint schemas, parameters, response fields, and error responses are in
-[`docs/indexer-api.md`](docs/indexer-api.md).
-
-| Endpoint | Description |
-|---|---|
-| `GET /api/v1/stats` | Network/indexer summary: counts, latest slots/heights, lag |
-| `GET /api/v1/blocks?limit=20&offset=0&finalized=true` | Latest blocks (`finalized=all` includes non-finalized blocks) |
-| `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
-| `GET /api/v1/validators?limit=20&offset=0` | Validators ordered by blocks produced |
-| `GET /api/v1/validators/:leader_key` | Validator stats by leader key |
-| `GET /api/v1/validators/:leader_key/blocks` | Blocks produced by one validator |
-
-Example:
-
-```bash
-curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true"
-curl http://localhost:3001/api/v1/stats
-```
-
-Unversioned `/api/*` routes are kept as aliases for local tooling.
-Use `/api/v1/*` for all new code.
-
----
-
-## Explorer SQL queries
-
-```sql
--- Latest blocks (finalized only)
-SELECT slot, height, leader_key, tx_count, indexed_at
-FROM logos_blocks WHERE finalized ORDER BY slot DESC LIMIT 20;
-
--- Top validators by blocks produced
-SELECT leader_key, blocks_produced, first_block_slot, last_block_slot
-FROM logos_leaders ORDER BY blocks_produced DESC LIMIT 20;
-
--- Network summary
-SELECT COUNT(*) AS total_blocks,
-       COUNT(*) FILTER (WHERE finalized) AS finalized_blocks,
-       MAX(slot) AS latest_slot,
-       MAX(height) AS latest_height
-FROM logos_blocks;
-```
-
----
-
-## Health check
-
-```bash
-curl http://localhost:3001/health
-```
-```json
-{
-  "status": "ok",
-  "last_slot": 1148474,
-  "node_tip_slot": 1148480,
-  "node_height": 58062,
-  "node_mode": "Online",
-  "lag_slots": 6,
-  "uptime_s": 3600
-}
-```
-Returns `200` when healthy, `503` when node unreachable. Useful for Docker / K8s liveness probes.
-
----
-
-## Operations and upgrades
-
-- [`docs/operations.md`](docs/operations.md) — environment variables, Docker
-  networking, health interpretation, troubleshooting, and deployment notes.
-- [`docs/network-upgrades.md`](docs/network-upgrades.md) — release upgrade
-  checklist for future Logos network versions.
-- [`docs/api.md`](docs/api.md) — upstream Logos node API consumed by the indexer.
-- [`docs/future.md`](docs/future.md) — deliberately deferred transaction and
-  balance work.
-
----
-
-## Future work
-
-See [`docs/future.md`](docs/future.md) for the v0.2+ roadmap:
-- Transaction indexing (when `block.transactions[]` becomes non-empty)
-- UTXO note tracking
-- Wallet balance display (pending public API support)
-
----
-
-## Agent workflow
-
-See [`AGENTS.md`](AGENTS.md) for sub-agent roles and constraints when working on this codebase.
+- `/health` returns `{ ok: true, lag: null, uptime_s }`.
+- `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/blocks/:n`, `/api/v1/notes`, `/api/v1/nullifiers`, and `/api/v1/accounts/:id` return `501 Not Implemented`.
+- `src/rpc/client.ts`, `src/sink/postgres.ts`, and `src/runner/*` are stubs awaiting downstream implementation.
+- `initdb/001-schema.sql` creates only `miden_indexer_progress` for now.

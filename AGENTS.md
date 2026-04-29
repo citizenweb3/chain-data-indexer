@@ -1,3 +1,5 @@
+> ⚠️ This file is the inherited Logos AGENTS.md. It will be rewritten for Miden by the agents-context subagent. Until then, treat all rules as guidelines, not invariants.
+
 # Agent Roles — Logos Indexer
 
 This file describes the recommended sub-agent workflow for working on this project.
