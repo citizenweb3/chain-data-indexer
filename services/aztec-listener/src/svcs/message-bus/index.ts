@@ -10,6 +10,7 @@ import {
 } from "@chicmoz-pkg/microservice-base";
 import { L2_NETWORK_ID } from "../../environment.js";
 import { logger } from "../../logger.js";
+import { observeBusPublish } from "../../metrics/registry.js";
 
 export const publishMessage = async (
   eventType: keyof L2_MESSAGES,
@@ -17,7 +18,13 @@ export const publishMessage = async (
 ) => {
   const topic = generateL2TopicName(L2_NETWORK_ID, eventType);
   logger.info(`Publishing message to topic ${topic}`);
-  await pub(topic, message);
+  try {
+    await pub(topic, message);
+    observeBusPublish(eventType, "ok");
+  } catch (e) {
+    observeBusPublish(eventType, "error");
+    throw e;
+  }
 };
 
 export const publishMessageSync = (

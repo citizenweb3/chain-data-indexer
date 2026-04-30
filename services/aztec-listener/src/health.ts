@@ -1,7 +1,9 @@
 import express from "express";
+import { mountMetricsRoute } from "@chicmoz-pkg/metrics-server";
 import { getPool } from "@chicmoz-pkg/postgres-helper";
 import { getAmountOfOnlineNodes } from "./svcs/poller/network-client/pool.js";
 import { logger } from "./logger.js";
+import { metrics } from "./metrics/registry.js";
 
 const app = express();
 
@@ -61,14 +63,8 @@ app.get("/health", async (req, res) => {
   res.status(statusCode).json(response);
 });
 
-// Метрики для Prometheus (опционально)
-app.get("/metrics", (req, res) => {
-  res.set("Content-Type", "text/plain");
-  res.send(`# HELP aztec_listener_up Service is up
-# TYPE aztec_listener_up gauge
-aztec_listener_up 1
-`);
-});
+// Метрики для Prometheus
+mountMetricsRoute(app, metrics);
 
 export const startHealthServer = () => {
   const port = parseInt(process.env.HEALTH_PORT || "8000", 10);

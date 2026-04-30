@@ -8,6 +8,15 @@ import {
 } from "../../../../environment.js";
 import { onBlock, onCatchupBlock } from "../../../../events/emitted/index.js";
 import { logger } from "../../../../logger.js";
+import {
+  observeBlock,
+  observeBlockFetch,
+  setChainProposedTip,
+  setChainProvenTip,
+  setIndexedProposedHeight,
+  setIndexedProvenHeight,
+  setPhase,
+} from "../../../../metrics/registry.js";
 import { batchHeightsWriter } from "../../../database/batch-heights.controller.js";
 import {
   getBlockHeights,
@@ -85,6 +94,10 @@ const recursivePolling = async (isFirstRun = false) => {
     };
 
     heights = await ensureSaneValues(heights);
+    setChainProposedTip(heights.chainProposedBlockHeight);
+    setChainProvenTip(heights.chainProvenBlockHeight);
+    setIndexedProposedHeight(heights.processedProposedBlockHeight);
+    setIndexedProvenHeight(heights.processedProvenBlockHeight);
     const proposedProvenDiff =
       heights.chainProposedBlockHeight - heights.chainProvenBlockHeight;
     const proposedHeightDiff =
@@ -186,8 +199,10 @@ Proven height   PROCESSED ${heights.processedProvenBlockHeight} | CHAIN ${
 };
 
 const pollProposedBlock = async (height: number, isCatchup: boolean) => {
+  const startedAt = process.hrtime.bigint();
   const block = await internalGetBlock(height);
   if (isCatchup) {
+    setPhase("catchup");
     await onCatchupBlock(
       block,
       ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROPOSED,
@@ -195,18 +210,26 @@ const pollProposedBlock = async (height: number, isCatchup: boolean) => {
     logger.info(`🐱 catchup proposed block ${height}`);
     await new Promise((r) => setTimeout(r, CATCHUP_POLL_WAIT_TIME_MS));
   } else {
+    setPhase("live");
     await onBlock(
       block,
       ChicmozL2BlockFinalizationStatus.L2_NODE_SEEN_PROPOSED,
     );
   }
   batchHeightsWriter.updateProposedHeight(height); // Batching instead of direct write
+  setIndexedProposedHeight(height);
+  observeBlock(
+    isCatchup ? "catchup_proposed" : "proposed",
+    Number(process.hrtime.bigint() - startedAt) / 1e9,
+  );
 };
 
 const pollProvenBlock = async (height: number, isCatchup: boolean) => {
+  const startedAt = process.hrtime.bigint();
   const block = await internalGetBlock(height);
 
   if (isCatchup) {
+    setPhase("catchup");
     // Initialize timer on first catchup block
     if (catchupBlockCount === 0) {
       catchupStartTime = Date.now();
@@ -235,6 +258,7 @@ const pollProvenBlock = async (height: number, isCatchup: boolean) => {
 
     // REMOVED: artificial delay for maximum speed
   } else {
+    setPhase("live");
     // Reset counters when switching from catchup to live mode
     if (catchupBlockCount > 0) {
       catchupBlockCount = 0;
@@ -245,11 +269,22 @@ const pollProvenBlock = async (height: number, isCatchup: boolean) => {
 
   await handleProvenTransactions(block);
   batchHeightsWriter.updateProvenHeight(height); // Batching instead of direct write
+  setIndexedProvenHeight(height);
+  observeBlock(
+    isCatchup ? "catchup_proven" : "proven",
+    Number(process.hrtime.bigint() - startedAt) / 1e9,
+  );
 };
 
 const internalGetBlock = async (height: number) => {
+  const cacheBefore = blockFetcherPool.getCacheSize();
+  const startedAt = process.hrtime.bigint();
   // ⚡ Используем worker pool который может иметь закешированный блок из prefetch
   const blockRes = await blockFetcherPool.fetchBlock(height);
+  observeBlockFetch(
+    cacheBefore > 0 ? "hit" : "miss",
+    Number(process.hrtime.bigint() - startedAt) / 1e9,
+  );
   if (!blockRes) {
     throw new Error(`Block ${height} not found`);
   }

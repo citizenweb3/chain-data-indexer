@@ -5,6 +5,7 @@ import {
 import { L2_NETWORK_ID } from "./environment.js";
 import { subscribeHandlers } from "./events/received/index.js";
 import { logger } from "./logger.js";
+import { startMetricsSampler } from "./metrics/sampler.js";
 import { removeDroppedThatHaveTxEffects } from "./svcs/database/controllers/dropped-tx/remove.js";
 import { updateContractInstanceAztecScanNotes } from "./svcs/database/controllers/l2/aztec-scan-notes.js";
 import { initializeRollupVersionCache } from "./svcs/database/controllers/l2/chain-info/rollup-version-cache.js";
@@ -57,4 +58,5 @@ URL: ${sourceCodeUrl}`);
   }
 
   await subscribeHandlers();
+  startMetricsSampler();
 };

@@ -1,4 +1,5 @@
 import { createErrorMiddleware } from "@chicmoz-pkg/error-middleware";
+import { mountMetricsRoute } from "@chicmoz-pkg/metrics-server";
 import { isHealthy } from "@chicmoz-pkg/microservice-base";
 import bodyParser from "body-parser";
 import cors from "cors";
@@ -7,6 +8,8 @@ import asyncHandler from "express-async-handler";
 import helmet from "helmet";
 import morgan, { FormatFn } from "morgan";
 import { logger } from "../../logger.js";
+import { httpMetricsMiddleware } from "../../metrics/http-middleware.js";
+import { metrics } from "../../metrics/registry.js";
 import { genereateOpenApiSpec } from "./open-api-spec.js";
 import { init as initApiRoutes } from "./routes/index.js";
 import { paths } from "./routes/paths_and_validation.js";
@@ -80,6 +83,11 @@ export function setup(
   });
   app.use(morgan("dev"));
   app.use(morgan(morganUnacceptableResponseTimeMiddleware));
+  app.use(httpMetricsMiddleware);
+
+  // Prometheus /metrics — registered on the app (not the router) so it is not
+  // duplicated under /v1/:apiKey and is not affected by router.use mounting.
+  mountMetricsRoute(app, metrics);
 
   const router = express.Router();
   router.get(

@@ -38,3 +38,22 @@
 - **Error handling**: No `console.log` (use structured logging), no param reassignment
 - **Formatting**: Prettier with organize-imports plugin, curly braces required
 - **Database**: Use Drizzle ORM for type-safe queries, migrations in each service
+
+## Observability
+
+Production indexer services (`docker-compose.indexer.yml`) expose Prometheus
+metrics and emit JSON logs. Full inventory in [`MONITORING.md`](MONITORING.md);
+collector configs (Alloy + Prometheus, with placeholder env vars) in
+`docs/observability/`.
+
+- Endpoints: listener `127.0.0.1:8001/metrics` (loopback), api `:8000/metrics`.
+- Metric prefixes: `aztec_listener_*`, `aztec_api_*`. Process defaults from
+  `prom-client` also exported.
+- Shared infra: `@chicmoz-pkg/metrics-server`. Per-service registries in
+  `services/<svc>/src/metrics/`.
+- Logging: `LOG_FORMAT=json|pretty` on `@chicmoz-pkg/logger-server`. JSON
+  shape `{ts, level, label, message, metadata}` — `label` is part of the
+  contract, do not rename.
+- **Cardinality discipline**: only labels listed in `MONITORING.md` are
+  allowed. Never label by `height`, `hash`, `address`, or other per-record
+  values — they explode Prometheus.

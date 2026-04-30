@@ -139,6 +139,8 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       INSTANCE_NAME: ${AZTEC_LISTENER_INSTANCE_NAME:-aztec-listener-1}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      METRICS_SAMPLE_INTERVAL_MS: ${METRICS_SAMPLE_INTERVAL_MS:-5000}
 
       # Network
       L2_NETWORK_ID: ${L2_NETWORK_ID:-MAINNET}
@@ -181,6 +183,10 @@ services:
       SHUTDOWN_TIMEOUT_SEC: ${SHUTDOWN_TIMEOUT_SEC:-30}
       # Cache CRS data so WASM Barretenberg fallback doesn't re-download ~100MB on every restart
       CRS_PATH: /bb-crs
+    ports:
+      # Loopback-only — host-level Alloy/Prometheus scrapes 127.0.0.1:8001/metrics.
+      # Not exposed on public interfaces.
+      - "127.0.0.1:${LISTENER_METRICS_HOST_PORT:-8001}:${LISTENER_HEALTH_PORT:-8000}"
     volumes:
       - bb_crs:/bb-crs
     restart: unless-stopped
@@ -220,6 +226,8 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       INSTANCE_NAME: ${EXPLORER_API_INSTANCE_NAME:-explorer-api-1}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      METRICS_SAMPLE_INTERVAL_MS: ${METRICS_SAMPLE_INTERVAL_MS:-5000}
 
       # Network
       L2_NETWORK_ID: ${L2_NETWORK_ID:-MAINNET}

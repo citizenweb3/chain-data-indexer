@@ -155,14 +155,9 @@ export const init = ({ router }: { router: Router }) => {
     });
   });
 
-  // Metrics endpoint for Prometheus
-  router.get("/metrics", (req, res) => {
-    res.set("Content-Type", "text/plain");
-    res.send(`# HELP explorer_api_up Service is up
-# TYPE explorer_api_up gauge
-explorer_api_up 1
-`);
-  });
+  // /metrics is mounted in express-config.ts on the app root via mountMetricsRoute
+  // (registered on the Express app, not this router, so it isn't duplicated under
+  // the /v1/:apiKey mount and stays free of the API key requirement).
 
   router.get("/l2/index", controller.GET_ROUTES);
 

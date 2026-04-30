@@ -1,0 +1,127 @@
+// Grafana Alloy reference config for Aztec indexer hosts.
+//
+// This single binary replaces:
+//   - prometheus + remote-write
+//   - node_exporter
+//   - promtail
+//
+// Real endpoints/credentials are read from environment variables — never
+// hard-code them. Suggested env vars (set via /etc/default/alloy or systemd
+// drop-in):
+//
+//   PROM_REMOTE_WRITE_URL
+//   PROM_REMOTE_WRITE_USERNAME
+//   PROM_REMOTE_WRITE_PASSWORD
+//   LOKI_WRITE_URL
+//   LOKI_WRITE_USERNAME
+//   LOKI_WRITE_PASSWORD
+//
+// Targets assume both indexer services run on the same host as Alloy:
+//   aztec-listener  /metrics → 127.0.0.1:8001 (loopback bind)
+//   explorer-api    /metrics → 127.0.0.1:8000
+
+// ---------------- Host metrics ----------------
+prometheus.exporter.unix "host" { }
+
+prometheus.scrape "host_metrics" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.central.receiver]
+  job_name        = "node"
+  scrape_interval = "15s"
+}
+
+// ---------------- Indexer metrics ----------------
+prometheus.scrape "aztec_listener" {
+  targets = [
+    { __address__ = "127.0.0.1:8001", instance = constants.hostname, service = "aztec-listener" },
+  ]
+  job_name        = "aztec-listener"
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+prometheus.scrape "aztec_api" {
+  targets = [
+    { __address__ = "127.0.0.1:8000", instance = constants.hostname, service = "explorer-api" },
+  ]
+  job_name        = "explorer-api"
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+prometheus.remote_write "central" {
+  endpoint {
+    url = sys.env("PROM_REMOTE_WRITE_URL")
+    basic_auth {
+      username = sys.env("PROM_REMOTE_WRITE_USERNAME")
+      password = sys.env("PROM_REMOTE_WRITE_PASSWORD")
+    }
+  }
+}
+
+// ---------------- Container logs ----------------
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "aztec_containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(aztec-indexer-listener|aztec-indexer-api)"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "aztec" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.aztec_containers.output
+  forward_to = [loki.process.aztec.receiver]
+  labels     = { job = "aztec-indexer" }
+}
+
+loki.process "aztec" {
+  forward_to = [loki.write.central.receiver]
+
+  // Parse JSON logs emitted when LOG_FORMAT=json (default in compose).
+  stage.json {
+    expressions = {
+      level   = "level",
+      label   = "label",
+      ts      = "ts",
+      message = "message",
+    }
+  }
+
+  // Promote a small, bounded set of fields to labels — never per-block fields.
+  stage.labels {
+    values = {
+      level = null,
+      label = null,
+    }
+  }
+
+  // Use the embedded timestamp instead of ingestion time when present.
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+}
+
+loki.write "central" {
+  endpoint {
+    url = sys.env("LOKI_WRITE_URL")
+    basic_auth {
+      username = sys.env("LOKI_WRITE_USERNAME")
+      password = sys.env("LOKI_WRITE_PASSWORD")
+    }
+  }
+}

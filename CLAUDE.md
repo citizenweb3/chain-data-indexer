@@ -674,6 +674,35 @@ k8s/local/
 - Database: `aztec-chain-connection` table tracks last seen block
 - Each service: Implements health check via `microservice-base`
 
+### Prometheus Metrics & JSON Logs (production indexer)
+
+Both indexer services in `docker-compose.indexer.yml` expose Prometheus metrics
+and emit structured JSON logs. Full inventory and PromQL/LogQL examples are in
+[`MONITORING.md`](MONITORING.md); collector configs in `docs/observability/`.
+
+- Endpoints: `aztec-listener` → `127.0.0.1:8001/metrics` (loopback only),
+  `explorer-api` → `:8000/metrics`. Both also serve `/health`.
+- Metric prefixes: `aztec_listener_*` (block/RPC/Kafka pipeline) and
+  `aztec_api_*` (HTTP + consumer). Process defaults from `prom-client`
+  are also exported.
+- Shared infra package: `@chicmoz-pkg/metrics-server`
+  (`createRegistry`, `mountMetricsRoute`, `startNodeDefaultMetrics`,
+  `startPgPoolSampler`). Re-use it for any new service that needs metrics.
+- Per-service registries live in `services/<svc>/src/metrics/`. Hooks
+  call typed observers from `registry.ts`.
+- Logging contract: `LOG_FORMAT=json|pretty` on `@chicmoz-pkg/logger-server`.
+  JSON shape is `{ts, level, label, message, metadata}` — the field name
+  `label` is part of the contract (Loki pipelines parse on it). Compose
+  defaults to `json`; local dev defaults to `pretty`.
+- **Cardinality discipline**: only the labels listed in `MONITORING.md`
+  are allowed (`route`, `method`, `status`, `topic`, `node`, `endpoint`,
+  `phase`, `table`, `column`, `cache`). NEVER label by per-block /
+  per-tx values (`height`, `hash`, `address`) — they explode Prometheus.
+- Collectors run on the **host**, not in compose. Use either Grafana
+  Alloy (recommended, see `docs/observability/alloy.river`) or classic
+  Prometheus (`docs/observability/prometheus.yml`). Both files use env-var
+  placeholders for endpoints/credentials — never hard-code secrets.
+
 ## Common Pitfalls and Gotchas
 
 ### 1. Build Order Violations

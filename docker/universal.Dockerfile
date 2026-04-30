@@ -27,6 +27,7 @@ COPY packages/error-middleware/package.json ./packages/error-middleware/
 COPY packages/logger-server/package.json ./packages/logger-server/
 COPY packages/message-bus/package.json ./packages/message-bus/
 COPY packages/message-registry/package.json ./packages/message-registry/
+COPY packages/metrics-server/package.json ./packages/metrics-server/
 COPY packages/microservice-base/package.json ./packages/microservice-base/
 COPY packages/postgres-helper/package.json ./packages/postgres-helper/
 COPY packages/types/package.json ./packages/types/

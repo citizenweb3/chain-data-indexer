@@ -3,6 +3,7 @@ import {
   BATCH_HEIGHTS_FLUSH_INTERVAL_MS,
   BATCH_HEIGHTS_FLUSH_EVERY_N_BLOCKS,
 } from "../../environment.js";
+import { observeFlush } from "../../metrics/registry.js";
 import {
   storeProcessedProvenBlockHeight,
   storeProcessedProposedBlockHeight,
@@ -58,21 +59,34 @@ class BatchHeightsWriter {
 
   private async flush() {
     const promises = [];
+    let proposedRow = 0;
+    let provenRow = 0;
 
     if (this.pendingProposedHeight !== null) {
       promises.push(storeProcessedProposedBlockHeight(this.pendingProposedHeight));
       logger.debug(`💾 Flushing proposed height: ${this.pendingProposedHeight}`);
       this.pendingProposedHeight = null;
+      proposedRow = 1;
     }
 
     if (this.pendingProvenHeight !== null) {
       promises.push(storeProcessedProvenBlockHeight(this.pendingProvenHeight));
       logger.debug(`💾 Flushing proven height: ${this.pendingProvenHeight}`);
       this.pendingProvenHeight = null;
+      provenRow = 1;
     }
 
     if (promises.length > 0) {
+      const startedAt = process.hrtime.bigint();
       await Promise.all(promises);
+      observeFlush(
+        "heights",
+        Number(process.hrtime.bigint() - startedAt) / 1e9,
+        {
+          processed_proposed_block_height: proposedRow,
+          processed_proven_block_height: provenRow,
+        },
+      );
     }
   }
 

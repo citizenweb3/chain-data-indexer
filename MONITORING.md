@@ -1,427 +1,173 @@
-# Мониторинг Индексера - Prometheus, Grafana, Grafana Alloy
+# Observability — Aztec Indexer
 
-Индексер теперь имеет health endpoints и метрики, которые можно интегрировать с системами мониторинга.
+The Aztec indexer exposes Prometheus-format metrics and structured JSON logs.
+Both services (`aztec-listener`, `explorer-api`) follow the same contract so a
+single Grafana stack can dashboard them uniformly.
 
-## Доступные Endpoints
+---
 
-### Health Check
+## Endpoints
 
-**aztec-listener:**
-```bash
-GET http://localhost:8000/health
-```
+| Service          | Container port | Host bind                 | Routes                |
+|------------------|---------------:|---------------------------|-----------------------|
+| `aztec-listener` | `8000`         | `127.0.0.1:8001` (lo only) | `/health`, `/metrics` |
+| `explorer-api`   | `8000`         | `0.0.0.0:8000`             | `/health`, `/metrics`, `/v1/...` |
 
-**explorer-api:**
-```bash
-GET http://localhost:8000/health
-```
+`/metrics` returns Prometheus text exposition (`text/plain; version=0.0.4`).
+The listener metrics port is loopback-only by design — collectors run on the
+host (Alloy / Prometheus) and reach it through `127.0.0.1`.
 
-**Формат ответа:**
+---
+
+## Metric inventory
+
+All metrics use the prefixes `aztec_listener_*` and `aztec_api_*`. Process
+defaults from `prom-client` are also exported (`process_*`, `nodejs_*`).
+
+### Common (both services)
+
+| Metric                                  | Type | Labels         | Meaning |
+|-----------------------------------------|------|----------------|---------|
+| `*_uptime_seconds`                      | counter | —           | Seconds since process start |
+| `*_pg_pool_total`                       | gauge | —           | Total pg connections in pool |
+| `*_pg_pool_idle`                        | gauge | —           | Idle pg connections |
+| `*_pg_pool_waiting`                     | gauge | —           | Clients waiting for a connection |
+
+### `aztec_listener_*` (block ingestion)
+
+| Metric                                            | Type | Labels                    | Meaning |
+|---------------------------------------------------|------|---------------------------|---------|
+| `aztec_listener_chain_proposed_tip_height`        | gauge | —                        | Latest sequencer-seen height observed via RPC |
+| `aztec_listener_chain_proven_tip_height`          | gauge | —                        | Latest L1-proven height |
+| `aztec_listener_indexed_proposed_height`          | gauge | —                        | Last persisted proposed-height watermark |
+| `aztec_listener_indexed_proven_height`            | gauge | —                        | Last persisted proven-height watermark |
+| `aztec_listener_lag_proposed_blocks`              | gauge | —                        | `chain_proposed_tip - indexed_proposed` |
+| `aztec_listener_lag_proven_blocks`                | gauge | —                        | `chain_proven_tip - indexed_proven` |
+| `aztec_listener_blocks_processed_total`           | counter | `status`               | `proposed` / `proven` / `catchup_proposed` / `catchup_proven` |
+| `aztec_listener_block_process_duration_seconds`   | histogram | `status`             | End-to-end per-block processing time |
+| `aztec_listener_block_fetch_duration_seconds`     | histogram | `cache`              | RPC fetch time, `cache=hit\|miss` |
+| `aztec_listener_phase`                            | gauge | `phase`                  | One-hot: `catchup` / `live` |
+| `aztec_listener_block_fetcher_queue_size`         | gauge | —                        | Pending fetches in worker pool |
+| `aztec_listener_block_fetcher_active_workers`     | gauge | —                        | In-flight fetcher workers |
+| `aztec_listener_block_fetcher_cache_size`         | gauge | —                        | Pre-fetched blocks cached |
+| `aztec_listener_rpc_nodes_online`                 | gauge | —                        | Number of healthy RPC nodes in pool |
+| `aztec_listener_rpc_requests_total`               | counter | `node`,`status`        | RPC outcomes: `ok` / `timeout` / `error` |
+| `aztec_listener_rpc_request_duration_seconds`     | histogram | `node`               | RPC latency per node |
+| `aztec_listener_flush_duration_seconds`           | histogram | `table`              | DB write batch duration; `table=heights` for batch-heights writer |
+| `aztec_listener_flush_rows_total`                 | counter | `table`,`column`       | Rows written per flush column |
+| `aztec_listener_message_bus_published_total`      | counter | `topic`,`status`       | Kafka publish outcomes |
+
+### `aztec_api_*` (HTTP + consumer)
+
+| Metric                                          | Type | Labels                 | Meaning |
+|-------------------------------------------------|------|------------------------|---------|
+| `aztec_api_http_requests_total`                 | counter | `route`,`method`,`status` | `status` = `2xx`/`3xx`/`4xx`/`5xx` (class only — keeps cardinality bounded) |
+| `aztec_api_http_request_duration_seconds`       | histogram | `route`,`method`     | `route` is the matched Express route template, never the raw URL |
+| `aztec_api_http_in_flight_requests`             | gauge | —                       | Concurrent in-flight requests |
+| `aztec_api_message_bus_consumed_total`          | counter | `topic`,`status`      | Kafka consume outcomes |
+| `aztec_api_message_bus_consume_duration_seconds`| histogram | `topic`              | Per-message processing time |
+
+### Cardinality discipline
+
+Allowed label keys: `module`, `level`, `route`, `method`, `status`, `phase`,
+`table`, `column`, `topic`, `cache`, `node`. **Never** label by per-block /
+per-tx values (`height`, `hash`, `address`, `block_id`, …) — they cause
+unbounded label cardinality and break Prometheus.
+
+---
+
+## Structured logs
+
+Logging format is controlled by `LOG_FORMAT`:
+
+- `LOG_FORMAT=pretty` (default in dev) — colorized printf, human-friendly.
+- `LOG_FORMAT=json` (default in compose) — newline-delimited JSON, ready for
+  Loki ingestion.
+
+JSON shape:
+
 ```json
-{
-  "status": "healthy",
-  "checks": {
-    "postgres": true,
-    "rpcNodes": true
-  },
-  "timestamp": "2025-12-16T10:30:00.123Z",
-  "service": "aztec-listener"
-}
+{ "ts": "2025-01-15T10:23:45.123Z", "level": "info", "label": "block-poller",
+  "message": "🐱 catchup proposed block 12345", "metadata": { } }
 ```
 
-### Metrics (Prometheus Format)
+The field name `label` is part of the contract — host-level pipelines parse on
+that key. Do not rename.
 
-**aztec-listener:**
+---
+
+## Integration patterns
+
+We do not bundle a Prometheus or Alloy container in `docker-compose.indexer.yml`.
+Collectors run **on the host** and scrape both services over loopback. Two
+example configurations are shipped under `docs/observability/`:
+
+- [`docs/observability/alloy.river`](docs/observability/alloy.river) — Grafana
+  Alloy config (recommended). Replaces `prometheus + node_exporter +
+  promtail` with a single binary; remote-writes metrics and logs to a central
+  Mimir + Loki stack.
+- [`docs/observability/prometheus.yml`](docs/observability/prometheus.yml) —
+  classic Prometheus scrape config for OSS users not on the Grafana stack.
+
+Both files use **placeholder env vars** for endpoints / credentials — you fill
+them in on the host (e.g. via systemd unit `Environment=` or the Alloy
+`/etc/default/alloy` file). Real values must never be committed.
+
+### Quick verification
+
 ```bash
-GET http://localhost:8000/metrics
-```
+# Listener: scraped by host-local Alloy/Prometheus
+curl -sf http://127.0.0.1:8001/metrics | head
 
-**explorer-api:**
-```bash
-GET http://localhost:8000/metrics
-```
+# Explorer API: publicly bound, also exposes /metrics
+curl -sf http://127.0.0.1:8000/metrics | head
 
-**Формат ответа:**
-```
-# HELP aztec_listener_up Service is up
-# TYPE aztec_listener_up gauge
-aztec_listener_up 1
+# JSON logs (after compose restart with LOG_FORMAT=json)
+docker logs aztec-indexer-listener 2>&1 | head -3 | jq .
 ```
 
 ---
 
-## Интеграция с Prometheus
-
-### 1. Установка Prometheus
-
-```yaml
-# prometheus.yml
-global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
-
-scrape_configs:
-  # Aztec Listener
-  - job_name: 'aztec-listener'
-    static_configs:
-      - targets: ['localhost:8000']
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-
-  # Explorer API
-  - job_name: 'explorer-api'
-    static_configs:
-      - targets: ['localhost:8000']
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-```
-
-### 2. Запуск Prometheus в Docker
-
-```bash
-docker run -d \
-  --name prometheus \
-  -p 9090:9090 \
-  -v $(pwd)/prometheus.yml:/etc/prometheus/prometheus.yml \
-  prom/prometheus
-```
-
-### 3. Проверка
-
-Откройте http://localhost:9090 и выполните запрос:
+## Suggested PromQL starters
 
 ```promql
-aztec_listener_up
+# Indexing lag (alert candidate when persistently > 50)
+aztec_listener_lag_proposed_blocks
+aztec_listener_lag_proven_blocks
+
+# Throughput (blocks/s) over 5m, split by phase
+sum by (status) (rate(aztec_listener_blocks_processed_total[5m]))
+
+# RPC error ratio per node
+sum by (node) (rate(aztec_listener_rpc_requests_total{status!="ok"}[5m]))
+  / sum by (node) (rate(aztec_listener_rpc_requests_total[5m]))
+
+# API p95 latency by route
+histogram_quantile(0.95,
+  sum by (le, route) (rate(aztec_api_http_request_duration_seconds_bucket[5m])))
+
+# 5xx ratio
+sum(rate(aztec_api_http_requests_total{status="5xx"}[5m]))
+  / sum(rate(aztec_api_http_requests_total[5m]))
+```
+
+LogQL example:
+
+```logql
+{container="aztec-indexer-listener"} | json | level="error"
 ```
 
 ---
 
-## Интеграция с Grafana
-
-### 1. Запуск Grafana
-
-```bash
-docker run -d \
-  --name grafana \
-  -p 3000:3000 \
-  grafana/grafana
-```
-
-Откройте http://localhost:3000 (логин: `admin`, пароль: `admin`)
-
-### 2. Добавление Prometheus как Data Source
-
-1. Перейдите в **Configuration** → **Data Sources** → **Add data source**
-2. Выберите **Prometheus**
-3. URL: `http://prometheus:9090` (если в одной Docker-сети) или `http://localhost:9090`
-4. Нажмите **Save & Test**
-
-### 3. Создание Dashboard
-
-Импортируйте готовый dashboard или создайте свой:
-
-**Примеры панелей:**
-
-#### Uptime панель
-```promql
-aztec_listener_up
-```
-
-#### Health Status (если расширите метрики)
-```promql
-rate(http_requests_total{endpoint="/health"}[5m])
-```
-
----
-
-## Интеграция с Grafana Alloy
-
-**Grafana Alloy** (ранее Grafana Agent) - упрощенный агент для сбора метрик и логов.
-
-### 1. Установка Grafana Alloy
-
-```bash
-docker run -d \
-  --name grafana-alloy \
-  -v $(pwd)/alloy-config.yaml:/etc/alloy/config.yaml \
-  -p 12345:12345 \
-  grafana/alloy:latest
-```
-
-### 2. Конфигурация (`alloy-config.yaml`)
-
-```yaml
-prometheus.scrape "aztec_indexer" {
-  targets = [
-    {
-      __address__ = "localhost:8000",
-      job = "aztec-listener",
-    },
-  ]
-  forward_to = [prometheus.remote_write.default.receiver]
-  scrape_interval = "30s"
-  metrics_path = "/metrics"
-}
-
-prometheus.remote_write "default" {
-  endpoint {
-    url = "https://your-grafana-cloud.grafana.net/api/prom/push"
-    basic_auth {
-      username = "your-username"
-      password = "your-api-key"
-    }
-  }
-}
-```
-
-### 3. Проверка работы
-
-```bash
-curl http://localhost:12345/metrics
-```
-
----
-
-## Health Check Monitoring с Prometheus
-
-### Создание алертов
-
-Добавьте в `prometheus.yml`:
-
-```yaml
-rule_files:
-  - 'alerts.yml'
-
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets: ['localhost:9093']
-```
-
-**Файл `alerts.yml`:**
-
-```yaml
-groups:
-  - name: aztec_indexer
-    interval: 30s
-    rules:
-      # Алерт если сервис down
-      - alert: AztecListenerDown
-        expr: aztec_listener_up == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Aztec Listener is down"
-          description: "Aztec Listener has been down for more than 2 minutes"
-
-      # Алерт если сервис недоступен
-      - alert: AztecListenerUnhealthy
-        expr: probe_success{job="aztec-listener"} == 0
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Aztec Listener health check failed"
-          description: "Health check has been failing for 5 minutes"
-```
-
----
-
-## Blackbox Exporter для Health Checks
-
-Для мониторинга HTTP health endpoints используйте Blackbox Exporter:
-
-### 1. Запуск Blackbox Exporter
-
-```bash
-docker run -d \
-  --name blackbox-exporter \
-  -p 9115:9115 \
-  prom/blackbox-exporter:latest
-```
-
-### 2. Конфигурация Prometheus
-
-```yaml
-scrape_configs:
-  - job_name: 'blackbox'
-    metrics_path: /probe
-    params:
-      module: [http_2xx]
-    static_configs:
-      - targets:
-          - http://localhost:8000/health  # aztec-listener
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: __param_target
-      - source_labels: [__param_target]
-        target_label: instance
-      - target_label: __address__
-        replacement: blackbox-exporter:9115
-```
-
-### 3. Grafana Dashboard для Health
-
-**Панель: Health Check Status**
-
-```promql
-probe_success{job="blackbox"}
-```
-
-- `1` = healthy
-- `0` = unhealthy
-
-**Панель: Response Time**
-
-```promql
-probe_duration_seconds{job="blackbox"}
-```
-
----
-
-## Полный Docker Compose с Мониторингом
-
-```yaml
-version: "3.8"
-
-services:
-  # Ваш индексер
-  aztec-listener:
-    # ... существующая конфигурация
-    labels:
-      prometheus.io/scrape: "true"
-      prometheus.io/port: "8000"
-      prometheus.io/path: "/metrics"
-
-  # Prometheus
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-    restart: unless-stopped
-
-  # Grafana
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
-      - ./monitoring/datasources:/etc/grafana/provisioning/datasources
-    restart: unless-stopped
-
-  # Blackbox Exporter
-  blackbox-exporter:
-    image: prom/blackbox-exporter:latest
-    container_name: blackbox-exporter
-    ports:
-      - "9115:9115"
-    restart: unless-stopped
-
-volumes:
-  prometheus_data:
-  grafana_data:
-```
-
----
-
-## Grafana Cloud (SaaS решение)
-
-Если используете Grafana Cloud:
-
-### 1. Получите API ключ
-
-1. Перейдите на https://grafana.com/
-2. Создайте аккаунт
-3. Получите Prometheus endpoint и API key
-
-### 2. Настройте Grafana Alloy
-
-```yaml
-prometheus.scrape "aztec_indexer" {
-  targets = [
-    {__address__ = "localhost:8000", job = "aztec-listener"},
-  ]
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-}
-
-prometheus.remote_write "grafana_cloud" {
-  endpoint {
-    url = "https://prometheus-prod-XX-XX.grafana.net/api/prom/push"
-    basic_auth {
-      username = "123456"
-      password = "glc_eyJrIjoiXXXXXX"
-    }
-  }
-}
-```
-
-### 3. Просмотр метрик
-
-Метрики будут доступны в вашем Grafana Cloud через несколько минут.
-
----
-
-## Рекомендуемые Метрики для Расширения
-
-Вы можете расширить текущий `/metrics` endpoint:
-
-```typescript
-// В health.ts
-app.get("/metrics", (req, res) => {
-  res.set("Content-Type", "text/plain");
-  res.send(`
-# HELP aztec_listener_up Service is up
-# TYPE aztec_listener_up gauge
-aztec_listener_up 1
-
-# HELP aztec_listener_postgres_pool_total Total DB connections
-# TYPE aztec_listener_postgres_pool_total gauge
-aztec_listener_postgres_pool_total ${pool.totalCount}
-
-# HELP aztec_listener_postgres_pool_idle Idle DB connections
-# TYPE aztec_listener_postgres_pool_idle gauge
-aztec_listener_postgres_pool_idle ${pool.idleCount}
-
-# HELP aztec_listener_rpc_nodes_online Online RPC nodes
-# TYPE aztec_listener_rpc_nodes_online gauge
-aztec_listener_rpc_nodes_online ${getAmountOfOnlineNodes()}
-
-# HELP aztec_listener_last_block_height Last indexed block
-# TYPE aztec_listener_last_block_height gauge
-aztec_listener_last_block_height ${lastBlockHeight}
-  `);
-});
-```
-
----
-
-## Резюме
-
-✅ **Health endpoints** готовы к использованию с:
-- Prometheus (scraping `/metrics`)
-- Grafana (визуализация)
-- Grafana Alloy (агент для Grafana Cloud)
-- Blackbox Exporter (HTTP health checks)
-
-✅ **Можно настроить:**
-- Алерты при падении сервиса
-- Мониторинг response time
-- Дашборды с метриками индексатора
-- Интеграцию с Grafana Cloud (SaaS)
-
-Все endpoints **совместимы с Prometheus** и готовы к production использованию! 🎉
+## Where things live in code
+
+| Concern                          | File |
+|----------------------------------|------|
+| Shared metrics infra package     | `packages/metrics-server/src/index.ts` |
+| Logger (JSON / pretty switch)    | `packages/logger-server/src/index.ts` |
+| Listener metric registry         | `services/aztec-listener/src/metrics/registry.ts` |
+| Listener sampler (5 s interval)  | `services/aztec-listener/src/metrics/sampler.ts` |
+| API metric registry              | `services/explorer-api/src/metrics/registry.ts` |
+| API HTTP middleware              | `services/explorer-api/src/metrics/http-middleware.ts` |
+| `/metrics` mount (listener)      | `services/aztec-listener/src/health.ts` |
+| `/metrics` mount (api)           | `services/explorer-api/src/svcs/http-server/express-config.ts` |

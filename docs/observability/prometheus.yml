@@ -1,0 +1,44 @@
+# Reference Prometheus scrape config for hosts running the Aztec indexer.
+#
+# This is the OSS / non-Grafana-stack alternative to docs/observability/alloy.river.
+# Pair it with promtail (or Vector) for log shipping if you need logs as well.
+#
+# Place real remote_write endpoint URL and credentials outside this file
+# (e.g. via prometheus --web.config.file or an env-templating step in your
+# deployment pipeline). Keep this file free of secrets.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    # Override per host, e.g. via --query.external-labels at runtime,
+    # or template this file before shipping.
+    cluster: REPLACE_ME_CLUSTER
+
+scrape_configs:
+  - job_name: aztec-listener
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:8001"]
+        labels:
+          service: aztec-listener
+
+  - job_name: explorer-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+        labels:
+          service: explorer-api
+
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:9100"]   # node_exporter
+
+# Optional remote_write to a central Mimir / Cortex / Prometheus.
+# Uncomment and template the URL / credentials at deploy time.
+#
+# remote_write:
+#   - url: ${PROM_REMOTE_WRITE_URL}
+#     basic_auth:
+#       username: ${PROM_REMOTE_WRITE_USERNAME}
+#       password: ${PROM_REMOTE_WRITE_PASSWORD}

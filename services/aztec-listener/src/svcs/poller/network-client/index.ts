@@ -17,6 +17,7 @@ import {
   onL2SequencerInfo,
 } from "../../../events/emitted/index.js";
 import { logger } from "../../../logger.js";
+import { observeRpc } from "../../../metrics/registry.js";
 import {
   getAllRpcNodes,
   getAmountOfOnlineNodes,
@@ -48,13 +49,32 @@ const callNodeFunction = async <K extends keyof AztecNode>(
       logger.info(
         `🧋 Calling Aztec node function: ${fnName} on ${currentNode.name}`,
       );
-      // eslint-disable-next-line @typescript-eslint/ban-types
-      const result = (await (currentNode.instance[fnName] as Function).apply(
-        currentNode.instance,
-        args,
-      )) as Promise<ReturnType<AztecNode[K]>>;
-      void onL2RpcNodeAlive(currentNode.url, currentNode.name);
-      return result;
+      const startedAt = process.hrtime.bigint();
+      try {
+        // eslint-disable-next-line @typescript-eslint/ban-types
+        const result = (await (currentNode.instance[fnName] as Function).apply(
+          currentNode.instance,
+          args,
+        )) as Promise<ReturnType<AztecNode[K]>>;
+        observeRpc(
+          currentNode.name,
+          String(fnName),
+          "ok",
+          Number(process.hrtime.bigint() - startedAt) / 1e9,
+        );
+        void onL2RpcNodeAlive(currentNode.url, currentNode.name);
+        return result;
+      } catch (e) {
+        const code = (e as { cause?: { code?: string } }).cause?.code;
+        const status = code === "ETIMEDOUT" ? "timeout" : "error";
+        observeRpc(
+          currentNode.name,
+          String(fnName),
+          status,
+          Number(process.hrtime.bigint() - startedAt) / 1e9,
+        );
+        throw e;
+      }
     },
     {
       numOfAttempts: getAmountOfOnlineNodes(),

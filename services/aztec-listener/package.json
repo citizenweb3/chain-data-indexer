@@ -10,6 +10,7 @@
     "@chicmoz-pkg/logger-server": "workspace:^",
     "@chicmoz-pkg/message-bus": "workspace:^",
     "@chicmoz-pkg/message-registry": "workspace:^",
+    "@chicmoz-pkg/metrics-server": "workspace:^",
     "@chicmoz-pkg/microservice-base": "workspace:^",
     "@chicmoz-pkg/postgres-helper": "workspace:^",
     "@chicmoz-pkg/types": "workspace:^",
