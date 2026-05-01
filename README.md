@@ -103,7 +103,7 @@ src/
 ├── config.ts            Env-based config (zod)
 ├── types.d.ts           Logos API types (incl. LibStreamEvent)
 ├── api.ts               HTTP explorer API + health server
-├── rpc/client.ts        HTTP client: REST + SSE (blocks) + NDJSON (lib-stream)
+├── rpc/client.ts        HTTP client: REST + NDJSON streams (blocks + lib-stream)
 ├── metrics/             Isolated Prometheus registry + sampler
 ├── db/
 │   ├── pg.ts            PostgreSQL pool (with error handler)
@@ -111,7 +111,7 @@ src/
 ├── sink/postgres.ts     processBlock (tx), processBatch (bulk unnest), markBlocksFinalized
 ├── runner/
 │   ├── syncRange.ts     Slot-range backfill with retry + resume
-│   ├── follow.ts        SSE follower: gap-fill → subscribe → serial queue + exp. backoff
+│   ├── follow.ts        block-stream follower: gap-fill → subscribe → serial queue + exp. backoff
 │   └── followLib.ts     LIB NDJSON follower: marks blocks finalized
 └── utils/
     ├── logger.ts        Winston logger (Error-safe JSON)

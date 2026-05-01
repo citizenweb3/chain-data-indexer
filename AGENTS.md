@@ -46,7 +46,7 @@ Any agent picking up work here should follow the **research → execute → revi
 - Crash safety: `processBlock()` wraps block + leader writes in one transaction.
   If the process crashes mid-block, the transaction rolls back and restart
   re-indexes the same slot range idempotently.
-- Live processing errors should close/reconnect SSE instead of silently
+- Live processing errors should close/reconnect the block stream instead of silently
   continuing; gap-fill on reconnect recovers missed slots.
 - Public explorer views should default to finalized blocks unless a caller
   explicitly requests `finalized=all`.
@@ -69,7 +69,7 @@ Any agent picking up work here should follow the **research → execute → revi
 | `setLastSlot` uses `GREATEST` | Progress never goes backwards (safe for concurrent updates) |
 | Progress table always updated after each batch | Enables safe restart without re-indexing |
 | Startup rescans from `MAX(logos_blocks.slot)+1` when progress is ahead | Repairs tail gaps after transient empty RPC range responses |
-| `lib-stream` is NDJSON not SSE | Use `http.request` + readline, not EventSource |
+| `lib-stream` and `events/blocks/stream` are NDJSON, not SSE | Use `http.request` + readline, not EventSource |
 | Metrics use `logos_` / `logos_node_` prefixes | Fleet observability contract; keep labels bounded |
 | `LOG_FORMAT=json` for production log shipping | Emits `{ts, level, label, message, metadata}` JSON lines |
 
@@ -83,7 +83,7 @@ cat docs/api.md          # understand the node API
 cat src/types.d.ts       # understand data shapes
 cat initdb/001-schema.sql  # understand the DB schema
 cat src/sink/postgres.ts   # understand write path (processBlock / processBatch)
-cat src/runner/follow.ts   # understand gap-fill + serial SSE queue
+cat src/runner/follow.ts   # understand gap-fill + serial stream queue
 cat docs/indexer-api.md    # understand explorer API contract
 cat docs/operations.md     # understand env, Docker, troubleshooting
 cat docs/network-upgrades.md # understand future release workflow
@@ -102,14 +102,14 @@ Explorer API: `curl http://localhost:3001/api/v1/stats`
 - [x] Block indexing (slot, height, leader_key, raw JSON)
 - [x] Proof leader-key diagnostics (not stable validator identities)
 - [x] Backfill with resume
-- [x] Live SSE follow
+- [x] Live NDJSON block follow
 - [x] Gap-free operation: gap-fill on every connect/reconnect
-- [x] Serial SSE event queue (no out-of-order progress)
+- [x] Serial block-stream event queue (no out-of-order progress)
 - [x] Atomic block + leader transactions (idempotent on restart)
 - [x] Bulk INSERT for backfill (`processBatch` with unnest)
 - [x] Retry with exponential backoff on all RPC calls
-- [x] Exponential backoff on SSE reconnect (5s → 60s)
-- [x] SSE stall detection via fetchInfo heartbeat
+- [x] Exponential backoff on block-stream reconnect (5s → 60s)
+- [x] Block-stream stall detection via fetchInfo heartbeat
 - [x] Finality tracking via `/cryptarchia/lib-stream` (NDJSON)
 - [x] Health endpoint `GET /health` (lag, node_mode, uptime)
 - [x] Prometheus endpoint `GET /metrics` and JSON log format (`LOG_FORMAT=json`)

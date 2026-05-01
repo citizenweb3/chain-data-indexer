@@ -297,18 +297,24 @@ SET last_slot = 0, last_height = NULL, updated_at = now()
 WHERE id = 'default';
 ```
 
-### SSE reconnect loop
+### Block-stream reconnect loop
 
 Symptoms:
 
-- Logs show `SSE stream error` or `SSE stall detected`.
+- Logs show `Block stream error` or `Block stream stall detected`.
 - `/health` lag increases temporarily.
 
-This is expected during node restarts or network flaps. On reconnect, the
-indexer runs `syncFromProgress()` before subscribing again, so missed slots are
-gap-filled from the saved progress slot.
+`Block stream closed` at `info` level is normal for the current Logos node: the
+NDJSON endpoint may close a streaming HTTP connection after one or more events.
+The indexer reconnects with a short delay and runs `syncFromProgress()` before
+subscribing again, so missed slots are gap-filled from the saved progress slot.
+`Block stream error` and `Block stream stall detected` are warnings and indicate
+node restarts, network flaps, or a genuinely unhealthy stream.
 
 If it persists:
+
+- Verify `/cryptarchia/events/blocks/stream` is parsed as NDJSON
+  (`application/x-ndjson`), not Server-Sent Events.
 
 - Verify the node is `Online`.
 - Lower `BATCH_SIZE` if catch-up requests time out.

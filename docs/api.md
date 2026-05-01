@@ -19,7 +19,7 @@ Source of truth: [`nodes/api-common/src/paths.rs`](https://github.com/logos-bloc
 | GET | `/cryptarchia/headers` | ✅ | Recent fork-choice header IDs |
 | GET | `/cryptarchia/lib-stream` | ✅ NDJSON | Last irreversible block stream |
 | GET | `/cryptarchia/blocks` | ✅ | Blocks in slot range |
-| GET | `/cryptarchia/events/blocks/stream` | ✅ SSE | Live block stream |
+| GET | `/cryptarchia/events/blocks/stream` | ✅ NDJSON | Live block stream |
 | GET | `/network/info` | ✅ | P2P peer + connection info |
 | GET | `/wallet/:public_key/balance` | ✅ | Wallet balance and notes |
 | POST | `/storage/block` | ✅ | Block by hash (body = JSON string) |
@@ -177,11 +177,27 @@ client plus line parsing; do not use EventSource for this endpoint.
 
 ### GET `/cryptarchia/events/blocks/stream`
 
-Server-Sent Events (SSE) stream that emits each newly accepted block in real time.
+NDJSON stream that emits each newly accepted block in real time. Each line is a
+JSON object containing the new block plus current tip/LIB metadata.
 
 ```bash
 curl -N http://localhost:8080/cryptarchia/events/blocks/stream
 ```
+
+Observed line shape:
+
+```json
+{
+  "block": { "header": { "id": "...", "slot": 1552666 }, "transactions": [] },
+  "tip": "195519ac...",
+  "tip_slot": 1552666,
+  "lib": "80584c36...",
+  "lib_slot": 1552041
+}
+```
+
+The HTTP response content type is `application/x-ndjson`. Use a streaming HTTP
+client plus line parsing; do not use EventSource for this endpoint.
 
 ---
 
@@ -270,7 +286,7 @@ Request body must contain a `mantle_tx` field with a serialized signed transacti
 2. **Latest block height**: `height` from `/cryptarchia/info`.
 3. **Block pagination**: use `/cryptarchia/blocks?slot_from=X&slot_to=Y`. Slots are not 1:1 with blocks — some slots produce no block.
 4. **Block detail**: use `POST /storage/block` with the block's hash (tip hash or parent hash from another block). The `header.id` returned by `/cryptarchia/blocks` is **not** the hash expected by `/storage/block` — use the tip/parent chain hashes instead.
-5. **Real-time**: subscribe to `/cryptarchia/events/blocks/stream` (SSE) for live block feed.
+5. **Real-time**: subscribe to `/cryptarchia/events/blocks/stream` (NDJSON) for live block feed.
 6. **Peer count**: `n_peers` from `/network/info`.
 7. **No public transaction lookup**: `/cryptarchia/transaction/:id` returns 404 in v0.1.2 — transaction history is only queryable via wallet balance notes.
 8. **No built-in explorer**: Logos does not ship a block explorer in v0.1.2; the official dashboard at `https://testnet.blockchain.logos.co/web/` only shows team bootstrap nodes and requires auth.

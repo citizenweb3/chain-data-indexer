@@ -4,21 +4,21 @@ import { setLastSlot } from '../db/progress.js';
 import { syncFromProgress } from './syncRange.js';
 import { logger } from '../utils/logger.js';
 import { setPhase } from '../metrics/registry.js';
-import type { BlockSseEvent } from '../types.js';
+import type { LogosBlock } from '../types.js';
 
 const MIN_RECONNECT_MS = 5_000;
 const MAX_RECONNECT_MS = 60_000;
 const MAX_LIVE_QUEUE_DEPTH = 100;
 
 /**
- * Subscribe to the live block SSE stream and process new blocks as they arrive.
+ * Subscribe to the live block NDJSON stream and process new blocks as they arrive.
  *
  * Before each (re-)subscription:
  *   1. Fetches the current node tip.
  *   2. Runs syncFromProgress(tip) to fill any gap since last indexed slot.
- *   3. Opens the SSE stream — minimising the pre-subscribe blind window.
+ *   3. Opens the block stream — minimising the pre-subscribe blind window.
  *
- * SSE events are processed through a serial promise chain so blocks are always
+ * Stream events are processed through a serial promise chain so blocks are always
  * handled in order and progress never advances ahead of committed data.
  *
  * Returns a cleanup function. Reconnects on error with exponential backoff.
@@ -32,19 +32,25 @@ export function followBlocks(): () => void {
   let acceptingEvents = false;
   let streamGeneration = 0;
   let queueDepth = 0;
-  // Serial queue: each SSE event is chained onto the previous one's promise
+  // Serial queue: each stream event is chained onto the previous one's promise.
   let processingChain: Promise<void> = Promise.resolve();
 
-  function scheduleReconnect(reason: string, err?: unknown): void {
+  function scheduleReconnect(reason: string, err?: unknown, keepDelay = false): void {
     if (stopped || reconnectTimer) return;
 
     acceptingEvents = false;
     cleanupSse?.();
     cleanupSse = null;
 
-    const delay = reconnectDelay;
-    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
-    logger.warn(`${reason} — reconnecting in ${delay}ms`, err ? { err } : {});
+    const delay = keepDelay ? MIN_RECONNECT_MS : reconnectDelay;
+    reconnectDelay = keepDelay ? MIN_RECONNECT_MS : Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+    if (keepDelay) {
+      logger.info(`${reason} — reconnecting in ${delay}ms`, {
+        close_reason: err instanceof Error ? err.message : String(err ?? ''),
+      });
+    } else {
+      logger.warn(`${reason} — reconnecting in ${delay}ms`, err ? { err } : {});
+    }
 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -62,7 +68,7 @@ export function followBlocks(): () => void {
     if (stopped) return;
     acceptingEvents = false;
 
-    // ── Gap fill: catch up to current tip before opening SSE ─────────────────
+    // ── Gap fill: catch up to current tip before opening the stream ──────────
     try {
       const info = await fetchInfo();
       setPhase('backfill');
@@ -70,14 +76,14 @@ export function followBlocks(): () => void {
       setPhase('follow');
     } catch (err) {
       setPhase('follow');
-      logger.warn('Gap-fill before SSE subscribe failed — proceeding anyway', { err });
+      logger.warn('Gap-fill before block-stream subscribe failed — proceeding anyway', { err });
     }
 
     if (stopped) return;
     logger.info('Subscribing to live block stream');
 
     cleanupSse = subscribeBlocks(
-      (block: BlockSseEvent) => {
+      (block: LogosBlock) => {
         if (!acceptingEvents) return;
         if (queueDepth >= MAX_LIVE_QUEUE_DEPTH) {
           scheduleReconnect('Live block queue full; applying backpressure');
@@ -110,7 +116,14 @@ export function followBlocks(): () => void {
             queueDepth--;
           });
       },
-      (err) => scheduleReconnect('SSE stream error', err),
+      (err) => {
+        const expectedClose = /closed|aborted|stalled/i.test(err.message);
+        scheduleReconnect(
+          expectedClose ? 'Block stream closed' : 'Block stream error',
+          err,
+          expectedClose,
+        );
+      },
     );
     acceptingEvents = true;
   }

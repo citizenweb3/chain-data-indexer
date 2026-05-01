@@ -1,5 +1,4 @@
 import axios from 'axios';
-import EventSource from 'eventsource';
 import http from 'node:http';
 import https from 'node:https';
 import readline from 'node:readline';
@@ -11,7 +10,7 @@ import type {
   CryptarchiaInfo,
   NetworkInfo,
   LogosBlock,
-  BlockSseEvent,
+  BlockStreamEvent,
   LibStreamEvent,
 } from '../types.js';
 
@@ -106,67 +105,121 @@ export async function fetchBlockByHash(hash: string): Promise<LogosBlock> {
   }));
 }
 
+function parseBlockStreamLine(line: string): LogosBlock | null {
+  const parsed = JSON.parse(line) as unknown;
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const record = parsed as Record<string, unknown>;
+  if (record.block && typeof record.block === 'object') {
+    return (record as unknown as BlockStreamEvent).block;
+  }
+
+  if (record.header && typeof record.header === 'object') {
+    return parsed as LogosBlock;
+  }
+
+  return null;
+}
+
 /**
- * Subscribe to the live block SSE stream.
+ * Subscribe to the live block NDJSON stream.
  * - Calls onBlock for each block event.
  * - Calls onError on stream errors or when the stall timer fires.
  * - Stall detection: polls fetchInfo every stalePollMs. If the node tip advances
- *   but no SSE message has been received for staleLimitMs, triggers reconnect.
+ *   but no NDJSON message has been received for staleLimitMs, triggers reconnect.
  *   This is robust against sparse block production on testnet.
  * Returns a cleanup function to close the connection.
  */
 export function subscribeBlocks(
-  onBlock: (block: BlockSseEvent) => void,
-  onError?: (err: Event) => void,
+  onBlock: (block: LogosBlock) => void,
+  onError?: (err: Error) => void,
   staleLimitMs = 120_000,
   stalePollMs  = 30_000,
 ): () => void {
-  const url = `${config.NODE_URL}/cryptarchia/events/blocks/stream`;
-  const es = new EventSource(url);
+  const url = new URL('/cryptarchia/events/blocks/stream', config.NODE_URL);
+  const isHttps = url.protocol === 'https:';
+  const request = isHttps ? https.request : http.request;
+  const options: http.RequestOptions | https.RequestOptions = {
+    hostname: url.hostname,
+    port: Number(url.port) || (isHttps ? 443 : 80),
+    path: url.pathname,
+    method: 'GET',
+    headers: { Accept: 'application/x-ndjson' },
+  };
 
+  let req: http.ClientRequest | null = null;
+  let closed = false;
+  let reported = false;
   let lastMessageAt = Date.now();
   let lastReceivedSlot = 0;
 
-  es.onmessage = (event) => {
-    lastMessageAt = Date.now();
-    try {
-      const block: BlockSseEvent = JSON.parse(event.data as string);
-      lastReceivedSlot = block.header.slot;
-      onBlock(block);
-    } catch {
-      // malformed SSE event — ignore
-    }
-  };
-
-  if (onError) {
-    es.onerror = onError;
+  function reportClose(err: Error): void {
+    if (closed || reported) return;
+    reported = true;
+    if (onError) onError(err);
   }
 
+  req = request(options, (res) => {
+    if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+      reportClose(new Error(`Block stream returned HTTP ${res.statusCode}`));
+      res.resume();
+      return;
+    }
+
+    const rl = readline.createInterface({ input: res, crlfDelay: Infinity });
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const block = parseBlockStreamLine(trimmed);
+        if (!block) {
+          logger.warn('Ignoring malformed block stream event');
+          return;
+        }
+        lastMessageAt = Date.now();
+        lastReceivedSlot = block.header.slot;
+        onBlock(block);
+      } catch (err) {
+        logger.warn('Ignoring malformed block stream line', { err });
+      }
+    });
+
+    rl.on('error', (err) => reportClose(err));
+    rl.on('close', () => reportClose(new Error('Block stream closed')));
+    res.on('error', (err) => reportClose(err));
+    res.on('aborted', () => reportClose(new Error('Block stream aborted')));
+  });
+
+  req.on('error', (err) => reportClose(err));
+  req.end();
+
   // Heartbeat: periodically check if the node tip is advancing without us
-  // receiving events. This catches silent SSE stalls (connection open but dead).
+  // receiving events. This catches silent NDJSON stalls (connection open but dead).
   const heartbeat = setInterval(async () => {
     try {
       const info = await fetchInfo();
       const sinceLastMsg = Date.now() - lastMessageAt;
 
       if (info.slot > lastReceivedSlot && sinceLastMsg > staleLimitMs) {
-        logger.warn('SSE stall detected: node tip advanced but no events received', {
+        logger.warn('Block stream stall detected: node tip advanced but no events received', {
           node_slot: info.slot,
           last_received_slot: lastReceivedSlot,
           last_msg_ago_s: Math.round(sinceLastMsg / 1_000),
         });
         clearInterval(heartbeat);
-        es.close();
-        if (onError) onError(new Event('stall'));
+        req?.destroy();
+        reportClose(new Error('Block stream stalled'));
       }
     } catch {
-      // heartbeat fetch failed — not critical, SSE error handler will catch stream issues
+      // heartbeat fetch failed — not critical, stream error handler will catch stream issues
     }
   }, stalePollMs);
+  heartbeat.unref();
 
   return () => {
+    closed = true;
     clearInterval(heartbeat);
-    es.close();
+    req?.destroy();
   };
 }
 

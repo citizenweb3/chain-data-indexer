@@ -45,9 +45,15 @@ export interface LogosBlock {
   transactions: unknown[];  // always [] in v0.1.2; mantle_tx objects in v0.2+
 }
 
-// ─── SSE block event ──────────────────────────────────────────────────────────
+// ─── Live block stream event (application/x-ndjson) ───────────────────────────
 
-export type BlockSseEvent = LogosBlock;
+export interface BlockStreamEvent {
+  block: LogosBlock;
+  tip: string;
+  tip_slot: number;
+  lib: string;
+  lib_slot: number;
+}
 
 // ─── LIB-stream event (application/x-ndjson) ─────────────────────────────────
 // Emitted by GET /cryptarchia/lib-stream each time the Last Irreversible Block advances.
