@@ -194,18 +194,48 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
 }
 
 /**
- * Mark all blocks up to the given finalized height as finalized.
- * Called by the lib-stream follower when LIB advances.
+ * Mark the LIB block and all indexed ancestors as finalized.
+ * Logos v0.1.2 /cryptarchia/blocks does not expose per-block height, so finality
+ * must follow the header_id/parent_block chain instead of height comparisons.
  */
-export async function markBlocksFinalized(upToHeight: number): Promise<number> {
+export async function markBlocksFinalized(headerId: string, upToHeight?: number): Promise<number> {
   const pool = getPool();
   const start = process.hrtime.bigint();
   const result = await pool.query(
-    `UPDATE logos_blocks SET finalized = true
-     WHERE height <= $1 AND NOT finalized`,
-    [upToHeight],
+    `WITH RECURSIVE finalized_chain AS (
+       SELECT id, parent_block
+       FROM logos_blocks
+       WHERE id = $1
+       UNION ALL
+       SELECT parent.id, parent.parent_block
+       FROM logos_blocks parent
+       JOIN finalized_chain child ON parent.id = child.parent_block
+       WHERE NOT parent.finalized
+     ),
+     marked_by_header AS (
+       UPDATE logos_blocks b
+       SET finalized = true
+       FROM finalized_chain c
+       WHERE b.id = c.id AND NOT b.finalized
+       RETURNING b.id
+     ),
+     marked_by_height AS (
+       UPDATE logos_blocks
+       SET finalized = true
+       WHERE $2::bigint IS NOT NULL
+         AND height <= $2::bigint
+         AND NOT finalized
+       RETURNING id
+     )
+     SELECT COUNT(*)::integer AS count
+     FROM (
+       SELECT id FROM marked_by_header
+       UNION ALL
+       SELECT id FROM marked_by_height
+     ) marked`,
+    [headerId, upToHeight ?? null],
   );
-  const count = result.rowCount ?? 0;
+  const count = Number(result.rows[0]?.count ?? 0);
   observeFlush('finality', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
     logos_blocks: count,
   });

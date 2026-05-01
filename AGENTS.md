@@ -50,6 +50,9 @@ Any agent picking up work here should follow the **research → execute → revi
   continuing; gap-fill on reconnect recovers missed slots.
 - Public explorer views should default to finalized blocks unless a caller
   explicitly requests `finalized=all`.
+- Logos v0.1.2 blocks usually have `height = null`; finality must be marked by
+  `/cryptarchia/lib-stream` `header_id` plus `parent_block` traversal, not
+  height comparisons.
 
 ---
 
@@ -65,6 +68,7 @@ Any agent picking up work here should follow the **research → execute → revi
 | `processBatch` for backfill | Single transaction per batch; bulk unnest INSERT |
 | `setLastSlot` uses `GREATEST` | Progress never goes backwards (safe for concurrent updates) |
 | Progress table always updated after each batch | Enables safe restart without re-indexing |
+| Startup rescans from `MAX(logos_blocks.slot)+1` when progress is ahead | Repairs tail gaps after transient empty RPC range responses |
 | `lib-stream` is NDJSON not SSE | Use `http.request` + readline, not EventSource |
 | Metrics use `logos_` / `logos_node_` prefixes | Fleet observability contract; keep labels bounded |
 | `LOG_FORMAT=json` for production log shipping | Emits `{ts, level, label, message, metadata}` JSON lines |

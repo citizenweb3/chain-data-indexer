@@ -1,6 +1,6 @@
 import { fetchBlocks } from '../rpc/client.js';
 import { processBatch } from '../sink/postgres.js';
-import { getLastSlot, setLastSlot } from '../db/progress.js';
+import { getLastSlot, getMaxIndexedSlot, setLastSlot } from '../db/progress.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
@@ -46,11 +46,26 @@ export async function syncRange(fromSlot: number, toSlot: number): Promise<void>
  * If no progress exists, starts from config.FROM_SLOT.
  */
 export async function syncFromProgress(toSlot: number): Promise<void> {
-  const savedSlot = await getLastSlot();
-  const fromSlot = savedSlot > 0 ? savedSlot + 1 : config.FROM_SLOT;
+  const [savedSlot, maxIndexedSlot] = await Promise.all([getLastSlot(), getMaxIndexedSlot()]);
+  const progressFromSlot = savedSlot > 0 ? savedSlot + 1 : config.FROM_SLOT;
+  const repairFromSlot = maxIndexedSlot === null
+    ? config.FROM_SLOT
+    : Math.max(config.FROM_SLOT, maxIndexedSlot + 1);
+  const fromSlot = Math.min(progressFromSlot, repairFromSlot);
+
   if (fromSlot > toSlot) {
     logger.info('Backfill already up to date', { fromSlot, toSlot });
     return;
   }
+
+  if (fromSlot < progressFromSlot) {
+    logger.warn('Progress is ahead of the latest stored block; rescanning tail range', {
+      savedSlot,
+      maxIndexedSlot,
+      fromSlot,
+      toSlot,
+    });
+  }
+
   await syncRange(fromSlot, toSlot);
 }

@@ -11,6 +11,8 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const STATS_CACHE_MS = 5_000;
 
+type SortOrder = 'asc' | 'desc';
+
 interface BlockApiRow {
   id: string;
   parent_block: string;
@@ -68,6 +70,10 @@ function parseFinalized(url: URL): boolean | null {
   const value = url.searchParams.get('finalized') ?? 'true';
   if (value === 'all') return null;
   return value !== 'false';
+}
+
+function parseOrder(url: URL): SortOrder {
+  return url.searchParams.get('order') === 'asc' ? 'asc' : 'desc';
 }
 
 function toNumber(value: string | null): number | null {
@@ -228,6 +234,8 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   const limit = parseLimit(url);
   const offset = parseOffset(url);
   const finalized = parseFinalized(url);
+  const order = parseOrder(url);
+  const direction = order === 'asc' ? 'ASC' : 'DESC';
   const leaderKey = url.searchParams.get('leader_key');
   const conditions: string[] = [];
   const values: unknown[] = [];
@@ -252,7 +260,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
             voucher_cm, entropy, tx_count, finalized, indexed_at
        FROM logos_blocks
        ${where}
-       ORDER BY slot DESC, id DESC
+       ORDER BY logos_blocks.slot ${direction}, logos_blocks.id ${direction}
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
     values,
   );
@@ -265,6 +273,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
     pagination: {
       limit,
       offset,
+      order,
       has_more: hasMore,
     },
   });

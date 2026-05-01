@@ -64,13 +64,13 @@ is capped at `100`; `offset` defaults to `0`.
 | `id` | string | Block header ID from `/cryptarchia/blocks`. |
 | `parent_block` | string | Parent block header ID. |
 | `slot` | number | Slot in which this block was produced. Slots may be empty. |
-| `height` | number \| null | Chain height when provided by the node. |
+| `height` | number \| null | Chain height when provided by the node. Logos v0.1.2 `/cryptarchia/blocks` currently omits it, so indexed rows usually expose `null`. |
 | `block_root` | string | Block root hash from the node API. |
 | `leader_key` | string | Proof-of-leadership signing key exposed by the block header. It is not a stable validator identity in Logos v0.1.2. |
 | `voucher_cm` | string | Voucher commitment from proof of leadership. |
 | `entropy` | string | Entropy contribution from proof of leadership. |
 | `tx_count` | number | Number of transactions in `raw.transactions`. Always `0` in Logos v0.1.2. |
-| `finalized` | boolean | `true` after `/cryptarchia/lib-stream` advances past this block height. |
+| `finalized` | boolean | `true` after `/cryptarchia/lib-stream` reports this block or a descendant as LIB; the indexer walks `parent_block` links because v0.1.2 blocks omit height. |
 | `indexed_at` | string | PostgreSQL timestamp when the row was first indexed. |
 
 ### Leader-key summary
@@ -175,7 +175,7 @@ Response:
 Paginated block list. Defaults to finalized blocks only.
 
 ```bash
-curl "http://localhost:3001/api/v1/blocks?limit=20&offset=0&finalized=true"
+curl "http://localhost:3001/api/v1/blocks?limit=20&offset=0&finalized=true&order=desc"
 ```
 
 Query parameters:
@@ -185,6 +185,7 @@ Query parameters:
 | `limit` | integer `1..100` | `20` | Page size. Values above `100` are capped. |
 | `offset` | integer `>=0` | `0` | Zero-based row offset. |
 | `finalized` | `true` \| `false` \| `all` | `true` | Filter by finality. `all` disables the filter. |
+| `order` | `desc` \| `asc` | `desc` | Sort by numeric slot descending or ascending. |
 | `leader_key` | string | none | Optional `proof_of_leadership.leader_key` filter. |
 
 Response:
@@ -209,6 +210,7 @@ Response:
   "pagination": {
     "limit": 20,
     "offset": 0,
+    "order": "desc",
     "has_more": true
   }
 }

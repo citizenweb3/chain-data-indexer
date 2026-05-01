@@ -9,6 +9,16 @@ export async function getLastSlot(): Promise<number> {
   return rows.length ? Number(rows[0].last_slot) : 0;
 }
 
+export async function getMaxIndexedSlot(): Promise<number | null> {
+  const pool = getPool();
+  const { rows } = await pool.query<{ max_slot: string | null }>(
+    'SELECT MAX(slot)::text AS max_slot FROM logos_blocks',
+  );
+  return rows[0]?.max_slot === null || rows[0]?.max_slot === undefined
+    ? null
+    : Number(rows[0].max_slot);
+}
+
 export async function setLastSlot(
   slot: number,
   height: number | null,

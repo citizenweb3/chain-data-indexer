@@ -14,7 +14,7 @@ Designed for integration with the [validatorinfo](https://validatorinfo.com) exp
 | Data | Source | Table |
 |---|---|---|
 | All blocks (slot, height, leader, raw JSON) | `/cryptarchia/blocks` | `logos_blocks` |
-| Block finality status | `/cryptarchia/lib-stream` | `logos_blocks.finalized` |
+| Block finality status | `/cryptarchia/lib-stream` header IDs + parent chain | `logos_blocks.finalized` |
 | Proof leader-key diagnostics (first/last seen slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
 | Indexer resume position | internal | `logos_indexer_progress` |
 
@@ -24,6 +24,10 @@ Logos v0.1.2 block headers do **not** expose a stable validator identity.
 `proof_of_leadership.leader_key` is a proof/signing key observed in the block
 header; on the current testnet dataset every indexed block has a distinct key.
 Do not use it as a validator/account identifier.
+
+Logos v0.1.2 `/cryptarchia/blocks` also omits per-block height. Finality is
+therefore tracked by `/cryptarchia/lib-stream` `header_id` and the stored
+`parent_block` chain, not by comparing heights.
 
 ---
 
@@ -125,7 +129,7 @@ Full endpoint schemas, parameters, response fields, and error responses are in
 | Endpoint | Description |
 |---|---|
 | `GET /api/v1/stats` | Network/indexer summary: counts, latest slots/heights, lag |
-| `GET /api/v1/blocks?limit=20&offset=0&finalized=true` | Latest blocks (`finalized=all` includes non-finalized blocks) |
+| `GET /api/v1/blocks?limit=20&offset=0&finalized=true&order=desc` | Blocks sorted by numeric slot (`finalized=all` includes non-finalized blocks) |
 | `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
 | `GET /api/v1/leader-keys?limit=20&offset=0` | Proof leader keys ordered by observed block count |
 | `GET /api/v1/leader-keys/:leader_key` | Diagnostics for one proof leader key |
@@ -134,7 +138,7 @@ Full endpoint schemas, parameters, response fields, and error responses are in
 Example:
 
 ```bash
-curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true"
+curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true&order=desc"
 curl http://localhost:3001/api/v1/stats
 ```
 

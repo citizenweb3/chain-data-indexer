@@ -1,4 +1,4 @@
-import { subscribeLib } from '../rpc/client.js';
+import { fetchInfo, subscribeLib } from '../rpc/client.js';
 import { markBlocksFinalized } from '../sink/postgres.js';
 import { logger } from '../utils/logger.js';
 import type { LibStreamEvent } from '../types.js';
@@ -17,25 +17,39 @@ export function followLib(): () => void {
   let stopped = false;
   let reconnectDelay = MIN_RECONNECT_MS;
 
+  async function markFinalized(headerId: string, height: number | undefined, source: string): Promise<void> {
+    try {
+      const count = await markBlocksFinalized(headerId, height);
+      reconnectDelay = MIN_RECONNECT_MS;
+      if (count > 0) {
+        logger.info('Blocks marked finalized', {
+          source,
+          up_to_height: height ?? null,
+          header_id:    headerId.slice(0, 12) + '…',
+          count,
+        });
+      }
+    } catch (err) {
+      logger.error('Failed to mark blocks finalized', { err, source, header_id: headerId });
+    }
+  }
+
   function connect(): void {
     if (stopped) return;
     logger.info('Subscribing to LIB stream for finality tracking');
 
+    fetchInfo(4_000, 1)
+      .then((info) => {
+        if (!stopped) return markFinalized(info.lib, undefined, 'cryptarchia/info');
+        return undefined;
+      })
+      .catch((err: unknown) => {
+        logger.warn('Initial LIB finality lookup failed', { err });
+      });
+
     cleanupLib = subscribeLib(
       async (event: LibStreamEvent) => {
-        try {
-          const count = await markBlocksFinalized(event.height);
-          reconnectDelay = MIN_RECONNECT_MS;
-          if (count > 0) {
-            logger.info('Blocks marked finalized', {
-              up_to_height: event.height,
-              header_id:    event.header_id.slice(0, 12) + '…',
-              count,
-            });
-          }
-        } catch (err) {
-          logger.error('Failed to mark blocks finalized', { err });
-        }
+        await markFinalized(event.header_id, event.height, 'cryptarchia/lib-stream');
       },
       (err) => {
         if (stopped) return;

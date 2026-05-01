@@ -79,6 +79,9 @@ balances.
 ### 5. Finality and forks
 
 - Keep explorer public views defaulting to finalized data.
+- For Logos v0.1.2, mark finality by the LIB `header_id` and stored
+  `parent_block` chain. Do not depend on block `height`: `/cryptarchia/blocks`
+  currently omits it.
 - If future releases expose canonical fork status, add a separate chain-status
   column instead of overloading `finalized`.
 - If non-finalized views become product-critical, implement orphan/fork marking
