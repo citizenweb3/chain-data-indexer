@@ -42,7 +42,7 @@ services:
     ports:
       - "${API_HOST_BIND:-0.0.0.0}:${API_HOST_PORT:-3001}:${API_PORT:-3001}"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${API_PORT:-3001}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${API_PORT:-3001}/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
