@@ -1,0 +1,13 @@
+# Classic Prometheus scrape alternative for miden-indexer.
+# Prefer Grafana Alloy when remote_write and log shipping are both needed.
+# Replace placeholder values through your deployment templating system.
+
+global:
+  scrape_interval: ${MIDEN_INDEXER_SCRAPE_INTERVAL}
+
+scrape_configs:
+  - job_name: miden-indexer
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - ${MIDEN_INDEXER_METRICS_TARGET}

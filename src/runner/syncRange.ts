@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { config } from '../config.js';
 import { getLastBlock, setLastBlock } from '../db/progress.js';
+import { observeBlock, setIndexedHeight } from '../metrics/registry.js';
 import type { MidenRpcClient } from '../rpc/client.js';
 import { processBatch } from '../sink/postgres.js';
 import type { BlockBundle, BlockHeader } from '../types.js';
@@ -106,8 +107,16 @@ export async function syncRange(
         INITIAL_BACKOFF_MS,
       );
 
+      const sinkStart = process.hrtime.bigint();
       await processBatch(pool, bundles);
       await setLastBlock(batchTo, pool);
+
+      const sinkDurationSec = Number(process.hrtime.bigint() - sinkStart) / 1e9;
+      const perBlockSec = bundles.length > 0 ? sinkDurationSec / bundles.length : 0;
+      for (let i = 0; i < bundles.length; i += 1) {
+        observeBlock(perBlockSec, 1);
+      }
+      setIndexedHeight(batchTo);
 
       logger.info('Range sync batch committed', {
         from_block: batchFrom,

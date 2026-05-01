@@ -38,6 +38,21 @@ Runtime configuration is validated in `src/config.ts`.
 | `BACKFILL_CONCURRENCY` | `1` | Maximum concurrent RPC block fetches within one batch; max accepted value is `100`. |
 | `MAX_LAG_BLOCKS_BEFORE_BATCH` | `5` | Lag threshold for switching follow mode from small batches to `BATCH_SIZE`. |
 | `LOG_LEVEL` | `info` | Logger level: `debug`, `info`, `warn`, or `error`. |
+| `LOG_FORMAT` | `pretty` | Log output format: `pretty` for local development, `json` (`{ts,level,label,message,metadata}`) for log shippers. |
+| `METRICS_ENABLED` | `true` | Set to `false` to disable the Prometheus `/metrics` route and sampler. |
+| `METRICS_SAMPLE_INTERVAL_MS` | `5000` | Interval for the metrics sampler that refreshes chain tip and pg pool gauges. |
+| `API_BIND` | `0.0.0.0` | Bind address of the HTTP server inside the container; the API is fronted by nginx in production. |
+| `PG_SSL` | `disable` | TLS mode for `PG_*` connections: `disable`, `require`, or `verify-full`. |
+| `PG_SSL_CA` | unset | Path to a CA bundle when `PG_SSL` is `require` or `verify-full`. |
+
+## Observability
+
+`/metrics` exposes Prometheus text exposition with the fleet-wide `miden_*` prefix
+(domain series) and `miden_node_*` prefix (Node.js runtime). See
+[`docs/observability/`](docs/observability/) for ready-to-use Grafana Alloy,
+Prometheus, and Promtail templates (env placeholders only — supply real URLs at
+deploy time). Set `LOG_FORMAT=json` to enable structured logs for shipping to
+Loki/ELK.
 
 ## API
 

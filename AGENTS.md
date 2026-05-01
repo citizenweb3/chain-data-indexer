@@ -26,7 +26,9 @@ The indexer follows a live Miden node over public gRPC, persists explorer-visibl
 - `src/rpc/types.ts` exports RPC-layer TypeScript types matching `miden-node 0.13.4` lower-camel proto-loader output; `src/rpc/digest.ts` owns digest/account hex and felt-lane conversion helpers.
 - `src/sink/postgres.ts` exports `processBlock`, `processBatch`, and row types; it inserts block bundles and optional full-scope rows into Postgres, derives `block_hash` as `SHA-256(raw_block_bytes)`, and updates progress with `GREATEST`.
 - `src/runner/index.ts`, `src/runner/syncRange.ts`, and `src/runner/follow.ts` export `startRunner`, `syncRange`, and `startFollow`; they choose a start block, fetch headers plus raw blocks, use bounded concurrency, backfill to tip, then poll-follow.
-- `src/api.ts` exports `createApiServer` and `startApiServer`; it serves `/health` and read-only `/api/v1/*` explorer endpoints from Postgres, hex-encodes `BYTEA`, paginates list endpoints, and returns stable error bodies.
+- `src/api.ts` exports `createApiServer` and `startApiServer`; it serves `/health`, `/metrics` (Prometheus, gated by `METRICS_ENABLED`), and read-only `/api/v1/*` explorer endpoints from Postgres, hex-encodes `BYTEA`, paginates list endpoints, caches `/api/v1/stats` for 5s, and returns stable error bodies.
+- `src/metrics/registry.ts` and `src/metrics/sampler.ts` own an isolated `prom-client` `Registry` with the fleet-wide `miden_*` / `miden_node_*` metric prefixes, plus a 5s ticker that refreshes derived gauges (chain tip, indexed height, pg pool stats). Allowed labels are `module`, `level`, `endpoint`, `group`, `table`, `phase`, `status` only — never block heights, hashes, or addresses.
+- `src/utils/logger.ts` honours `LOG_FORMAT=pretty|json`; `json` emits `{ts, level, label, message, metadata}` lines for Loki/ELK shipping.
 - `src/db/pg.ts` exports `getPool`, `withTx`, and `closePool`; `src/db/progress.ts` exports `getLastBlock` and `setLastBlock` using the singleton `miden_indexer_progress` row.
 - `src/utils/logger.ts` exports the Winston `logger`; `src/utils/retry.ts` exports `withRetry` for retryable network/5xx/429 failures.
 

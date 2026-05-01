@@ -1,4 +1,5 @@
 import * as grpc from '@grpc/grpc-js';
+import { observeRpc, type RpcStatusLabel } from '../metrics/registry.js';
 import { logger } from '../utils/logger.js';
 import { withRetry } from '../utils/retry.js';
 import { digestFromFelts, wireDigestFromBuffer } from './digest.js';
@@ -644,31 +645,40 @@ export class MidenRpcClient {
 
   private async callRpc<T>(method: string, request: WireRecord, decode: (response: unknown) => T): Promise<T> {
     let attempt = 0;
+    const endpointLabel = method.charAt(0).toLowerCase() + method.slice(1);
     try {
       const response = await withRetry(async () => {
         attempt += 1;
         logger.debug('Miden RPC call attempt', { method, attempt });
-        const raw = await new Promise<unknown>((resolve, reject) => {
-          this.getMethod(method)(
-            request,
-            new grpc.Metadata(),
-            { deadline: new Date(Date.now() + this.requestTimeoutMs) },
-            (error, value) => {
-              if (error) reject(error);
-              else resolve(value);
-            },
-          );
-        }).catch((error: unknown) => {
-          const grpcError = serviceErrorFromUnknown(error);
-          if (isRetryableGrpcError(grpcError)) {
-            if (grpcError.code === grpc.status.INTERNAL) {
-              logger.warn('Retrying INTERNAL gRPC error from Miden RPC', { method, message: grpcError.message });
+        const attemptStart = process.hrtime.bigint();
+        let attemptStatus: RpcStatusLabel = 'ok';
+        try {
+          const raw = await new Promise<unknown>((resolve, reject) => {
+            this.getMethod(method)(
+              request,
+              new grpc.Metadata(),
+              { deadline: new Date(Date.now() + this.requestTimeoutMs) },
+              (error, value) => {
+                if (error) reject(error);
+                else resolve(value);
+              },
+            );
+          }).catch((error: unknown) => {
+            const grpcError = serviceErrorFromUnknown(error);
+            attemptStatus = grpcError.code === grpc.status.DEADLINE_EXCEEDED ? 'timeout' : 'error';
+            if (isRetryableGrpcError(grpcError)) {
+              if (grpcError.code === grpc.status.INTERNAL) {
+                logger.warn('Retrying INTERNAL gRPC error from Miden RPC', { method, message: grpcError.message });
+              }
+              throw new RetryableGrpcError(grpcError);
             }
-            throw new RetryableGrpcError(grpcError);
-          }
-          throw grpcError;
-        });
-        return raw;
+            throw grpcError;
+          });
+          return raw;
+        } finally {
+          const durationSec = Number(process.hrtime.bigint() - attemptStart) / 1e9;
+          observeRpc(endpointLabel, attemptStatus, durationSec);
+        }
       }, RETRY_ATTEMPTS, RETRY_BASE_MS);
       return decode(response);
     } catch (error) {

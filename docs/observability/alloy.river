@@ -1,0 +1,71 @@
+// Grafana Alloy reference config for miden-indexer.
+// All values are environment placeholders; provide them in the Alloy runtime environment.
+
+prometheus.scrape "miden_indexer" {
+  targets = [{
+    __address__ = env("MIDEN_INDEXER_METRICS_TARGET"),
+    job         = "miden-indexer",
+  }]
+  scrape_interval = env("MIDEN_INDEXER_SCRAPE_INTERVAL")
+  forward_to      = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = env("PROMETHEUS_REMOTE_WRITE_URL")
+
+    basic_auth {
+      username = env("PROMETHEUS_REMOTE_WRITE_USERNAME")
+      password = env("PROMETHEUS_REMOTE_WRITE_PASSWORD")
+    }
+  }
+}
+
+local.file_match "miden_indexer_logs" {
+  path_targets = [{
+    __path__ = env("MIDEN_INDEXER_LOG_PATH"),
+    job      = "miden-indexer",
+  }]
+}
+
+loki.source.file "miden_indexer" {
+  targets    = local.file_match.miden_indexer_logs.targets
+  forward_to = [loki.process.miden_indexer.receiver]
+}
+
+loki.process "miden_indexer" {
+  stage.json {
+    expressions = {
+      ts       = "ts",
+      level    = "level",
+      label    = "label",
+      message  = "message",
+      metadata = "metadata",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "level",
+      label = "label",
+    }
+  }
+
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = env("LOKI_WRITE_URL")
+
+    basic_auth {
+      username = env("LOKI_WRITE_USERNAME")
+      password = env("LOKI_WRITE_PASSWORD")
+    }
+  }
+}

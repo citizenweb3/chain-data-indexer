@@ -1,14 +1,44 @@
 import http from 'node:http';
 import { config } from './config.js';
 import { getPool } from './db/pg.js';
+import { metricsContentType, metricsText } from './metrics/registry.js';
 import { logger } from './utils/logger.js';
 
 const startedAt = Date.now();
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const MAX_OFFSET = 100_000;
 const JSON_BODY_LIMIT_BYTES = 100 * 1024;
 const API_VERSION = '0.0.1';
 const HEX_RE = /^[0-9a-fA-F]+$/;
+const STATS_CACHE_TTL_MS = 5_000;
+const COUNT_CACHE_TTL_MS = 5_000;
+
+let statsCache: { value: unknown; expiresAt: number } | null = null;
+const countCache = new Map<string, { value: string; expiresAt: number }>();
+
+async function cachedCount(
+  table: string,
+  whereSql: string,
+  values: readonly unknown[],
+): Promise<string> {
+  const key = `${table}::${whereSql}::${JSON.stringify(values)}`;
+  const now = Date.now();
+  const hit = countCache.get(key);
+  if (hit && hit.expiresAt > now) return hit.value;
+  const { rows } = await getPool().query<CountRow>(
+    `SELECT COUNT(*)::text AS total FROM ${table} ${whereSql}`,
+    values as unknown[],
+  );
+  const value = rows[0]?.total ?? '0';
+  countCache.set(key, { value, expiresAt: now + COUNT_CACHE_TTL_MS });
+  if (countCache.size > 256) {
+    for (const [k, v] of countCache) {
+      if (v.expiresAt <= now) countCache.delete(k);
+    }
+  }
+  return value;
+}
 
 type ChainTipGetter = () => number | null;
 
@@ -198,6 +228,9 @@ function parsePage(url: URL): PageParams {
   const parsedLimit = parseIntegerParam('limit', url.searchParams.get('limit'), false) ?? DEFAULT_LIMIT;
   const parsedOffset = parseIntegerParam('offset', url.searchParams.get('offset'), false) ?? 0;
   if (parsedOffset < 0) throw new HttpError(400, 'invalid offset', 'INVALID_NUMERIC');
+  if (parsedOffset > MAX_OFFSET) {
+    throw new HttpError(400, `offset exceeds MAX_OFFSET=${MAX_OFFSET}; use a narrower filter`, 'OFFSET_TOO_LARGE');
+  }
   return {
     limit: Math.min(Math.max(parsedLimit, 1), MAX_LIMIT),
     offset: parsedOffset,
@@ -346,6 +379,10 @@ async function handleHealth(res: http.ServerResponse, getChainTip?: ChainTipGett
 }
 
 async function handleStats(res: http.ServerResponse): Promise<void> {
+  if (statsCache && statsCache.expiresAt > Date.now()) {
+    sendJson(res, 200, statsCache.value);
+    return;
+  }
   const { rows } = await getPool().query<StatsRow>(
     `SELECT
        (SELECT last_block::text FROM miden_indexer_progress WHERE id = 1) AS last_block,
@@ -359,7 +396,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
      FROM miden_blocks`,
   );
   const stats = rows[0];
-  sendJson(res, 200, {
+  const payload = {
     last_block: stats.last_block,
     total_blocks: Number(stats.total_blocks),
     total_transactions: Number(stats.total_transactions),
@@ -367,13 +404,15 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
     total_nullifiers: Number(stats.total_nullifiers),
     total_accounts: Number(stats.total_accounts),
     latest_block_timestamp: stats.latest_block_timestamp,
-  });
+  };
+  statsCache = { value: payload, expiresAt: Date.now() + STATS_CACHE_TTL_MS };
+  sendJson(res, 200, payload);
 }
 
 async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   const page = parseBlockListParams(url);
   const values: unknown[] = [page.limit, page.offset];
-  const [blocks, count] = await Promise.all([
+  const [blocks, total] = await Promise.all([
     getPool().query<BlockSummaryRow>(
       `SELECT ${blockSummaryColumns}
        FROM miden_blocks
@@ -381,16 +420,20 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
        LIMIT $1 OFFSET $2`,
       values,
     ),
-    getPool().query<CountRow>('SELECT COUNT(*)::text AS total FROM miden_blocks'),
+    cachedCount('miden_blocks', '', []),
   ]);
-  sendJson(res, 200, paginated(blocks.rows, count.rows[0].total, page));
+  sendJson(res, 200, paginated(blocks.rows, total, page));
 }
 
-async function handleBlockByNumber(blockNum: string, res: http.ServerResponse): Promise<void> {
+async function handleBlockByNumber(blockNum: string, url: URL, res: http.ServerResponse): Promise<void> {
   const parsed = parseIntegerParam('block_num', blockNum, true);
   if (parsed === null || parsed < 0) throw new HttpError(400, 'invalid block_num', 'INVALID_NUMERIC');
+  const includeRaw = parseBooleanParam('include_raw', url.searchParams.get('include_raw')) === true;
+  const projection = includeRaw
+    ? `${blockSummaryColumns}, encode(raw_block_bytes, 'hex') AS raw_block_bytes`
+    : blockSummaryColumns;
   const { rows } = await getPool().query<BlockDetailRow>(
-    `SELECT ${blockSummaryColumns}, encode(raw_block_bytes, 'hex') AS raw_block_bytes
+    `SELECT ${projection}
      FROM miden_blocks
      WHERE block_num = $1`,
     [parsed],
@@ -399,10 +442,14 @@ async function handleBlockByNumber(blockNum: string, res: http.ServerResponse): 
   sendJson(res, 200, rows[0]);
 }
 
-async function handleBlockByHash(hex: string, res: http.ServerResponse): Promise<void> {
+async function handleBlockByHash(hex: string, url: URL, res: http.ServerResponse): Promise<void> {
   const hash = parseHexParam(hex, 32);
+  const includeRaw = parseBooleanParam('include_raw', url.searchParams.get('include_raw')) === true;
+  const projection = includeRaw
+    ? `${blockSummaryColumns}, encode(raw_block_bytes, 'hex') AS raw_block_bytes`
+    : blockSummaryColumns;
   const { rows } = await getPool().query<BlockDetailRow>(
-    `SELECT ${blockSummaryColumns}, encode(raw_block_bytes, 'hex') AS raw_block_bytes
+    `SELECT ${projection}
      FROM miden_blocks
      WHERE block_hash = $1`,
     [hash],
@@ -426,7 +473,7 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
   const limitParam = filters.values.length + 1;
   const offsetParam = filters.values.length + 2;
   const values = [...filters.values, page.limit, page.offset];
-  const [items, count] = await Promise.all([
+  const [items, total] = await Promise.all([
     getPool().query<TransactionRow>(
       `SELECT ${transactionColumns}
        FROM miden_transactions
@@ -435,9 +482,9 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
-    getPool().query<CountRow>(`SELECT COUNT(*)::text AS total FROM miden_transactions ${filters.where}`, filters.values),
+    cachedCount('miden_transactions', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, count.rows[0].total, page));
+  sendJson(res, 200, paginated(items.rows, total, page));
 }
 
 async function handleTransaction(hex: string, res: http.ServerResponse): Promise<void> {
@@ -469,7 +516,7 @@ async function handleNotes(url: URL, res: http.ServerResponse): Promise<void> {
   const limitParam = filters.values.length + 1;
   const offsetParam = filters.values.length + 2;
   const values = [...filters.values, page.limit, page.offset];
-  const [items, count] = await Promise.all([
+  const [items, total] = await Promise.all([
     getPool().query<NoteRow>(
       `SELECT ${noteColumns}
        FROM miden_notes
@@ -478,9 +525,9 @@ async function handleNotes(url: URL, res: http.ServerResponse): Promise<void> {
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
-    getPool().query<CountRow>(`SELECT COUNT(*)::text AS total FROM miden_notes ${filters.where}`, filters.values),
+    cachedCount('miden_notes', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, count.rows[0].total, page));
+  sendJson(res, 200, paginated(items.rows, total, page));
 }
 
 async function handleNote(hex: string, res: http.ServerResponse): Promise<void> {
@@ -506,7 +553,7 @@ async function handleNullifiers(url: URL, res: http.ServerResponse): Promise<voi
   const limitParam = filters.values.length + 1;
   const offsetParam = filters.values.length + 2;
   const values = [...filters.values, page.limit, page.offset];
-  const [items, count] = await Promise.all([
+  const [items, total] = await Promise.all([
     getPool().query<NullifierRow>(
       `SELECT ${nullifierColumns}
        FROM miden_nullifiers
@@ -515,9 +562,9 @@ async function handleNullifiers(url: URL, res: http.ServerResponse): Promise<voi
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
-    getPool().query<CountRow>(`SELECT COUNT(*)::text AS total FROM miden_nullifiers ${filters.where}`, filters.values),
+    cachedCount('miden_nullifiers', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, count.rows[0].total, page));
+  sendJson(res, 200, paginated(items.rows, total, page));
 }
 
 async function handleNullifier(hex: string, res: http.ServerResponse): Promise<void> {
@@ -543,7 +590,7 @@ async function handleAccounts(url: URL, res: http.ServerResponse): Promise<void>
   const limitParam = filters.values.length + 1;
   const offsetParam = filters.values.length + 2;
   const values = [...filters.values, page.limit, page.offset];
-  const [items, count] = await Promise.all([
+  const [items, total] = await Promise.all([
     getPool().query<AccountRow>(
       `SELECT ${accountColumns}
        FROM miden_accounts
@@ -552,9 +599,9 @@ async function handleAccounts(url: URL, res: http.ServerResponse): Promise<void>
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
-    getPool().query<CountRow>(`SELECT COUNT(*)::text AS total FROM miden_accounts ${filters.where}`, filters.values),
+    cachedCount('miden_accounts', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, count.rows[0].total, page));
+  sendJson(res, 200, paginated(items.rows, total, page));
 }
 
 async function handleAccount(hex: string, res: http.ServerResponse): Promise<void> {
@@ -595,13 +642,23 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, option
     return;
   }
 
+  if (url.pathname === '/metrics') {
+    if (!config.METRICS_ENABLED) {
+      throw new HttpError(404, 'metrics disabled', 'METRICS_DISABLED');
+    }
+    const body = await metricsText();
+    res.writeHead(200, { 'Content-Type': metricsContentType });
+    res.end(body);
+    return;
+  }
+
   if (parts[0] !== 'api' || parts[1] !== 'v1') throw new HttpError(404, 'not found', 'NOT_FOUND');
 
   const resource = parts[2];
   if (parts.length === 3 && resource === 'stats') return handleStats(res);
   if (parts.length === 3 && resource === 'blocks') return handleBlocks(url, res);
-  if (parts.length === 4 && resource === 'blocks') return handleBlockByNumber(parts[3], res);
-  if (parts.length === 5 && resource === 'blocks' && parts[3] === 'by-hash') return handleBlockByHash(parts[4], res);
+  if (parts.length === 4 && resource === 'blocks') return handleBlockByNumber(parts[3], url, res);
+  if (parts.length === 5 && resource === 'blocks' && parts[3] === 'by-hash') return handleBlockByHash(parts[4], url, res);
   if (parts.length === 3 && resource === 'transactions') return handleTransactions(url, res);
   if (parts.length === 4 && resource === 'transactions') return handleTransaction(parts[3], res);
   if (parts.length === 3 && resource === 'notes') return handleNotes(url, res);
@@ -629,8 +686,11 @@ export function createApiServer(options: ApiServerArgument = {}): http.Server {
 
 export function startApiServer(options: ApiServerArgument = {}): () => void {
   const server = createApiServer(options);
-  server.listen(config.INDEXER_HTTP_PORT, () => {
-    logger.info('Miden indexer API server listening', { port: config.INDEXER_HTTP_PORT });
+  server.listen(config.INDEXER_HTTP_PORT, config.API_BIND, () => {
+    logger.info('Miden indexer API server listening', {
+      bind: config.API_BIND,
+      port: config.INDEXER_HTTP_PORT,
+    });
   });
 
   return () => {

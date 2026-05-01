@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { config } from '../config.js';
 import { getLastBlock } from '../db/progress.js';
+import { setChainTipHeight, setIndexedHeight, setPhase } from '../metrics/registry.js';
 import type { MidenRpcClient } from '../rpc/client.js';
 import { logger } from '../utils/logger.js';
 import { syncRange } from './syncRange.js';
@@ -65,7 +66,9 @@ export async function startFollow(
     while (!stopped) {
       try {
         const tip = chainTipFromStatus(await rpc.status());
+        setChainTipHeight(tip);
         const lastBlock = await getLastBlock(pool);
+        setIndexedHeight(lastBlock);
         if (tip > lastBlock) {
           const lag = tip - lastBlock;
           await syncRange(rpc, pool, lastBlock + 1, tip, batchSizeForLag(lag, opts));
@@ -80,8 +83,11 @@ export async function startFollow(
     }
   }
 
+  setPhase('follow');
   const initialTip = chainTipFromStatus(await rpc.status());
+  setChainTipHeight(initialTip);
   const initialLastBlock = await getLastBlock(pool);
+  setIndexedHeight(initialLastBlock);
   if (initialTip > initialLastBlock) {
     await syncRange(rpc, pool, initialLastBlock + 1, initialTip, opts.batchSize);
   }

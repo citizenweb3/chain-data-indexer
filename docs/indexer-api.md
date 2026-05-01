@@ -8,7 +8,7 @@ Base URL: `http://<host>:<INDEXER_HTTP_PORT>`. All explorer endpoints are read-o
 - Hex path/query parameters must contain only hex characters and have the exact expected byte length. Invalid values return `400 { "error": "invalid hex", "code": "INVALID_HEX" }`.
 - `BIGINT` columns are returned as JSON strings to avoid JavaScript 53-bit precision loss. Counts and pagination totals are JSON numbers at current data volume.
 - Timestamps are JSON strings produced from PostgreSQL `TIMESTAMPTZ` values.
-- List endpoints use `limit`/`offset` pagination and return `{ data, total, limit, offset }`. `limit` defaults to `20` and is clamped to `1..100`; `offset` defaults to `0` and must be non-negative.
+- List endpoints use `limit`/`offset` pagination and return `{ data, total, limit, offset }`. `limit` defaults to `20` and is clamped to `1..100`; `offset` defaults to `0`, must be non-negative, and is capped at `100000` (a `400 OFFSET_TOO_LARGE` is returned above the cap — narrow the filter or page from the other end). `total` is computed via `COUNT(*)` and cached for ~5 s per (table, filter) combination.
 - Errors never include stack traces. Stable error bodies are `{ error: string, code: string }`.
 
 ## Types
@@ -99,7 +99,7 @@ type Account = {
 };
 ```
 
-## Health and stats
+## Health, metrics and stats
 
 ### `GET /health`
 
@@ -119,9 +119,26 @@ Example:
 curl http://127.0.0.1:3001/health
 ```
 
+### `GET /metrics`
+
+Prometheus text-exposition endpoint with the fleet-wide `miden_*` (domain) and
+`miden_node_*` (Node.js runtime) prefixes. Cardinality is intentionally bounded:
+allowed labels are limited to `module`, `level`, `endpoint`, `group`, `table`,
+`phase`, `status`. The endpoint is gated by `METRICS_ENABLED` (default `true`).
+See [`docs/observability/`](observability/) for ready-to-use Alloy / Prometheus
+/ Promtail configurations.
+
+Example:
+
+```sh
+curl http://127.0.0.1:3001/metrics | head -20
+```
+
 ### `GET /api/v1/stats`
 
-Returns aggregate indexer counters. Counts are exact `count(*)` values for now.
+Returns aggregate indexer counters. Counts come from `count(*)` and are cached
+in-process for 5 seconds to keep public traffic from running repeated full table
+scans.
 
 Response:
 
@@ -161,11 +178,11 @@ Example:
 curl 'http://127.0.0.1:3001/api/v1/blocks?limit=20&offset=0&order=desc'
 ```
 
-### `GET /api/v1/blocks/:n`
+### `GET /api/v1/blocks/:n[?include_raw=true]`
 
-Returns one full block by numeric `block_num`, including `raw_block_bytes` hex when present.
+Returns one block summary by numeric `block_num`. The `raw_block_bytes` hex column is omitted by default to keep responses bounded; pass `?include_raw=true` to receive it. Block bytes can reach 64 MiB raw / ~128 MiB hex, so callers that need the blob should also size their HTTP buffers accordingly.
 
-Response: `Block`.
+Response: `Block` (with `raw_block_bytes` only when requested).
 
 Status codes: `200`, `400`, `404`, `500`.
 
@@ -173,11 +190,12 @@ Example:
 
 ```sh
 curl http://127.0.0.1:3001/api/v1/blocks/1
+curl 'http://127.0.0.1:3001/api/v1/blocks/1?include_raw=true'
 ```
 
-### `GET /api/v1/blocks/by-hash/:hex`
+### `GET /api/v1/blocks/by-hash/:hex[?include_raw=true]`
 
-Returns one full block by 32-byte block hash (`64` hex characters).
+Returns one block summary by 32-byte block hash (`64` hex characters). `raw_block_bytes` is opt-in via `?include_raw=true`, same semantics as the numeric variant.
 
 Response: `Block`.
 

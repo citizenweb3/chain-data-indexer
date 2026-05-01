@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import { withTx } from '../db/pg.js';
+import { observeFlush } from '../metrics/registry.js';
 import type { AccountRow, BlockBundle, NoteRow, NullifierRow, TransactionRow } from '../types.js';
 
 export type { AccountRow, BlockBundle, NoteRow, NullifierRow, TransactionRow } from '../types.js';
@@ -273,6 +274,7 @@ async function updateBatchProgress(client: QueryRunner, blocks: BlockBundle[]): 
 }
 
 export async function processBlock(pool: pg.Pool, b: BlockBundle): Promise<void> {
+  const start = process.hrtime.bigint();
   await withTx(pool, async (client) => {
     await insertBlocks(client, [b]);
     // TODO(full-scope): runner currently leaves these arrays undefined; SQL is ready when populated.
@@ -282,13 +284,42 @@ export async function processBlock(pool: pg.Pool, b: BlockBundle): Promise<void>
     if (b.accountUpdates) await upsertAccounts(client, b.accountUpdates);
     await updateProgress(client, b.header.blockNum);
   });
+  const durationSec = Number(process.hrtime.bigint() - start) / 1e9;
+  observeFlush('core', durationSec, {
+    miden_blocks: 1,
+    miden_transactions: b.transactions?.length ?? 0,
+    miden_notes: b.notes?.length ?? 0,
+    miden_nullifiers: b.nullifiers?.length ?? 0,
+    miden_accounts: b.accountUpdates?.length ?? 0,
+    miden_indexer_progress: 1,
+  });
 }
 
 export async function processBatch(pool: pg.Pool, blocks: BlockBundle[]): Promise<void> {
   if (blocks.length === 0) return;
+  const start = process.hrtime.bigint();
   await withTx(pool, async (client) => {
     await insertBlocks(client, blocks);
     await insertFullScopeRows(client, blocks);
     await updateBatchProgress(client, blocks);
+  });
+  const durationSec = Number(process.hrtime.bigint() - start) / 1e9;
+  let txCount = 0;
+  let noteCount = 0;
+  let nullifierCount = 0;
+  let accountCount = 0;
+  for (const b of blocks) {
+    txCount += b.transactions?.length ?? 0;
+    noteCount += b.notes?.length ?? 0;
+    nullifierCount += b.nullifiers?.length ?? 0;
+    accountCount += b.accountUpdates?.length ?? 0;
+  }
+  observeFlush('core', durationSec, {
+    miden_blocks: blocks.length,
+    miden_transactions: txCount,
+    miden_notes: noteCount,
+    miden_nullifiers: nullifierCount,
+    miden_accounts: accountCount,
+    miden_indexer_progress: 1,
   });
 }

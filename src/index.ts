@@ -1,6 +1,8 @@
 import { config } from './config.js';
 import { startApiServer } from './api.js';
 import { getPool, closePool } from './db/pg.js';
+import { setPhase } from './metrics/registry.js';
+import { startMetricsSampler } from './metrics/sampler.js';
 import { createMidenRpcClient } from './rpc/client.js';
 import { startRunner } from './runner/index.js';
 import { logger } from './utils/logger.js';
@@ -30,7 +32,10 @@ async function main(): Promise<void> {
     start_block: config.START_BLOCK,
     batch_size: config.BATCH_SIZE,
     poll_interval_ms: config.POLL_INTERVAL_MS,
+    log_format: config.LOG_FORMAT,
+    metrics_enabled: config.METRICS_ENABLED,
   });
+  setPhase('starting');
 
   const pool = getPool();
   logger.info('PostgreSQL pool initialized');
@@ -39,15 +44,19 @@ async function main(): Promise<void> {
   logger.info('Miden RPC client initialized', { node_url: config.NODE_URL });
 
   const stopApi = startApiServer();
+  const stopSampler = startMetricsSampler(rpc, pool);
   const runner = await startRunner(rpc, pool, config);
   let shuttingDown = false;
 
   async function shutdown(signal: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
+    setPhase('shutdown');
     logger.info('Shutting down', { signal });
     logger.info('Stopping runner');
     await runner.stop();
+    logger.info('Stopping metrics sampler');
+    stopSampler();
     logger.info('Stopping HTTP API');
     stopApi();
     logger.info('Closing PostgreSQL pool');

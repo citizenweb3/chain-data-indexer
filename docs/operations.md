@@ -10,7 +10,7 @@
 
 ```sh
 cp .env.example .env
-# Edit .env and change POSTGRES_PASSWORD before using this outside local development.
+# Edit .env and set POSTGRES_PASSWORD (Compose now refuses to start without it).
 docker compose up -d
 ```
 
@@ -37,7 +37,7 @@ services:
     ports: !reset []
     environment:
       NODE_URL: http://127.0.0.1:57291
-      DATABASE_URL: postgres://${POSTGRES_USER:-miden}:${POSTGRES_PASSWORD:-changeme}@127.0.0.1:${POSTGRES_HOST_PORT:-15433}/${POSTGRES_DB:-miden_indexer}
+      DATABASE_URL: postgres://${POSTGRES_USER:-miden}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_HOST_PORT:-15433}/${POSTGRES_DB:-miden_indexer}
       PG_HOST: 127.0.0.1
       PG_PORT: ${POSTGRES_HOST_PORT:-15433}
       API_PORT: ${API_HOST_PORT:-15080}
@@ -47,6 +47,30 @@ docker compose up -d
 ```
 
 In this mode the indexer's API binds directly to the host on `API_HOST_PORT` (15080 by default). Open the port in the host firewall (`ufw allow 15080/tcp`) if external explorer access is required.
+
+## Observability
+
+The indexer exposes Prometheus metrics on the same HTTP server as `/health`:
+
+```sh
+curl -sf http://127.0.0.1:${API_HOST_PORT:-15080}/metrics | head -20
+```
+
+Domain series use the `miden_*` prefix; Node.js runtime series use `miden_node_*`.
+The cardinality contract is intentionally tight — only `module`, `level`,
+`endpoint`, `group`, `table`, `phase`, `status` labels are allowed. Set
+`METRICS_ENABLED=false` to disable the route in constrained environments.
+
+For log shipping set `LOG_FORMAT=json` (Compose default) so each line is a
+single JSON object with `ts`, `level`, `label`, `message`, `metadata`.
+
+Reference scrape/collector configs (env-placeholders only — supply real URLs
+and credentials at deploy time) live under
+[`docs/observability/`](observability/):
+
+- `alloy.river` — recommended Grafana Alloy configuration (metrics + logs).
+- `prometheus.yml` — classic Prometheus scrape alternative.
+- `promtail-config.yml` — Promtail equivalent (maintenance mode; prefer Alloy).
 
 ## Crash and RPC-disconnect recovery
 
