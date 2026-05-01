@@ -21,6 +21,9 @@ Any agent picking up work here should follow the **research → execute → revi
   ```
 - Check `docs/future.md` before implementing anything related to transactions or balances —
   those features are deliberately deferred.
+- Logos v0.1.2 does not expose a stable validator identity in block headers.
+  `proof_of_leadership.leader_key` is a per-proof/per-block key in the current
+  dataset; do not present it as a validator/account identifier.
 
 ### `executor`
 - Make one logical change at a time. Run `npm run build` or `tsx src/index.ts` to verify.
@@ -93,7 +96,7 @@ Explorer API: `curl http://localhost:3001/api/v1/stats`
 ## Current status (v0.1.2)
 
 - [x] Block indexing (slot, height, leader_key, raw JSON)
-- [x] Leader/validator statistics
+- [x] Proof leader-key diagnostics (not stable validator identities)
 - [x] Backfill with resume
 - [x] Live SSE follow
 - [x] Gap-free operation: gap-fill on every connect/reconnect
@@ -106,7 +109,7 @@ Explorer API: `curl http://localhost:3001/api/v1/stats`
 - [x] Finality tracking via `/cryptarchia/lib-stream` (NDJSON)
 - [x] Health endpoint `GET /health` (lag, node_mode, uptime)
 - [x] Prometheus endpoint `GET /metrics` and JSON log format (`LOG_FORMAT=json`)
-- [x] Explorer API: `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/validators`
+- [x] Explorer API: `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/leader-keys`
 - [x] API, operations, and network-upgrade documentation
 - [ ] Transactions — deferred to v0.2 (see `docs/future.md`)
 - [ ] Wallet balances — blocked by privacy design (see `docs/future.md`)

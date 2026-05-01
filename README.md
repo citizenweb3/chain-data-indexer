@@ -2,7 +2,7 @@
 
 Block indexer for the [Logos Blockchain](https://github.com/logos-blockchain/logos-blockchain) testnet.
 
-Indexes all blocks and validator (leader) statistics from a local Logos node into PostgreSQL.
+Indexes all blocks and proof-of-leadership key diagnostics from a local Logos node into PostgreSQL.
 Designed for integration with the [validatorinfo](https://validatorinfo.com) explorer.
 
 **Supported:** Logos testnet v0.1.2+
@@ -15,10 +15,15 @@ Designed for integration with the [validatorinfo](https://validatorinfo.com) exp
 |---|---|---|
 | All blocks (slot, height, leader, raw JSON) | `/cryptarchia/blocks` | `logos_blocks` |
 | Block finality status | `/cryptarchia/lib-stream` | `logos_blocks.finalized` |
-| Validator stats (blocks produced, first/last slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
+| Proof leader-key diagnostics (first/last seen slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
 | Indexer resume position | internal | `logos_indexer_progress` |
 
 Transactions and wallet balances are not indexed in v0.1.2 — see [`docs/future.md`](docs/future.md).
+
+Logos v0.1.2 block headers do **not** expose a stable validator identity.
+`proof_of_leadership.leader_key` is a proof/signing key observed in the block
+header; on the current testnet dataset every indexed block has a distinct key.
+Do not use it as a validator/account identifier.
 
 ---
 
@@ -122,9 +127,9 @@ Full endpoint schemas, parameters, response fields, and error responses are in
 | `GET /api/v1/stats` | Network/indexer summary: counts, latest slots/heights, lag |
 | `GET /api/v1/blocks?limit=20&offset=0&finalized=true` | Latest blocks (`finalized=all` includes non-finalized blocks) |
 | `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
-| `GET /api/v1/validators?limit=20&offset=0` | Validators ordered by blocks produced |
-| `GET /api/v1/validators/:leader_key` | Validator stats by leader key |
-| `GET /api/v1/validators/:leader_key/blocks` | Blocks produced by one validator |
+| `GET /api/v1/leader-keys?limit=20&offset=0` | Proof leader keys ordered by observed block count |
+| `GET /api/v1/leader-keys/:leader_key` | Diagnostics for one proof leader key |
+| `GET /api/v1/leader-keys/:leader_key/blocks` | Blocks carrying one proof leader key |
 
 Example:
 
@@ -145,8 +150,12 @@ Use `/api/v1/*` for all new code.
 SELECT slot, height, leader_key, tx_count, indexed_at
 FROM logos_blocks WHERE finalized ORDER BY slot DESC LIMIT 20;
 
--- Top validators by blocks produced
-SELECT leader_key, blocks_produced, first_block_slot, last_block_slot
+-- Proof leader keys by observed block count.
+-- These are not stable validator identities in Logos v0.1.2.
+SELECT leader_key,
+       blocks_produced AS blocks_with_key,
+       first_block_slot AS first_seen_slot,
+       last_block_slot AS last_seen_slot
 FROM logos_leaders ORDER BY blocks_produced DESC LIMIT 20;
 
 -- Network summary

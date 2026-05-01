@@ -63,8 +63,10 @@ For live networks where data must be preserved:
 1. Confirm actual transaction object shape from a live node.
 2. Add concrete `MantleTx`, `MantleTxInput`, and `MantleTxOutput` types.
 3. Activate or migrate `logos_transactions` and `logos_notes`.
-4. Extend `processBlock()` and `processBatch()` transactionally. Block, leader,
-   transaction, and note writes must commit or roll back together.
+4. Extend `processBlock()` and `processBatch()` transactionally. Block,
+   proof-key diagnostics, transaction, and note writes must commit or roll back
+   together. Do not expose proof keys as validator identities unless a future
+   Logos release adds a stable validator/account identifier.
 5. Extend `docs/indexer-api.md` with transaction endpoints before exposing them.
 
 ### 4. Balance support

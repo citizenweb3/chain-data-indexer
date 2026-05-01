@@ -17,7 +17,7 @@ local-development aliases and should not be used by new integrations.
 
 ### Paginated list
 
-Used by block and validator list endpoints.
+Used by block and leader-key list endpoints.
 
 ```json
 {
@@ -36,7 +36,7 @@ Used by block and validator list endpoints.
 | `pagination.limit` | number | Effective page size. Default `20`, max `100`. |
 | `pagination.offset` | number | Zero-based row offset. Default `0`. |
 | `pagination.has_more` | boolean | `true` when another page exists. |
-| `pagination.total` | number | Present on validator lists only. Omitted from block lists to avoid expensive public `COUNT(*)` queries on large block tables. |
+| `pagination.total` | number | Present on leader-key lists only. Omitted from block lists to avoid expensive public `COUNT(*)` queries on large block tables. |
 
 Invalid `limit` / `offset` values are normalized: `limit` defaults to `20` and
 is capped at `100`; `offset` defaults to `0`.
@@ -66,22 +66,29 @@ is capped at `100`; `offset` defaults to `0`.
 | `slot` | number | Slot in which this block was produced. Slots may be empty. |
 | `height` | number \| null | Chain height when provided by the node. |
 | `block_root` | string | Block root hash from the node API. |
-| `leader_key` | string | Public key of the leader/proposer. |
+| `leader_key` | string | Proof-of-leadership signing key exposed by the block header. It is not a stable validator identity in Logos v0.1.2. |
 | `voucher_cm` | string | Voucher commitment from proof of leadership. |
 | `entropy` | string | Entropy contribution from proof of leadership. |
 | `tx_count` | number | Number of transactions in `raw.transactions`. Always `0` in Logos v0.1.2. |
 | `finalized` | boolean | `true` after `/cryptarchia/lib-stream` advances past this block height. |
 | `indexed_at` | string | PostgreSQL timestamp when the row was first indexed. |
 
-### Validator summary
+### Leader-key summary
+
+Logos v0.1.2 exposes `proof_of_leadership.leader_key` in block headers but does
+not expose a stable validator/account identity. Treat these rows as proof-key
+diagnostics only, not validator statistics. In the current indexed testnet
+dataset, each block has a distinct `leader_key`.
 
 | Field | Type | Description |
 |---|---|---|
-| `leader_key` | string | Leader/proposer public key. |
-| `blocks_produced` | number | Number of newly inserted canonical rows attributed to this leader. |
-| `first_block_slot` | number \| null | First indexed slot for this leader. |
-| `last_block_slot` | number \| null | Latest indexed slot for this leader. |
-| `updated_at` | string | Timestamp of the latest stats update for this leader. |
+| `leader_key` | string | `proof_of_leadership.leader_key` from block headers. |
+| `blocks_with_key` | number | Number of indexed block rows carrying this key. Normally `1` on the current testnet. |
+| `first_seen_slot` | number \| null | First indexed slot carrying this key. |
+| `last_seen_slot` | number \| null | Latest indexed slot carrying this key. |
+| `stable_validator_identity` | boolean | Always `false` for Logos v0.1.2. |
+| `identity_scope` | string | Always `proof_of_leadership.leader_key`. |
+| `updated_at` | string | Timestamp of the latest key diagnostic update. |
 
 ---
 
@@ -139,7 +146,7 @@ Response:
   "finalized_blocks": 57950,
   "latest_slot": 1148474,
   "latest_height": 58062,
-  "leaders_count": 120,
+  "leader_keys_count": 120,
   "last_indexed_slot": 1148474,
   "node_tip_slot": 1148480,
   "node_height": 58062,
@@ -154,7 +161,7 @@ Response:
 | `finalized_blocks` | number | Count of indexed rows marked finalized. |
 | `latest_slot` | number \| null | Highest indexed block slot. |
 | `latest_height` | number \| null | Highest indexed block height. |
-| `leaders_count` | number | Number of leaders in `logos_leaders`. |
+| `leader_keys_count` | number | Number of distinct `proof_of_leadership.leader_key` values seen. This is not a validator count. |
 | `last_indexed_slot` | number | Last saved indexer progress slot. |
 | `node_tip_slot` | number \| null | Current node tip slot, or `null` if unavailable. |
 | `node_height` | number \| null | Current node height, or `null` if unavailable. |
@@ -178,7 +185,7 @@ Query parameters:
 | `limit` | integer `1..100` | `20` | Page size. Values above `100` are capped. |
 | `offset` | integer `>=0` | `0` | Zero-based row offset. |
 | `finalized` | `true` \| `false` \| `all` | `true` | Filter by finality. `all` disables the filter. |
-| `leader_key` | string | none | Optional leader/proposer key filter. |
+| `leader_key` | string | none | Optional `proof_of_leadership.leader_key` filter. |
 
 Response:
 
@@ -246,12 +253,14 @@ Status codes: `200` on success, `404` when the block ID is unknown.
 
 ---
 
-### `GET /api/v1/validators`
+### `GET /api/v1/leader-keys`
 
-Paginated validator/leader stats ordered by `blocks_produced` descending.
+Paginated proof leader-key diagnostics ordered by `blocks_with_key` descending.
+These rows are **not validator identities**; they are keyed by
+`proof_of_leadership.leader_key` as exposed in Logos v0.1.2 block headers.
 
 ```bash
-curl "http://localhost:3001/api/v1/validators?limit=20&offset=0"
+curl "http://localhost:3001/api/v1/leader-keys?limit=20&offset=0"
 ```
 
 Query parameters:
@@ -268,9 +277,11 @@ Response:
   "data": [
     {
       "leader_key": "9919de73...",
-      "blocks_produced": 42,
-      "first_block_slot": 1120000,
-      "last_block_slot": 1127922,
+      "blocks_with_key": 1,
+      "first_seen_slot": 1127922,
+      "last_seen_slot": 1127922,
+      "stable_validator_identity": false,
+      "identity_scope": "proof_of_leadership.leader_key",
       "updated_at": "2026-04-28T13:40:00.000Z"
     }
   ],
@@ -285,15 +296,31 @@ Response:
 
 ---
 
+### `GET /api/v1/validators`
+
+Deprecated. Logos v0.1.2 does not expose stable validator identities, so this
+endpoint returns `410 validator_identity_unavailable`.
+
+Use `GET /api/v1/leader-keys` for proof-key diagnostics.
+
+---
+
 ### `GET /api/v1/validators/:leader_key`
 
-Stats for one leader/proposer key.
+Deprecated. Logos v0.1.2 does not expose stable validator identities, so this
+endpoint returns `410 validator_identity_unavailable`.
+
+Use `GET /api/v1/leader-keys/:leader_key` for proof-key diagnostics.
+
+### `GET /api/v1/leader-keys/:leader_key`
+
+Diagnostics for one `proof_of_leadership.leader_key`.
 
 ```bash
-curl http://localhost:3001/api/v1/validators/9919de73...
+curl http://localhost:3001/api/v1/leader-keys/9919de73...
 ```
 
-Response: a single validator summary object.
+Response: a single leader-key summary object.
 
 Status codes: `200` on success, `404` when the leader key is unknown.
 
@@ -301,12 +328,18 @@ Status codes: `200` on success, `404` when the leader key is unknown.
 
 ### `GET /api/v1/validators/:leader_key/blocks`
 
-Blocks produced by one leader. This endpoint uses the same response shape and
-query parameters as `GET /api/v1/blocks`, except `leader_key` is taken from the
-path.
+Deprecated. Returns `410 validator_identity_unavailable`.
+
+Use `GET /api/v1/leader-keys/:leader_key/blocks` instead.
+
+### `GET /api/v1/leader-keys/:leader_key/blocks`
+
+Blocks carrying one `proof_of_leadership.leader_key`. This endpoint uses the
+same response shape and query parameters as `GET /api/v1/blocks`, except
+`leader_key` is taken from the path.
 
 ```bash
-curl "http://localhost:3001/api/v1/validators/9919de73.../blocks?finalized=all"
+curl "http://localhost:3001/api/v1/leader-keys/9919de73.../blocks?finalized=all"
 ```
 
 Query parameters:

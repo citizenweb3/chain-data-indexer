@@ -57,9 +57,10 @@ async function _upsertLeader(
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Process a single block atomically: insert block + update leader stats in one
- * transaction. Leader is only updated when the block is newly inserted (idempotent
- * on restart — avoids double-counting on re-processed slot ranges).
+ * Process a single block atomically: insert block + update proof-key diagnostics
+ * in one transaction. The key row is only updated when the block is newly
+ * inserted (idempotent on restart — avoids double-counting on re-processed slot
+ * ranges).
  */
 export async function processBlock(block: LogosBlock): Promise<void> {
   if (!block.header.id) return;
@@ -98,7 +99,8 @@ export async function processBlock(block: LogosBlock): Promise<void> {
 
 /**
  * Process a batch of blocks in a single database transaction.
- * Uses unnest for a multi-row INSERT, then aggregates leader stats in one query.
+ * Uses unnest for a multi-row INSERT, then aggregates proof-key diagnostics in
+ * one query.
  * Returns the number of newly inserted blocks.
  */
 export async function processBatch(blocks: LogosBlock[]): Promise<number> {
@@ -136,7 +138,7 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
 
     let leaderRows = 0;
     if (inserted.length > 0) {
-      // Aggregate per-leader counts/min/max from newly inserted rows, then upsert once
+      // Aggregate per proof leader key from newly inserted rows, then upsert once.
       const leaderStats = new Map<string, { count: number; minSlot: number; maxSlot: number }>();
       for (const row of inserted) {
         const s = Number(row.slot);

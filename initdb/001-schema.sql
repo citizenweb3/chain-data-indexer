@@ -26,7 +26,12 @@ CREATE INDEX IF NOT EXISTS logos_blocks_leader     ON logos_blocks (leader_key);
 CREATE INDEX IF NOT EXISTS logos_blocks_height     ON logos_blocks (height) WHERE height IS NOT NULL;
 CREATE INDEX IF NOT EXISTS logos_blocks_unfinalized ON logos_blocks (height) WHERE NOT finalized;
 
--- Validator / leader stats — updated on every block insert
+-- Proof leader-key diagnostics — updated on every block insert.
+--
+-- Logos v0.1.2 exposes proof_of_leadership.leader_key in block headers but does
+-- not expose a stable validator identity. Keep the legacy table/column names
+-- for upgrade compatibility; public APIs expose this as /leader-keys, not
+-- /validators.
 CREATE TABLE IF NOT EXISTS logos_leaders (
     leader_key          TEXT        PRIMARY KEY,
     blocks_produced     BIGINT      NOT NULL DEFAULT 0,

@@ -29,7 +29,7 @@ interface BlockDetailApiRow extends BlockApiRow {
   raw: unknown;
 }
 
-interface LeaderApiRow {
+interface LeaderKeyApiRow {
   leader_key: string;
   blocks_produced: string;
   first_block_slot: string | null;
@@ -42,7 +42,7 @@ interface StatsApiRow {
   finalized_blocks: string;
   latest_slot: string | null;
   latest_height: string | null;
-  leaders_count: string;
+  leader_keys_count: string;
 }
 
 interface StatsCache {
@@ -113,12 +113,14 @@ function blockSummary(row: BlockApiRow): Record<string, unknown> {
   };
 }
 
-function leaderSummary(row: LeaderApiRow): Record<string, unknown> {
+function leaderKeySummary(row: LeaderKeyApiRow): Record<string, unknown> {
   return {
     leader_key: row.leader_key,
-    blocks_produced: Number(row.blocks_produced),
-    first_block_slot: toNumber(row.first_block_slot),
-    last_block_slot: toNumber(row.last_block_slot),
+    blocks_with_key: Number(row.blocks_produced),
+    first_seen_slot: toNumber(row.first_block_slot),
+    last_seen_slot: toNumber(row.last_block_slot),
+    stable_validator_identity: false,
+    identity_scope: 'proof_of_leadership.leader_key',
     updated_at: row.updated_at,
   };
 }
@@ -137,6 +139,13 @@ function sendNotFound(res: http.ServerResponse): void {
 
 function sendMethodNotAllowed(res: http.ServerResponse): void {
   sendJson(res, 405, { error: 'method_not_allowed' });
+}
+
+function sendValidatorIdentityUnavailable(res: http.ServerResponse): void {
+  sendJson(res, 410, {
+    error: 'validator_identity_unavailable',
+    message: 'Logos v0.1.2 block headers expose proof_of_leadership.leader_key, not a stable validator identity. Use /api/v1/leader-keys for proof-key diagnostics.',
+  });
 }
 
 async function handleMetrics(res: http.ServerResponse): Promise<void> {
@@ -190,7 +199,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
          COUNT(*) FILTER (WHERE finalized)::text AS finalized_blocks,
          MAX(slot)::text AS latest_slot,
          MAX(height)::text AS latest_height,
-         (SELECT COUNT(*)::text FROM logos_leaders) AS leaders_count
+         (SELECT COUNT(*)::text FROM logos_leaders) AS leader_keys_count
        FROM logos_blocks`,
     ),
     getLastSlot(),
@@ -203,7 +212,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
     finalized_blocks: Number(stats.finalized_blocks),
     latest_slot: toNumber(stats.latest_slot),
     latest_height: toNumber(stats.latest_height),
-    leaders_count: Number(stats.leaders_count),
+    leader_keys_count: Number(stats.leader_keys_count),
     last_indexed_slot: progressResult,
     node_tip_slot: nodeInfo?.slot ?? null,
     node_height: nodeInfo?.height ?? null,
@@ -281,12 +290,12 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
   });
 }
 
-async function handleValidators(url: URL, res: http.ServerResponse): Promise<void> {
+async function handleLeaderKeys(url: URL, res: http.ServerResponse): Promise<void> {
   const limit = parseLimit(url);
   const offset = parseOffset(url);
   const pool = getPool();
-  const [leadersResult, countResult] = await Promise.all([
-    pool.query<LeaderApiRow>(
+  const [leaderKeysResult, countResult] = await Promise.all([
+    pool.query<LeaderKeyApiRow>(
       `SELECT leader_key, blocks_produced::text, first_block_slot::text,
               last_block_slot::text, updated_at
          FROM logos_leaders
@@ -300,18 +309,18 @@ async function handleValidators(url: URL, res: http.ServerResponse): Promise<voi
   const total = Number(countResult.rows[0].total);
 
   sendJson(res, 200, {
-    data: leadersResult.rows.map(leaderSummary),
+    data: leaderKeysResult.rows.map(leaderKeySummary),
     pagination: {
       limit,
       offset,
       total,
-      has_more: offset + leadersResult.rows.length < total,
+      has_more: offset + leaderKeysResult.rows.length < total,
     },
   });
 }
 
-async function handleValidator(leaderKey: string, res: http.ServerResponse): Promise<void> {
-  const { rows } = await getPool().query<LeaderApiRow>(
+async function handleLeaderKey(leaderKey: string, res: http.ServerResponse): Promise<void> {
+  const { rows } = await getPool().query<LeaderKeyApiRow>(
     `SELECT leader_key, blocks_produced::text, first_block_slot::text,
             last_block_slot::text, updated_at
        FROM logos_leaders
@@ -324,7 +333,7 @@ async function handleValidator(leaderKey: string, res: http.ServerResponse): Pro
     return;
   }
 
-  sendJson(res, 200, leaderSummary(rows[0]));
+  sendJson(res, 200, leaderKeySummary(rows[0]));
 }
 
 async function route(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -369,17 +378,22 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     return;
   }
 
-  if (routeParts.length === 2 && routeParts[1] === 'validators') {
-    await handleValidators(url, res);
+  if (routeParts[1] === 'validators') {
+    sendValidatorIdentityUnavailable(res);
     return;
   }
 
-  if (routeParts.length === 3 && routeParts[1] === 'validators') {
-    await handleValidator(routeParts[2], res);
+  if (routeParts.length === 2 && routeParts[1] === 'leader-keys') {
+    await handleLeaderKeys(url, res);
     return;
   }
 
-  if (routeParts.length === 4 && routeParts[1] === 'validators' && routeParts[3] === 'blocks') {
+  if (routeParts.length === 3 && routeParts[1] === 'leader-keys') {
+    await handleLeaderKey(routeParts[2], res);
+    return;
+  }
+
+  if (routeParts.length === 4 && routeParts[1] === 'leader-keys' && routeParts[3] === 'blocks') {
     url.searchParams.set('leader_key', routeParts[2]);
     await handleBlocks(url, res);
     return;
@@ -398,9 +412,9 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
  *   GET /api/v1/stats
  *   GET /api/blocks?limit=20&offset=0&finalized=true|false|all
  *   GET /api/blocks/:id
- *   GET /api/validators?limit=20&offset=0
- *   GET /api/validators/:leader_key
- *   GET /api/validators/:leader_key/blocks
+ *   GET /api/leader-keys?limit=20&offset=0
+ *   GET /api/leader-keys/:leader_key
+ *   GET /api/leader-keys/:leader_key/blocks
  */
 export function startApiServer(): () => void {
   const server = http.createServer((req, res) => {

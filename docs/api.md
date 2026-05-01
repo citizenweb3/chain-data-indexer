@@ -143,7 +143,7 @@ Response: JSON array of block objects.
       "proof_of_leadership": {
         "proof":               [160, 12, ...],  // 128-byte Groth16 proof
         "entropy_contribution": "395a4020...",
-        "leader_key":           "9919de73...",  // leader's public key
+        "leader_key":           "9919de73...",  // proof leader/signing key; not a stable validator id in v0.1.2
         "voucher_cm":           "0ef4be5d..."   // voucher commitment
       }
     },

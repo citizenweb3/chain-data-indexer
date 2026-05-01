@@ -25,7 +25,7 @@ export interface NetworkInfo {
 export interface ProofOfLeadership {
   proof: number[];              // 128-byte Groth16 proof (raw byte array)
   entropy_contribution: string; // hex
-  leader_key: string;           // leader's public key (hex)
+  leader_key: string;           // proof leader/signing key (hex), not a stable validator id in v0.1.2
   voucher_cm: string;           // voucher commitment (hex)
 }
 
@@ -76,6 +76,7 @@ export interface BlockRow {
 }
 
 export interface LeaderRow {
+  // Legacy DB row name. Represents proof leader-key diagnostics, not validator identity.
   leader_key: string;
   blocks_produced: number;
   first_block_slot: number | null;
