@@ -28,6 +28,11 @@ Any agent picking up work here should follow the **research → execute → revi
 - Keep server paths explicit: node binary at `/pool0/logos`, indexer at `/pool0/logos-indexer`.
 - Log every significant action at `info` level; use `debug` for per-block noise.
 - Never commit `.env` files or any secrets.
+- Keep public indexer HTTP listeners explicit: `API_BIND=0.0.0.0` and
+  Compose `API_HOST_BIND=0.0.0.0`; access control lives at nginx/API-token/UFW.
+- Keep PostgreSQL local/private by default; enable `PG_SSL=true` for remote PG.
+- Keep Prometheus metrics in `src/metrics/*` on the isolated registry; do not use the global `prom-client` registry.
+- For new metric labels, use only bounded fleet-approved names: `module`, `level`, `endpoint`, `group`, `table`, `phase`, `status`.
 
 ### `review`
 - After any change to `src/sink/postgres.ts`, verify SQL matches `initdb/001-schema.sql`.
@@ -58,6 +63,8 @@ Any agent picking up work here should follow the **research → execute → revi
 | `setLastSlot` uses `GREATEST` | Progress never goes backwards (safe for concurrent updates) |
 | Progress table always updated after each batch | Enables safe restart without re-indexing |
 | `lib-stream` is NDJSON not SSE | Use `http.request` + readline, not EventSource |
+| Metrics use `logos_` / `logos_node_` prefixes | Fleet observability contract; keep labels bounded |
+| `LOG_FORMAT=json` for production log shipping | Emits `{ts, level, label, message, metadata}` JSON lines |
 
 ---
 
@@ -80,6 +87,7 @@ npm run dev
 ```
 
 Health check: `curl http://localhost:3001/health`
+Metrics: `curl http://localhost:3001/metrics`
 Explorer API: `curl http://localhost:3001/api/v1/stats`
 
 ## Current status (v0.1.2)
@@ -97,6 +105,7 @@ Explorer API: `curl http://localhost:3001/api/v1/stats`
 - [x] SSE stall detection via fetchInfo heartbeat
 - [x] Finality tracking via `/cryptarchia/lib-stream` (NDJSON)
 - [x] Health endpoint `GET /health` (lag, node_mode, uptime)
+- [x] Prometheus endpoint `GET /metrics` and JSON log format (`LOG_FORMAT=json`)
 - [x] Explorer API: `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/validators`
 - [x] API, operations, and network-upgrade documentation
 - [ ] Transactions — deferred to v0.2 (see `docs/future.md`)

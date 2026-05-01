@@ -15,15 +15,23 @@ Copy `.env.example` to `.env` and set at least `PG_PASSWORD`.
 | `NODE_URL` | no | `http://localhost:8080` | Logos node HTTP API endpoint. |
 | `PG_HOST` | no | `localhost` | PostgreSQL host. Docker Compose sets this to `postgres`. |
 | `PG_PORT` | no | `5432` | PostgreSQL port. |
+| `PG_HOST_BIND` | no | `127.0.0.1` | Host bind address for Docker Compose PostgreSQL publishing. Keep localhost unless a firewall-restricted remote client requires access. |
 | `PG_HOST_PORT` | no | `5432` | Host port published by Docker Compose for PostgreSQL. Does not change the internal container port. |
 | `PG_DB` | no | `logos_indexer` | PostgreSQL database. |
 | `PG_USER` | no | `logos` | PostgreSQL user. |
+| `PG_SSL` | no | `false` | Enable TLS for remote PostgreSQL connections. |
+| `PG_SSL_CA` | no | unset | Optional path to a CA certificate file used when `PG_SSL=true`. |
 | `FROM_SLOT` | no | `0` | First slot used only when no saved progress exists. Saved progress takes precedence. |
 | `FOLLOW` | no | `true` | When `true`, backfill then follow live blocks. When `false`, backfill then exit. |
 | `BATCH_SIZE` | no | `500` | Slot range size per `/cryptarchia/blocks` request. Lower it if the node times out. |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error`. |
+| `LOG_FORMAT` | no | `pretty` | `pretty` for local terminals or `json` for one-object-per-line structured logs. Use `json` for log shipping. |
+| `API_BIND` | no | `0.0.0.0` | Internal listener host for `/health`, `/metrics`, and `/api/v1/*`. |
 | `API_PORT` | no | `3001` | Internal/container HTTP port for `/health` and `/api/v1/*`. |
+| `API_HOST_BIND` | no | `0.0.0.0` | Host bind address for Docker Compose API publishing. Public deployments rely on nginx/API-token/firewall controls. |
 | `API_HOST_PORT` | no | `3001` | Host port published by Docker Compose for the indexer API. |
+| `METRICS_ENABLED` | no | `true` | Enables `GET /metrics`. Set `false` to return 404 for scrapes. |
+| `METRICS_SAMPLE_INTERVAL_MS` | no | `5000` | Metrics sampler interval for node tip and PostgreSQL pool gauges. |
 
 `HEALTH_PORT` is accepted as a backward-compatible alias for `API_PORT`, but new
 deployments should use `API_PORT`.
@@ -46,6 +54,7 @@ Useful checks:
 ```bash
 curl http://localhost:8080/cryptarchia/info
 curl http://localhost:3001/health
+curl http://localhost:3001/metrics
 curl http://localhost:3001/api/v1/stats
 ```
 
@@ -73,11 +82,21 @@ If local PostgreSQL already uses port `5432`, set:
 PG_HOST_PORT=15432
 ```
 
+PostgreSQL is bound to `127.0.0.1` by default. Do not expose it on `0.0.0.0`
+unless access is also restricted with UFW/security-group rules.
+If `PG_HOST` points at a remote database, set `PG_SSL=true`; set `PG_SSL_CA`
+when the remote PostgreSQL certificate is signed by a private CA.
+
 If local port `3001` is busy, set:
 
 ```env
 API_HOST_PORT=13001
 ```
+
+The indexer HTTP API is public by default (`API_BIND=0.0.0.0` and
+`API_HOST_BIND=0.0.0.0`) because fleet deployments are served through external
+domains. Protect public access with nginx API-token rules and host firewall
+allow-lists; do not expose it directly without that outer layer.
 
 ### Docker networking
 
@@ -134,6 +153,80 @@ Suggested alerting:
 
 ---
 
+
+## Prometheus Metrics
+
+When `METRICS_ENABLED=true`, the HTTP server exposes Prometheus metrics on the
+same port as the explorer API:
+
+```bash
+curl http://localhost:3001/metrics
+```
+
+Domain metrics use the `logos_` prefix. Node.js runtime metrics collected by
+`prom-client` use the `logos_node_` prefix and are registered in an isolated
+registry, not the global `prom-client` registry.
+
+Key series:
+
+- `logos_indexed_height`
+- `logos_chain_tip_height`
+- `logos_lag_blocks`
+- `logos_blocks_processed_total`
+- `logos_block_process_duration_seconds`
+- `logos_flush_duration_seconds{group}`
+- `logos_flush_rows_total{table}`
+- `logos_rpc_requests_total{endpoint,status}`
+- `logos_rpc_request_duration_seconds{endpoint}`
+- `logos_rpc_outage_state`
+- `logos_pg_pool_active`, `logos_pg_pool_idle`, `logos_pg_pool_waiting`
+- `logos_phase_info{phase}`
+
+`logos_lag_blocks` is derived from sampled chain tip height minus indexed height.
+It stays `0` until the node tip has been sampled. Indexed height is updated only
+from real Logos block heights; v0.1.2 blocks may omit height in some paths, and
+the indexer does not silently substitute slot values for height metrics.
+
+### Cardinality discipline
+
+Do not add metric labels for slot, height, block hash, leader key, account,
+address, transaction hash, or other unbounded values. Allowed domain metric
+labels are only `module`, `level`, `endpoint`, `group`, `table`, `phase`, and
+`status`; current metrics use `endpoint`, `group`, `table`, `phase`, and
+`status`.
+
+---
+
+## Structured Logs
+
+`LOG_FORMAT=pretty` keeps the local human-readable Winston output. Set
+`LOG_FORMAT=json` for production log shipping. JSON mode emits exactly one JSON
+object per line:
+
+```json
+{"ts":"2025-01-01T00:00:00.000Z","level":"info","label":"logos-indexer","message":"Database connected","metadata":{}}
+```
+
+The top-level `label` field is always present. If a log call supplies a `label`
+metadata field it is used; otherwise the default is `logos-indexer`. Error
+objects in metadata are serialized with name, message, and stack.
+
+---
+
+## Observability Integration
+
+Reference configs live in [`docs/observability/`](observability/):
+
+- `alloy.river` — recommended Grafana Alloy configuration for metrics and logs.
+- `prometheus.yml` — classic Prometheus scrape alternative.
+- `promtail-config.yml` — compatibility example only; Promtail is in maintenance
+  mode, prefer Alloy for new deployments.
+
+All example configs use environment placeholders only. Provide real remote-write,
+Loki, and file path values through your deployment system; do not commit
+credentials or tenant URLs.
+
+---
 ## Troubleshooting
 
 ### Node unreachable
@@ -239,7 +332,10 @@ In Docker Compose, update `.env` before `docker compose up -d`.
 - Back up PostgreSQL regularly (`pg_dump` or provider-native backups).
 - Expose the indexer API through a reverse proxy for TLS/auth if it is public.
 - Keep the Logos node API private; the node endpoints are unauthenticated.
+- Keep PostgreSQL local/private; if a remote PostgreSQL endpoint is required,
+  enable `PG_SSL=true`.
 - Run one active indexer per database unless a future leader-election mechanism is
   added. Multiple active indexers are mostly idempotent, but they add load and can
   race on progress.
-- Monitor `/health`, indexer logs, PostgreSQL disk usage, and node sync mode.
+- Monitor `/health`, `/metrics`, indexer logs, PostgreSQL disk usage, and node sync mode.
+- Use `LOG_FORMAT=json` when shipping logs to Loki, Elasticsearch, or another centralized log system.

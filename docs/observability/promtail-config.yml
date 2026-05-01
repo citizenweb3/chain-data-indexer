@@ -1,0 +1,38 @@
+# Promtail is in maintenance mode. Prefer docs/observability/alloy.river for new deployments.
+# This file is a compatibility example only; all values are placeholders.
+
+server:
+  http_listen_port: ${PROMTAIL_HTTP_PORT}
+  grpc_listen_port: ${PROMTAIL_GRPC_PORT}
+
+positions:
+  filename: ${PROMTAIL_POSITIONS_FILE}
+
+clients:
+  - url: ${LOKI_PUSH_URL}
+    basic_auth:
+      username: ${LOKI_USERNAME}
+      password: ${LOKI_PASSWORD}
+
+scrape_configs:
+  - job_name: logos-indexer
+    static_configs:
+      - targets:
+          - ${PROMTAIL_TARGET_LABEL}
+        labels:
+          job: logos-indexer
+          __path__: ${LOGOS_INDEXER_LOG_PATH}
+    pipeline_stages:
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            label: label
+            message: message
+            metadata: metadata
+      - labels:
+          level:
+          label:
+      - timestamp:
+          source: ts
+          format: RFC3339Nano

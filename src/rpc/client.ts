@@ -1,10 +1,12 @@
 import axios from 'axios';
 import EventSource from 'eventsource';
 import http from 'node:http';
+import https from 'node:https';
 import readline from 'node:readline';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { withRetry } from '../utils/retry.js';
+import { observeRpc } from '../metrics/registry.js';
 import type {
   CryptarchiaInfo,
   NetworkInfo,
@@ -15,18 +17,59 @@ import type {
 
 const httpClient = axios.create({ baseURL: config.NODE_URL, timeout: 30_000 });
 
-export async function fetchInfo(): Promise<CryptarchiaInfo> {
-  return withRetry(async () => {
-    const { data } = await httpClient.get<CryptarchiaInfo>('/cryptarchia/info');
+type RpcStatus = 'ok' | 'timeout' | 'error';
+
+function durationSecondsSince(start: bigint): number {
+  return Number(process.hrtime.bigint() - start) / 1_000_000_000;
+}
+
+function classifyRpcError(err: unknown): RpcStatus {
+  if (err && typeof err === 'object') {
+    const record = err as Record<string, unknown>;
+    const code = record.code;
+    const name = record.name;
+    const message = record.message;
+    if (name === 'AbortError') return 'timeout';
+    if (typeof code === 'string' && /timeout|timedout|etimedout|econnaborted/i.test(code)) {
+      return 'timeout';
+    }
+    if (typeof message === 'string' && /timeout|timed out|aborted/i.test(message)) {
+      return 'timeout';
+    }
+  }
+  return 'error';
+}
+
+async function instrumentRpc<T>(endpoint: string, fn: () => Promise<T>): Promise<T> {
+  const start = process.hrtime.bigint();
+  let status: RpcStatus = 'ok';
+  try {
+    return await fn();
+  } catch (err) {
+    status = classifyRpcError(err);
+    throw err;
+  } finally {
+    observeRpc(endpoint, status, durationSecondsSince(start));
+  }
+}
+
+export async function fetchInfo(
+  timeoutMs = 30_000,
+  maxAttempts = 5,
+): Promise<CryptarchiaInfo> {
+  return withRetry(() => instrumentRpc('/cryptarchia/info', async () => {
+    const { data } = await httpClient.get<CryptarchiaInfo>('/cryptarchia/info', {
+      timeout: timeoutMs,
+    });
     return data;
-  });
+  }), maxAttempts);
 }
 
 export async function fetchNetworkInfo(): Promise<NetworkInfo> {
-  return withRetry(async () => {
+  return withRetry(() => instrumentRpc('/network/info', async () => {
     const { data } = await httpClient.get<NetworkInfo>('/network/info');
     return data;
-  });
+  }));
 }
 
 /**
@@ -37,12 +80,15 @@ export async function fetchBlocks(
   slotFrom: number,
   slotTo: number,
   timeoutMs = 60_000,
+  maxAttempts = 5,
 ): Promise<LogosBlock[]> {
-  const { data } = await httpClient.get<LogosBlock[]>('/cryptarchia/blocks', {
-    params: { slot_from: slotFrom, slot_to: slotTo },
-    timeout: timeoutMs,
-  });
-  return data;
+  return withRetry(() => instrumentRpc('/cryptarchia/blocks', async () => {
+    const { data } = await httpClient.get<LogosBlock[]>('/cryptarchia/blocks', {
+      params: { slot_from: slotFrom, slot_to: slotTo },
+      timeout: timeoutMs,
+    });
+    return data;
+  }), maxAttempts);
 }
 
 /**
@@ -50,12 +96,14 @@ export async function fetchBlocks(
  * Note: the hash expected here is the chain tip/parent hash, NOT header.id from /cryptarchia/blocks.
  */
 export async function fetchBlockByHash(hash: string): Promise<LogosBlock> {
-  const { data } = await httpClient.post<LogosBlock>(
-    '/storage/block',
-    JSON.stringify(hash),
-    { headers: { 'Content-Type': 'application/json' } },
-  );
-  return data;
+  return withRetry(() => instrumentRpc('/storage/block', async () => {
+    const { data } = await httpClient.post<LogosBlock>(
+      '/storage/block',
+      JSON.stringify(hash),
+      { headers: { 'Content-Type': 'application/json' } },
+    );
+    return data;
+  }));
 }
 
 /**
@@ -131,11 +179,14 @@ export function subscribeBlocks(
 export function subscribeLib(
   onLib: (event: LibStreamEvent) => void,
   onError?: (err: Error) => void,
+  staleLimitMs = 120_000,
 ): () => void {
   const url = new URL('/cryptarchia/lib-stream', config.NODE_URL);
-  const options: http.RequestOptions = {
+  const isHttps = url.protocol === 'https:';
+  const request = isHttps ? https.request : http.request;
+  const options: http.RequestOptions | https.RequestOptions = {
     hostname: url.hostname,
-    port: Number(url.port) || 80,
+    port: Number(url.port) || (isHttps ? 443 : 80),
     path: url.pathname,
     method: 'GET',
     headers: { Accept: 'application/x-ndjson' },
@@ -143,8 +194,21 @@ export function subscribeLib(
 
   let req: http.ClientRequest | null = null;
   let closed = false;
+  let reported = false;
 
-  req = http.request(options, (res) => {
+  function reportClose(err: Error): void {
+    if (closed || reported) return;
+    reported = true;
+    if (onError) onError(err);
+  }
+
+  req = request(options, (res) => {
+    if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+      reportClose(new Error(`LIB stream returned HTTP ${res.statusCode}`));
+      res.resume();
+      return;
+    }
+
     const rl = readline.createInterface({ input: res, crlfDelay: Infinity });
     rl.on('line', (line) => {
       const trimmed = line.trim();
@@ -156,13 +220,27 @@ export function subscribeLib(
         // malformed line — ignore
       }
     });
+    rl.on('close', () => {
+      reportClose(new Error('LIB stream reader closed'));
+    });
+    res.on('end', () => {
+      reportClose(new Error('LIB stream ended'));
+    });
+    res.on('close', () => {
+      reportClose(new Error('LIB stream closed'));
+    });
     res.on('error', (err) => {
-      if (!closed && onError) onError(err);
+      reportClose(err);
     });
   });
 
+  req.setTimeout(staleLimitMs, () => {
+    reportClose(new Error(`LIB stream idle for ${staleLimitMs}ms`));
+    req?.destroy();
+  });
+
   req.on('error', (err) => {
-    if (!closed && onError) onError(err);
+    reportClose(err);
   });
 
   req.end();

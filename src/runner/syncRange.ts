@@ -1,7 +1,6 @@
 import { fetchBlocks } from '../rpc/client.js';
 import { processBatch } from '../sink/postgres.js';
 import { getLastSlot, setLastSlot } from '../db/progress.js';
-import { withRetry } from '../utils/retry.js';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
@@ -20,7 +19,7 @@ export async function syncRange(fromSlot: number, toSlot: number): Promise<void>
   while (cursor <= toSlot) {
     const batchEnd = Math.min(cursor + batchSize - 1, toSlot);
 
-    const blocks = await withRetry(() => fetchBlocks(cursor, batchEnd));
+    const blocks = await fetchBlocks(cursor, batchEnd);
     const inserted = await processBatch(blocks);
 
     for (const block of blocks) {

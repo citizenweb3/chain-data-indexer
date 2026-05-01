@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { getPool } from '../db/pg.js';
+import { observeBlock, observeFlush, setIndexedHeight } from '../metrics/registry.js';
 import type { LogosBlock } from '../types.js';
 
 type QueryRunner = pg.Pool | pg.PoolClient;
@@ -39,8 +40,8 @@ async function _upsertLeader(
   leaderKey: string,
   slot: number,
   qr: QueryRunner,
-): Promise<void> {
-  await qr.query(
+): Promise<number> {
+  const result = await qr.query(
     `INSERT INTO logos_leaders (leader_key, blocks_produced, first_block_slot, last_block_slot)
      VALUES ($1, 1, $2, $2)
      ON CONFLICT (leader_key) DO UPDATE SET
@@ -50,6 +51,7 @@ async function _upsertLeader(
        updated_at       = now()`,
     [leaderKey, slot],
   );
+  return result.rowCount ?? 0;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -63,17 +65,29 @@ export async function processBlock(block: LogosBlock): Promise<void> {
   if (!block.header.id) return;
 
   const client = await getPool().connect();
+  const start = process.hrtime.bigint();
+  let inserted = false;
+  let leaderRows = 0;
   try {
     await client.query('BEGIN');
-    const inserted = await _upsertBlock(block, client);
+    inserted = await _upsertBlock(block, client);
     if (inserted) {
-      await _upsertLeader(
+      leaderRows = await _upsertLeader(
         block.header.proof_of_leadership.leader_key,
         block.header.slot,
         client,
       );
     }
     await client.query('COMMIT');
+    const duration = Number(process.hrtime.bigint() - start) / 1_000_000_000;
+    observeFlush('core', duration, {
+      logos_blocks: inserted ? 1 : 0,
+      logos_leaders: leaderRows,
+    });
+    if (inserted) {
+      observeBlock(duration);
+      setIndexedHeight(block.header.height);
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -107,7 +121,8 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
     await client.query('BEGIN');
 
     // Multi-row insert; RETURNING gives us which rows were actually new
-    const { rows: inserted } = await client.query<{ leader_key: string; slot: string }>(
+    const start = process.hrtime.bigint();
+    const { rows: inserted } = await client.query<{ leader_key: string; slot: string; height: string | null }>(
       `INSERT INTO logos_blocks
          (id, parent_block, slot, height, block_root, leader_key, voucher_cm, entropy, tx_count, raw)
        SELECT * FROM unnest(
@@ -115,10 +130,11 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
          $6::text[], $7::text[], $8::text[], $9::integer[], $10::jsonb[]
        ) AS t(id, parent_block, slot, height, block_root, leader_key, voucher_cm, entropy, tx_count, raw)
        ON CONFLICT (id) DO NOTHING
-       RETURNING leader_key, slot`,
+       RETURNING leader_key, slot, height::text`,
       [ids, parents, slots, heights, roots, leaderKeys, voucherCms, entropies, txCounts, raws],
     );
 
+    let leaderRows = 0;
     if (inserted.length > 0) {
       // Aggregate per-leader counts/min/max from newly inserted rows, then upsert once
       const leaderStats = new Map<string, { count: number; minSlot: number; maxSlot: number }>();
@@ -139,7 +155,7 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
       const lMins    = lKeys.map((k) => leaderStats.get(k)!.minSlot);
       const lMaxs    = lKeys.map((k) => leaderStats.get(k)!.maxSlot);
 
-      await client.query(
+      const leaderResult = await client.query(
         `INSERT INTO logos_leaders (leader_key, blocks_produced, first_block_slot, last_block_slot)
          SELECT * FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::bigint[])
            AS t(leader_key, blocks_produced, first_block_slot, last_block_slot)
@@ -150,9 +166,22 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
            updated_at       = now()`,
         [lKeys, lCounts, lMins, lMaxs],
       );
+      leaderRows = leaderResult.rowCount ?? 0;
     }
 
     await client.query('COMMIT');
+    const duration = Number(process.hrtime.bigint() - start) / 1_000_000_000;
+    observeFlush('core', duration, {
+      logos_blocks: inserted.length,
+      logos_leaders: leaderRows,
+    });
+    if (inserted.length > 0) {
+      observeBlock(duration, inserted.length);
+      const heights = inserted
+        .map((row) => (row.height === null ? null : Number(row.height)))
+        .filter((height): height is number => height !== null && Number.isFinite(height));
+      if (heights.length > 0) setIndexedHeight(Math.max(...heights));
+    }
     return inserted.length;
   } catch (err) {
     await client.query('ROLLBACK');
@@ -168,10 +197,15 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
  */
 export async function markBlocksFinalized(upToHeight: number): Promise<number> {
   const pool = getPool();
+  const start = process.hrtime.bigint();
   const result = await pool.query(
     `UPDATE logos_blocks SET finalized = true
      WHERE height <= $1 AND NOT finalized`,
     [upToHeight],
   );
-  return result.rowCount ?? 0;
+  const count = result.rowCount ?? 0;
+  observeFlush('finality', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
+    logos_blocks: count,
+  });
+  return count;
 }

@@ -68,13 +68,21 @@ See [`.env.example`](.env.example) for all options.
 |---|---|---|
 | `NODE_URL` | `http://localhost:8080` | Logos node HTTP API |
 | `PG_*` | see .env.example | PostgreSQL connection |
+| `PG_HOST_BIND` | `127.0.0.1` | Docker Compose bind address for PostgreSQL |
 | `PG_HOST_PORT` | `5432` | Docker Compose host port for PostgreSQL |
+| `PG_SSL` | `false` | Enable TLS for remote PostgreSQL connections |
+| `PG_SSL_CA` | unset | Optional CA certificate path for `PG_SSL=true` |
 | `FROM_SLOT` | `0` | Start slot (overridden by saved progress) |
 | `FOLLOW` | `true` | Subscribe to live blocks after backfill |
 | `BATCH_SIZE` | `500` | Slots per backfill request |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `LOG_FORMAT` | `pretty` | `pretty` for terminals, `json` for log shipping |
+| `API_BIND` | `0.0.0.0` | Internal listener host for health, metrics, and API |
 | `API_PORT` | `3001` | HTTP port for `GET /health` and `GET /api/*` |
+| `API_HOST_BIND` | `0.0.0.0` | Docker Compose bind address for the public indexer API |
 | `API_HOST_PORT` | `3001` | Docker Compose host port for the indexer API |
+| `METRICS_ENABLED` | `true` | Enable `GET /metrics` Prometheus endpoint |
+| `METRICS_SAMPLE_INTERVAL_MS` | `5000` | Interval for node tip and PG pool metric sampling |
 
 ---
 
@@ -87,6 +95,7 @@ src/
 ├── types.d.ts           Logos API types (incl. LibStreamEvent)
 ├── api.ts               HTTP explorer API + health server
 ├── rpc/client.ts        HTTP client: REST + SSE (blocks) + NDJSON (lib-stream)
+├── metrics/             Isolated Prometheus registry + sampler
 ├── db/
 │   ├── pg.ts            PostgreSQL pool (with error handler)
 │   └── progress.ts      Resume: last indexed slot (UPSERT + GREATEST)
@@ -147,6 +156,17 @@ SELECT COUNT(*) AS total_blocks,
        MAX(height) AS latest_height
 FROM logos_blocks;
 ```
+
+---
+
+## Metrics and logs
+
+Prometheus metrics are exposed at `GET /metrics` on `API_PORT` when
+`METRICS_ENABLED=true`. Domain series use `logos_`; Node.js runtime series use
+`logos_node_`. Production log shipping should set `LOG_FORMAT=json` to emit one
+structured object per line with `ts`, `level`, `label`, `message`, and
+`metadata`. See [`docs/operations.md`](docs/operations.md) and
+[`docs/observability/`](docs/observability/) for integration examples.
 
 ---
 

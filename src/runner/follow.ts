@@ -3,6 +3,7 @@ import { processBlock } from '../sink/postgres.js';
 import { setLastSlot } from '../db/progress.js';
 import { syncFromProgress } from './syncRange.js';
 import { logger } from '../utils/logger.js';
+import { setPhase } from '../metrics/registry.js';
 import type { BlockSseEvent } from '../types.js';
 
 const MIN_RECONNECT_MS = 5_000;
@@ -23,6 +24,7 @@ const MAX_LIVE_QUEUE_DEPTH = 100;
  * Returns a cleanup function. Reconnects on error with exponential backoff.
  */
 export function followBlocks(): () => void {
+  setPhase('follow');
   let cleanupSse: (() => void) | null = null;
   let stopped = false;
   let reconnectDelay = MIN_RECONNECT_MS;
@@ -63,8 +65,11 @@ export function followBlocks(): () => void {
     // ── Gap fill: catch up to current tip before opening SSE ─────────────────
     try {
       const info = await fetchInfo();
+      setPhase('backfill');
       await syncFromProgress(info.slot);
+      setPhase('follow');
     } catch (err) {
+      setPhase('follow');
       logger.warn('Gap-fill before SSE subscribe failed — proceeding anyway', { err });
     }
 

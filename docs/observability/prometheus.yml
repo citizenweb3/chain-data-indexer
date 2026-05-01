@@ -1,0 +1,13 @@
+# Classic Prometheus scrape alternative for logos-indexer.
+# Prefer Grafana Alloy when remote_write and log shipping are both needed.
+# Replace placeholder values through your deployment templating system.
+
+global:
+  scrape_interval: ${LOGOS_INDEXER_SCRAPE_INTERVAL}
+
+scrape_configs:
+  - job_name: logos-indexer
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - ${LOGOS_INDEXER_METRICS_TARGET}

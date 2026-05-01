@@ -25,7 +25,6 @@ Used by block and validator list endpoints.
   "pagination": {
     "limit": 20,
     "offset": 0,
-    "total": 123,
     "has_more": true
   }
 }
@@ -36,8 +35,8 @@ Used by block and validator list endpoints.
 | `data` | array | Page data. Shape depends on endpoint. |
 | `pagination.limit` | number | Effective page size. Default `20`, max `100`. |
 | `pagination.offset` | number | Zero-based row offset. Default `0`. |
-| `pagination.total` | number | Total rows matching the current filters. |
 | `pagination.has_more` | boolean | `true` when another page exists. |
+| `pagination.total` | number | Present on validator lists only. Omitted from block lists to avoid expensive public `COUNT(*)` queries on large block tables. |
 
 Invalid `limit` / `offset` values are normalized: `limit` defaults to `20` and
 is capped at `100`; `offset` defaults to `0`.
@@ -203,7 +202,6 @@ Response:
   "pagination": {
     "limit": 20,
     "offset": 0,
-    "total": 58000,
     "has_more": true
   }
 }
