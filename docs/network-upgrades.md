@@ -57,12 +57,12 @@ For live networks where data must be preserved:
 
 ### 3. Transaction indexing
 
-`docs/future.md` documents the planned transaction and note tables. When
-`block.transactions[]` becomes non-empty:
+Raw transaction indexing is active. If a network upgrade changes the transaction
+shape materially, or if we want richer decoded note tables:
 
 1. Confirm actual transaction object shape from a live node.
-2. Add concrete `MantleTx`, `MantleTxInput`, and `MantleTxOutput` types.
-3. Activate or migrate `logos_transactions` and `logos_notes`.
+2. Update concrete `MantleTx` and related types to match the live node.
+3. Add or migrate decoded tables beyond `logos_transactions`.
 4. Extend `processBlock()` and `processBatch()` transactionally. Block,
    proof-key diagnostics, transaction, and note writes must commit or roll back
    together. Do not expose proof keys as validator identities unless a future

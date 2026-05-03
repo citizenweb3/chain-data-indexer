@@ -14,11 +14,12 @@ Designed for integration with the [validatorinfo](https://validatorinfo.com) exp
 | Data | Source | Table |
 |---|---|---|
 | All blocks (slot, height, leader, raw JSON) | `/cryptarchia/blocks` | `logos_blocks` |
+| Raw mantle transactions (`hash`, position, raw JSON) | `block.transactions[]` | `logos_transactions` |
 | Block finality status | `/cryptarchia/lib-stream` header IDs + parent chain | `logos_blocks.finalized` |
 | Proof leader-key diagnostics (first/last seen slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
 | Indexer resume position | internal | `logos_indexer_progress` |
 
-Transactions and wallet balances are not indexed in v0.1.2 — see [`docs/future.md`](docs/future.md).
+Wallet balances are not indexed in v0.1.2 — see [`docs/future.md`](docs/future.md).
 
 Logos v0.1.2 block headers do **not** expose a stable validator identity.
 `proof_of_leadership.leader_key` is a proof/signing key observed in the block
@@ -134,6 +135,8 @@ Full endpoint schemas, parameters, response fields, and error responses are in
 | `GET /api/v1/stats` | Network/indexer summary: counts, latest slots/heights, lag |
 | `GET /api/v1/blocks?limit=20&offset=0&finalized=true&order=desc` | Blocks sorted by derived block height by default (`sort=slot` is available for slot order; `finalized=all` includes non-finalized blocks) |
 | `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
+| `GET /api/v1/transactions?limit=20&offset=0&finalized=true&order=desc` | Transactions sorted by block height by default (`sort=slot` is available) |
+| `GET /api/v1/transactions/:id` | Transaction detail by tx hash/id, including raw tx JSON |
 | `GET /api/v1/leader-keys?limit=20&offset=0` | Proof leader keys ordered by observed block count |
 | `GET /api/v1/leader-keys/:leader_key` | Diagnostics for one proof leader key |
 | `GET /api/v1/leader-keys/:leader_key/blocks` | Blocks carrying one proof leader key |
@@ -143,6 +146,7 @@ Example:
 ```bash
 curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true&order=desc"
 curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=all&sort=slot&order=desc"
+curl "http://localhost:3001/api/v1/transactions?limit=20&finalized=all&order=desc"
 curl http://localhost:3001/api/v1/stats
 ```
 
@@ -168,6 +172,7 @@ FROM logos_leaders ORDER BY blocks_produced DESC LIMIT 20;
 
 -- Network summary
 SELECT COUNT(*) AS total_blocks,
+       (SELECT COUNT(*) FROM logos_transactions) AS total_transactions,
        COUNT(*) FILTER (WHERE finalized) AS finalized_blocks,
        MAX(slot) AS latest_slot,
        MAX(height) AS latest_height
@@ -214,16 +219,15 @@ Returns `200` when healthy, `503` when node unreachable. Useful for Docker / K8s
 - [`docs/network-upgrades.md`](docs/network-upgrades.md) — release upgrade
   checklist for future Logos network versions.
 - [`docs/api.md`](docs/api.md) — upstream Logos node API consumed by the indexer.
-- [`docs/future.md`](docs/future.md) — deliberately deferred transaction and
-  balance work.
+- [`docs/future.md`](docs/future.md) — deferred note decoding, wallet balance,
+  and other future protocol work.
 
 ---
 
 ## Future work
 
 See [`docs/future.md`](docs/future.md) for the v0.2+ roadmap:
-- Transaction indexing (when `block.transactions[]` becomes non-empty)
-- UTXO note tracking
+- UTXO / note decoding beyond raw transaction storage
 - Wallet balance display (pending public API support)
 
 ---

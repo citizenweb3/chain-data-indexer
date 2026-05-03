@@ -19,8 +19,9 @@ Any agent picking up work here should follow the **research → execute → revi
   curl http://localhost:8080/cryptarchia/info
   curl "http://localhost:8080/cryptarchia/blocks?slot_from=X&slot_to=Y"
   ```
-- Check `docs/future.md` before implementing anything related to transactions or balances —
-  those features are deliberately deferred.
+- Check `docs/future.md` before implementing anything related to balances or
+  decoded note/UTXO state — raw transaction indexing is active, but richer
+  balance and note semantics remain future work.
 - Logos v0.1.2 does not expose a stable validator identity in block headers.
   `proof_of_leadership.leader_key` is a per-proof/per-block key in the current
   dataset; do not present it as a validator/account identifier.
@@ -90,7 +91,7 @@ cat docs/operations.md     # understand env, Docker, troubleshooting
 cat docs/network-upgrades.md # understand future release workflow
 npm install
 cp .env.example .env     # fill in PG_PASSWORD
-psql $DATABASE_URL -f initdb/001-schema.sql
+npm run db:init
 npm run dev
 ```
 
@@ -114,7 +115,7 @@ Explorer API: `curl http://localhost:3001/api/v1/stats`
 - [x] Finality tracking via `/cryptarchia/lib-stream` (NDJSON)
 - [x] Health endpoint `GET /health` (lag, node_mode, uptime)
 - [x] Prometheus endpoint `GET /metrics` and JSON log format (`LOG_FORMAT=json`)
-- [x] Explorer API: `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/leader-keys`
+- [x] Raw transaction indexing (`logos_transactions`)
+- [x] Explorer API: `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/transactions`, `/api/v1/leader-keys`
 - [x] API, operations, and network-upgrade documentation
-- [ ] Transactions — deferred to v0.2 (see `docs/future.md`)
 - [ ] Wallet balances — blocked by privacy design (see `docs/future.md`)

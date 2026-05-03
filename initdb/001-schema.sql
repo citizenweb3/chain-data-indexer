@@ -40,6 +40,23 @@ CREATE TABLE IF NOT EXISTS logos_leaders (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Raw block transactions. Current Logos runtime emits `mantle_tx` objects in
+-- block.transactions[]; keep them as raw JSON plus stable identifiers so the
+-- explorer can list and inspect them without inventing protocol-specific
+-- decoded tables.
+CREATE TABLE IF NOT EXISTS logos_transactions (
+    id              TEXT        PRIMARY KEY,     -- mantle_tx.hash when present, else block_id:position
+    tx_hash         TEXT,                        -- mantle_tx.hash when present
+    block_id        TEXT        NOT NULL REFERENCES logos_blocks(id) ON DELETE CASCADE,
+    position        INTEGER     NOT NULL,        -- index within block.transactions[]
+    raw             JSONB       NOT NULL,
+    indexed_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (block_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS logos_transactions_block     ON logos_transactions (block_id, position);
+CREATE INDEX IF NOT EXISTS logos_transactions_hash      ON logos_transactions (tx_hash) WHERE tx_hash IS NOT NULL;
+
 -- Resume support — stores last indexed slot so the indexer can restart from
 -- where it left off instead of re-scanning from slot 0.
 CREATE TABLE IF NOT EXISTS logos_indexer_progress (
@@ -54,16 +71,6 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ─── Reserved for v0.2+ (not yet active) ─────────────────────────────────────
 -- Uncomment and migrate when Logos v0.2 enables transactions and UTXO tracking.
---
--- Transaction table: populated when block.transactions[] contains mantle_tx objects.
--- CREATE TABLE IF NOT EXISTS logos_transactions (
---     id              TEXT        PRIMARY KEY,
---     block_id        TEXT        NOT NULL REFERENCES logos_blocks(id),
---     slot            BIGINT      NOT NULL,
---     position        INTEGER     NOT NULL,     -- index within the block
---     raw             JSONB       NOT NULL,
---     indexed_at      TIMESTAMPTZ NOT NULL DEFAULT now()
--- );
 --
 -- UTXO note lifecycle: track individual note creation and spending.
 -- CREATE TABLE IF NOT EXISTS logos_notes (

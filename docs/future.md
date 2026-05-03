@@ -7,11 +7,14 @@ restarts with a new genesis block, the indexer will simply be re-run from slot 0
 
 ---
 
-## Transactions (v0.2+)
+## Transactions beyond raw indexing
 
-In v0.1.2, `block.transactions` is always `[]`.
+Raw `block.transactions[]` entries are now indexed in `logos_transactions`
+whenever the current node emits them. The remaining future work is richer
+protocol-aware decoding (notes, commitments, lifecycle tables) once the shape is
+stable enough to treat as an explorer contract.
 
-Starting in v0.2, blocks will contain `mantle_tx` objects. Each transaction will look roughly like:
+Transactions currently look like:
 
 ```json
 {
@@ -25,12 +28,10 @@ Starting in v0.2, blocks will contain `mantle_tx` objects. Each transaction will
 }
 ```
 
-**Implementation plan:**
-1. Uncomment `logos_transactions` and `logos_notes` tables in `initdb/001-schema.sql`
-2. Add `MantleTx`, `MantleTxInput`, `MantleTxOutput` types to `src/types.d.ts`
-3. In `src/sink/postgres.ts`, implement `upsertTransaction` and `upsertNote`
-4. In `processBlock()`, parse `block.transactions` and call those functions
-5. Re-run indexer from slot 0 on the new genesis
+**Remaining implementation plan:**
+1. Keep raw `logos_transactions` indexing as the source of truth.
+2. Add decoded note/commitment tables only after the live payload shape is stable.
+3. Re-run or migrate indexer data only if a future network reset changes the canonical schema.
 
 For the full network upgrade workflow, including when to edit `001-schema.sql`
 versus creating a new migration file, see [`network-upgrades.md`](network-upgrades.md).
@@ -44,11 +45,11 @@ fresh database or full truncate/re-index from slot 0. For networks where data
 must be preserved, create additive migration files (`initdb/002-*.sql`) instead
 of rewriting the already-applied schema.
 
-Recommended procedure for transaction support:
+Recommended procedure for richer transaction support:
 
 1. Stop the indexer.
 2. Confirm the new block/transaction JSON shape against a live upgraded node.
-3. Add or apply a migration for transaction/note tables.
+3. Add or apply a migration for decoded transaction/note tables.
 4. Update `src/types.d.ts`, `src/sink/postgres.ts`, and `docs/indexer-api.md`.
 5. Reset progress only if the network has restarted from a new genesis.
 6. Run `npm run build` and Docker build validation.

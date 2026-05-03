@@ -110,7 +110,7 @@ const phaseInfo = new Gauge({
 
 type RpcStatus = 'ok' | 'timeout' | 'error';
 type FlushGroup = 'core' | 'derived' | 'finality' | 'progress';
-type FlushTable = 'logos_blocks' | 'logos_leaders' | 'logos_indexer_progress';
+type FlushTable = 'logos_blocks' | 'logos_leaders' | 'logos_transactions' | 'logos_indexer_progress';
 
 type FlushRows = Partial<Record<FlushTable, number>>;
 
@@ -118,7 +118,7 @@ let indexedHeight: number | null = null;
 let chainTipHeight: number | null = null;
 
 const FLUSH_GROUPS: FlushGroup[] = ['core', 'derived', 'finality', 'progress'];
-const FLUSH_TABLES: FlushTable[] = ['logos_blocks', 'logos_leaders', 'logos_indexer_progress'];
+const FLUSH_TABLES: FlushTable[] = ['logos_blocks', 'logos_leaders', 'logos_transactions', 'logos_indexer_progress'];
 const RPC_ENDPOINTS = ['/cryptarchia/info', '/network/info', '/cryptarchia/blocks', '/storage/block'] as const;
 const RPC_STATUSES: RpcStatus[] = ['ok', 'timeout', 'error'];
 

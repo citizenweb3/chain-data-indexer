@@ -42,7 +42,24 @@ export interface BlockHeader {
 export interface LogosBlock {
   header: BlockHeader;
   signature?: number[];     // raw byte array, present in /storage/block
-  transactions: unknown[];  // always [] in v0.1.2; mantle_tx objects in v0.2+
+  transactions: LogosTransaction[];
+}
+
+export interface MantleTxOp {
+  opcode: number;
+  payload: unknown;
+}
+
+export interface MantleTxBody {
+  hash?: string;
+  ops?: MantleTxOp[];
+  storage_gas_price?: number;
+  execution_gas_price?: number;
+}
+
+export interface LogosTransaction {
+  mantle_tx?: MantleTxBody;
+  ops_proofs?: Record<string, unknown>[];
 }
 
 // ─── Live block stream event (application/x-ndjson) ───────────────────────────
@@ -97,14 +114,18 @@ export interface ProgressRow {
   updated_at: Date;
 }
 
-// ─── v0.2+ types (planned — not yet active) ───────────────────────────────────
-// When Logos v0.2 enables transactions, block.transactions[] will contain
-// MantleTx objects. The schema and sink are ready; only parsing needs to be added.
-//
-// export interface MantleTxInput  { note_id: string; proof: number[]; }
-// export interface MantleTxOutput { commitment: string; value: bigint; }
-// export interface MantleTx       { id: string; inputs: MantleTxInput[]; outputs: MantleTxOutput[]; }
-//
+export interface TransactionRow {
+  id: string;
+  tx_hash: string | null;
+  block_id: string;
+  position: number;
+  raw: LogosTransaction;
+  indexed_at: Date;
+}
+
+// ─── v0.2+ types (planned — richer decoding, not raw tx storage) ──────────────
+// Raw transactions are already indexed. Richer decoded UTXO/note lifecycle types
+// stay deferred until the protocol/API surface is stable.
 // Wallet balances per arbitrary address are NOT available in the public API
 // (privacy-first design: ZK-notes are only decryptable by the key holder).
 // logos_balance_snapshots / logos_watched_addresses are reserved for a future

@@ -44,7 +44,7 @@ deployments should use `API_PORT`.
 npm install
 cp .env.example .env
 # edit .env and set PG_PASSWORD / NODE_URL
-psql "$DATABASE_URL" -f initdb/001-schema.sql
+npm run db:init
 npm run build
 npm start
 ```

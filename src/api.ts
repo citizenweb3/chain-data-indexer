@@ -5,6 +5,7 @@ import { fetchInfo } from './rpc/client.js';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
 import { metricsContentType, metricsText } from './metrics/registry.js';
+import type { LogosTransaction } from './types.js';
 
 const startedAt = Date.now();
 const DEFAULT_LIMIT = 20;
@@ -42,10 +43,23 @@ interface LeaderKeyApiRow {
 
 interface StatsApiRow {
   total_blocks: string;
+  total_transactions: string;
   finalized_blocks: string;
   latest_slot: string | null;
   latest_height: string | null;
   leader_keys_count: string;
+}
+
+interface TransactionApiRow {
+  id: string;
+  tx_hash: string | null;
+  block_id: string;
+  position: number;
+  slot: string;
+  height: string | null;
+  finalized: boolean;
+  indexed_at: Date;
+  raw: unknown;
 }
 
 interface StatsCache {
@@ -136,6 +150,42 @@ function leaderKeySummary(row: LeaderKeyApiRow): Record<string, unknown> {
   };
 }
 
+function transactionShape(raw: unknown): {
+  hash: string | null;
+  opCount: number;
+  storageGasPrice: number | null;
+  executionGasPrice: number | null;
+} {
+  const tx = raw as LogosTransaction | null;
+  const mantleTx = tx?.mantle_tx;
+  return {
+    hash: typeof mantleTx?.hash === 'string' ? mantleTx.hash : null,
+    opCount: Array.isArray(mantleTx?.ops) ? mantleTx.ops.length : 0,
+    storageGasPrice: typeof mantleTx?.storage_gas_price === 'number' ? mantleTx.storage_gas_price : null,
+    executionGasPrice: typeof mantleTx?.execution_gas_price === 'number' ? mantleTx.execution_gas_price : null,
+  };
+}
+
+function transactionSummary(row: TransactionApiRow, includeRaw = false): Record<string, unknown> {
+  const shape = transactionShape(row.raw);
+  const summary: Record<string, unknown> = {
+    id: row.id,
+    hash: shape.hash ?? row.id,
+    tx_hash: row.tx_hash,
+    block_id: row.block_id,
+    position: row.position,
+    slot: Number(row.slot),
+    height: toNumber(row.height),
+    finalized: row.finalized,
+    op_count: shape.opCount,
+    storage_gas_price: shape.storageGasPrice,
+    execution_gas_price: shape.executionGasPrice,
+    indexed_at: row.indexed_at,
+  };
+  if (includeRaw) summary.raw = row.raw;
+  return summary;
+}
+
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -207,6 +257,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
     pool.query<StatsApiRow>(
       `SELECT
          COUNT(*)::text AS total_blocks,
+         (SELECT COUNT(*)::text FROM logos_transactions) AS total_transactions,
          COUNT(*) FILTER (WHERE finalized)::text AS finalized_blocks,
          MAX(slot)::text AS latest_slot,
          MAX(height)::text AS latest_height,
@@ -220,6 +271,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
   const stats = statsResult.rows[0];
   const body = {
     total_blocks: Number(stats.total_blocks),
+    total_transactions: Number(stats.total_transactions),
     finalized_blocks: Number(stats.finalized_blocks),
     latest_slot: toNumber(stats.latest_slot),
     latest_height: toNumber(stats.latest_height),
@@ -303,10 +355,96 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
     return;
   }
 
+  const txResult = await getPool().query<TransactionApiRow>(
+    `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
+            b.finalized, tx.indexed_at, tx.raw
+       FROM logos_transactions tx
+       JOIN logos_blocks b ON b.id = tx.block_id
+      WHERE tx.block_id = $1
+      ORDER BY tx.position ASC`,
+    [id],
+  );
+
   sendJson(res, 200, {
     ...blockSummary(rows[0]),
+    transactions: txResult.rows.map((row) => transactionSummary(row)),
     raw: rows[0].raw,
   });
+}
+
+async function handleTransactions(url: URL, res: http.ServerResponse): Promise<void> {
+  const limit = parseLimit(url);
+  const offset = parseOffset(url);
+  const finalized = parseFinalized(url);
+  const order = parseOrder(url);
+  const sort = parseBlockSort(url);
+  const direction = order === 'asc' ? 'ASC' : 'DESC';
+  const primarySort = sort === 'slot' ? 'b.slot' : 'b.height';
+  const blockId = url.searchParams.get('block_id');
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (finalized !== null) {
+    values.push(finalized);
+    conditions.push(`b.finalized = $${values.length}`);
+  }
+  if (blockId) {
+    values.push(blockId);
+    conditions.push(`tx.block_id = $${values.length}`);
+  }
+
+  values.push(limit + 1, offset);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limitParam = values.length - 1;
+  const offsetParam = values.length;
+
+  const { rows } = await getPool().query<TransactionApiRow>(
+    `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
+            b.finalized, tx.indexed_at, tx.raw
+       FROM logos_transactions tx
+       JOIN logos_blocks b ON b.id = tx.block_id
+       ${where}
+      ORDER BY ${primarySort} ${direction} NULLS LAST,
+               b.slot ${direction},
+               tx.position ${direction},
+               tx.id ${direction}
+      LIMIT $${limitParam} OFFSET $${offsetParam}`,
+    values,
+  );
+
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+
+  sendJson(res, 200, {
+    data: pageRows.map((row) => transactionSummary(row)),
+    pagination: {
+      limit,
+      offset,
+      order,
+      sort,
+      has_more: hasMore,
+    },
+  });
+}
+
+async function handleTransactionById(id: string, res: http.ServerResponse): Promise<void> {
+  const { rows } = await getPool().query<TransactionApiRow>(
+    `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
+            b.finalized, tx.indexed_at, tx.raw
+       FROM logos_transactions tx
+       JOIN logos_blocks b ON b.id = tx.block_id
+      WHERE tx.id = $1 OR tx.tx_hash = $1
+      ORDER BY CASE WHEN tx.id = $1 THEN 0 ELSE 1 END
+      LIMIT 1`,
+    [id],
+  );
+
+  if (rows.length === 0) {
+    sendNotFound(res);
+    return;
+  }
+
+  sendJson(res, 200, transactionSummary(rows[0], true));
 }
 
 async function handleLeaderKeys(url: URL, res: http.ServerResponse): Promise<void> {
@@ -397,6 +535,16 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     return;
   }
 
+  if (routeParts.length === 2 && routeParts[1] === 'transactions') {
+    await handleTransactions(url, res);
+    return;
+  }
+
+  if (routeParts.length === 3 && routeParts[1] === 'transactions') {
+    await handleTransactionById(routeParts[2], res);
+    return;
+  }
+
   if (routeParts[1] === 'validators') {
     sendValidatorIdentityUnavailable(res);
     return;
@@ -431,6 +579,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
  *   GET /api/v1/stats
  *   GET /api/blocks?limit=20&offset=0&finalized=true|false|all
  *   GET /api/blocks/:id
+ *   GET /api/transactions?limit=20&offset=0&finalized=true|false|all
+ *   GET /api/transactions/:id
  *   GET /api/leader-keys?limit=20&offset=0
  *   GET /api/leader-keys/:leader_key
  *   GET /api/leader-keys/:leader_key/blocks

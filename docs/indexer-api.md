@@ -17,7 +17,7 @@ local-development aliases and should not be used by new integrations.
 
 ### Paginated list
 
-Used by block and leader-key list endpoints.
+Used by block, transaction, and leader-key list endpoints.
 
 ```json
 {
@@ -69,9 +69,26 @@ is capped at `100`; `offset` defaults to `0`.
 | `leader_key` | string | Proof-of-leadership signing key exposed by the block header. It is not a stable validator identity in Logos v0.1.2. |
 | `voucher_cm` | string | Voucher commitment from proof of leadership. |
 | `entropy` | string | Entropy contribution from proof of leadership. |
-| `tx_count` | number | Number of transactions in `raw.transactions`. Always `0` in Logos v0.1.2. |
+| `tx_count` | number | Number of transactions in `raw.transactions`. |
 | `finalized` | boolean | `true` after `/cryptarchia/lib-stream` reports this block or a descendant as LIB; the indexer walks `parent_block` links and derives finalized heights from the same anchor. |
 | `indexed_at` | string | PostgreSQL timestamp when the row was first indexed. |
+
+### Transaction summary
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Transaction identifier used by the indexer API. Equals `mantle_tx.hash` when present; otherwise falls back to `block_id:position`. |
+| `hash` | string | Transaction hash when present, otherwise the same value as `id`. |
+| `tx_hash` | string \| null | Raw `mantle_tx.hash` from the node payload, if present. |
+| `block_id` | string | Parent block `header.id`. |
+| `position` | number | Zero-based index inside `block.transactions[]`. |
+| `slot` | number | Slot of the containing block. |
+| `height` | number \| null | Canonical height of the containing block. |
+| `finalized` | boolean | Finality of the containing block. |
+| `op_count` | number | Number of operations in `mantle_tx.ops`. |
+| `storage_gas_price` | number \| null | Raw `mantle_tx.storage_gas_price`. |
+| `execution_gas_price` | number \| null | Raw `mantle_tx.execution_gas_price`. |
+| `indexed_at` | string | Timestamp when the transaction row was first indexed. |
 
 ### Leader-key summary
 
@@ -143,6 +160,7 @@ Response:
 ```json
 {
   "total_blocks": 58000,
+  "total_transactions": 1200,
   "finalized_blocks": 57950,
   "latest_slot": 1148474,
   "latest_height": 58062,
@@ -158,6 +176,7 @@ Response:
 | Field | Type | Description |
 |---|---|---|
 | `total_blocks` | number | Count of indexed block rows. |
+| `total_transactions` | number | Count of indexed transaction rows. |
 | `finalized_blocks` | number | Count of indexed rows marked finalized. |
 | `latest_slot` | number \| null | Highest indexed block slot. |
 | `latest_height` | number \| null | Highest indexed block height. |
@@ -228,7 +247,7 @@ Block detail by `header.id`.
 curl http://localhost:3001/api/v1/blocks/18b2b264...
 ```
 
-Response contains all block summary fields plus `raw`.
+Response contains all block summary fields plus `transactions` and `raw`.
 
 ```json
 {
@@ -243,6 +262,7 @@ Response contains all block summary fields plus `raw`.
   "tx_count": 0,
   "finalized": true,
   "indexed_at": "2026-04-28T13:40:00.000Z",
+  "transactions": [],
   "raw": {
     "header": {},
     "transactions": []
@@ -251,9 +271,75 @@ Response contains all block summary fields plus `raw`.
 ```
 
 `raw` is the native JSON object stored from the Logos node response, not a string.
-In v0.1.2, `raw.transactions` is always `[]`.
+`transactions` is a summarized view from `logos_transactions`; `raw.transactions`
+is the original node payload.
 
 Status codes: `200` on success, `404` when the block ID is unknown.
+
+---
+
+### `GET /api/v1/transactions`
+
+Paginated transaction list. Defaults to transactions in finalized blocks only.
+
+```bash
+curl "http://localhost:3001/api/v1/transactions?limit=20&offset=0&finalized=true&order=desc"
+```
+
+Query parameters:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `limit` | integer `1..100` | `20` | Page size. Values above `100` are capped. |
+| `offset` | integer `>=0` | `0` | Zero-based row offset. |
+| `finalized` | `true` \| `false` \| `all` | `true` | Filter by containing block finality. |
+| `order` | `desc` \| `asc` | `desc` | Sort direction for the selected sort key. |
+| `sort` | `height` \| `slot` | `height` | Sort by containing block height (default) or slot. |
+| `block_id` | string | none | Optional containing block filter. |
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": "ebbd8ae2...",
+      "hash": "ebbd8ae2...",
+      "tx_hash": "ebbd8ae2...",
+      "block_id": "133daa76...",
+      "position": 0,
+      "slot": 1722623,
+      "height": 90629,
+      "finalized": false,
+      "op_count": 1,
+      "storage_gas_price": 0,
+      "execution_gas_price": 0,
+      "indexed_at": "2026-05-03T00:00:00.000Z"
+    }
+  ],
+  "pagination": {
+    "limit": 20,
+    "offset": 0,
+    "order": "desc",
+    "sort": "height",
+    "has_more": true
+  }
+}
+```
+
+---
+
+### `GET /api/v1/transactions/:id`
+
+Transaction detail by transaction ID/hash.
+
+```bash
+curl http://localhost:3001/api/v1/transactions/ebbd8ae2...
+```
+
+Response contains all transaction summary fields plus `raw`.
+
+Status codes: `200` on success, `404` when the transaction ID is unknown.
 
 ---
 
@@ -361,8 +447,8 @@ Query parameters:
 1. Prefer finalized blocks (`finalized=true`, the default) for public views.
 2. Use `finalized=all` only for internal/live views that can tolerate forked or
    non-finalized blocks.
-3. `tx_count` is always `0` until Logos enables transactions in a later network
-   release.
+3. Prefer `GET /api/v1/transactions` for explorer transaction pages; `raw.transactions`
+   on block detail remains the unmodified node payload.
 4. All query parameters are snake_case and should be URL-encoded.
 5. This API does not expose wallet balances for arbitrary addresses; see
    `docs/future.md` for the privacy limitation.

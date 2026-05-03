@@ -1,9 +1,16 @@
 import pg from 'pg';
 import { getPool } from '../db/pg.js';
 import { observeBlock, observeFlush, setIndexedHeight } from '../metrics/registry.js';
-import type { LogosBlock } from '../types.js';
+import type { LogosBlock, LogosTransaction } from '../types.js';
 
 type QueryRunner = pg.Pool | pg.PoolClient;
+
+interface InsertedBlockRow {
+  id: string;
+  leader_key: string;
+  slot: string;
+  height: string | null;
+}
 
 // ─── Internal helpers (accept either a pool or an in-progress client) ─────────
 
@@ -54,6 +61,54 @@ async function _upsertLeader(
   return result.rowCount ?? 0;
 }
 
+function transactionIdentity(
+  tx: LogosTransaction,
+  blockId: string,
+  position: number,
+): { id: string; txHash: string | null } {
+  const hash = typeof tx.mantle_tx?.hash === 'string' && tx.mantle_tx.hash.length > 0
+    ? tx.mantle_tx.hash
+    : null;
+  return {
+    id: hash ?? `${blockId}:${position}`,
+    txHash: hash,
+  };
+}
+
+async function _upsertTransactions(
+  blockId: string,
+  transactions: LogosTransaction[],
+  qr: QueryRunner,
+): Promise<number> {
+  if (transactions.length === 0) return 0;
+
+  const ids: string[] = [];
+  const hashes: Array<string | null> = [];
+  const blockIds: string[] = [];
+  const positions: number[] = [];
+  const raws: LogosTransaction[] = [];
+
+  for (let i = 0; i < transactions.length; i++) {
+    const tx = transactions[i];
+    const identity = transactionIdentity(tx, blockId, i);
+    ids.push(identity.id);
+    hashes.push(identity.txHash);
+    blockIds.push(blockId);
+    positions.push(i);
+    raws.push(tx);
+  }
+
+  const result = await qr.query(
+    `INSERT INTO logos_transactions (id, tx_hash, block_id, position, raw)
+     SELECT * FROM unnest(
+       $1::text[], $2::text[], $3::text[], $4::integer[], $5::jsonb[]
+     ) AS t(id, tx_hash, block_id, position, raw)
+     ON CONFLICT DO NOTHING`,
+    [ids, hashes, blockIds, positions, raws.map((tx) => JSON.stringify(tx))],
+  );
+  return result.rowCount ?? 0;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -69,6 +124,7 @@ export async function processBlock(block: LogosBlock): Promise<void> {
   const start = process.hrtime.bigint();
   let inserted = false;
   let leaderRows = 0;
+  let transactionRows = 0;
   try {
     await client.query('BEGIN');
     inserted = await _upsertBlock(block, client);
@@ -78,12 +134,14 @@ export async function processBlock(block: LogosBlock): Promise<void> {
         block.header.slot,
         client,
       );
+      transactionRows = await _upsertTransactions(block.header.id, block.transactions, client);
     }
     await client.query('COMMIT');
     const duration = Number(process.hrtime.bigint() - start) / 1_000_000_000;
     observeFlush('core', duration, {
       logos_blocks: inserted ? 1 : 0,
       logos_leaders: leaderRows,
+      logos_transactions: transactionRows,
     });
     if (inserted) {
       observeBlock(duration);
@@ -117,6 +175,7 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
   const entropies   = valid.map((b) => b.header.proof_of_leadership.entropy_contribution);
   const txCounts    = valid.map((b) => b.transactions.length);
   const raws        = valid.map((b) => JSON.stringify(b));
+  const blocksById  = new Map(valid.map((block) => [block.header.id!, block]));
 
   const client = await getPool().connect();
   try {
@@ -124,7 +183,7 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
 
     // Multi-row insert; RETURNING gives us which rows were actually new
     const start = process.hrtime.bigint();
-    const { rows: inserted } = await client.query<{ leader_key: string; slot: string; height: string | null }>(
+    const { rows: inserted } = await client.query<InsertedBlockRow>(
       `INSERT INTO logos_blocks
          (id, parent_block, slot, height, block_root, leader_key, voucher_cm, entropy, tx_count, raw)
        SELECT * FROM unnest(
@@ -132,11 +191,12 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
          $6::text[], $7::text[], $8::text[], $9::integer[], $10::jsonb[]
        ) AS t(id, parent_block, slot, height, block_root, leader_key, voucher_cm, entropy, tx_count, raw)
        ON CONFLICT (id) DO NOTHING
-       RETURNING leader_key, slot, height::text`,
+       RETURNING id, leader_key, slot, height::text`,
       [ids, parents, slots, heights, roots, leaderKeys, voucherCms, entropies, txCounts, raws],
     );
 
     let leaderRows = 0;
+    let transactionRows = 0;
     if (inserted.length > 0) {
       // Aggregate per proof leader key from newly inserted rows, then upsert once.
       const leaderStats = new Map<string, { count: number; minSlot: number; maxSlot: number }>();
@@ -169,6 +229,13 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
         [lKeys, lCounts, lMins, lMaxs],
       );
       leaderRows = leaderResult.rowCount ?? 0;
+
+      const insertedIds = new Set(inserted.map((row) => row.id));
+      for (const insertedId of insertedIds) {
+        const block = blocksById.get(insertedId);
+        if (!block) continue;
+        transactionRows += await _upsertTransactions(insertedId, block.transactions, client);
+      }
     }
 
     await client.query('COMMIT');
@@ -176,6 +243,7 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
     observeFlush('core', duration, {
       logos_blocks: inserted.length,
       logos_leaders: leaderRows,
+      logos_transactions: transactionRows,
     });
     if (inserted.length > 0) {
       observeBlock(duration, inserted.length);
