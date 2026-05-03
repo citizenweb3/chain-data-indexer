@@ -11,14 +11,7 @@
  * Default Node.js process metrics (CPU, RSS, GC, event loop lag) are
  * registered via `collectDefaultMetrics()` on the same registry.
  */
-import {
-  Registry,
-  Counter,
-  Gauge,
-  Histogram,
-  collectDefaultMetrics,
-  type LabelValues,
-} from 'prom-client';
+import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics, type LabelValues } from 'prom-client';
 
 export const registry = new Registry();
 registry.setDefaultLabels({ app: 'cosmos-indexer' });
@@ -146,7 +139,7 @@ export const phaseInfo = new Gauge({
   registers: [registry],
 });
 
-const PHASES = ['starting', 'backfill', 'follow', 'shutdown'] as const;
+const PHASES = ['starting', 'backfill', 'maintenance', 'follow', 'shutdown'] as const;
 type Phase = (typeof PHASES)[number];
 
 // ── Helpers (hot paths) ──────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import { flushTransfers } from '../sink/pg/flushers/transfers.ts';
 import { flushStakeDeleg } from '../sink/pg/flushers/stake_deleg.ts';
 import { flushStakeDistr } from '../sink/pg/flushers/stake_distr.ts';
 import { flushWasmEvents } from '../sink/pg/flushers/wasm_events.ts';
+import { clearMaintenance, startMaintenance, updateMaintenance } from '../health/state.ts';
 
 const log = getLogger('db/bulk-mode');
 
@@ -325,7 +326,10 @@ export async function bulkSetLogged(pool: Pool): Promise<void> {
     return;
   }
 
-  log.info('bulkSetLogged: converting %d UNLOGGED partitions back to LOGGED (this rewrites tables and may take a long time)', children.length);
+  log.info(
+    'bulkSetLogged: converting %d UNLOGGED partitions back to LOGGED (this rewrites tables and may take a long time)',
+    children.length,
+  );
   for (const child of children) {
     const childT0 = Date.now();
     log.info('SET LOGGED %s...', child);
@@ -361,12 +365,171 @@ export async function bulkModeOn(pool: Pool): Promise<void> {
   }
   log.info('disabled autovacuum on %d partitions', children.length);
 
-  log.info('bulk mode ON: dropped %d indexes, disabled autovacuum on %d partitions (%d ms)', dropped, children.length, Date.now() - t0);
+  log.info(
+    'bulk mode ON: dropped %d indexes, disabled autovacuum on %d partitions (%d ms)',
+    dropped,
+    children.length,
+    Date.now() - t0,
+  );
 }
 
 // ---------------------------------------------------------------------------
 // bulkModeOff — restore indexes and maintenance after backfill
 // ---------------------------------------------------------------------------
+
+const INDEX_PROGRESS_LOG_INTERVAL_MS = 30_000;
+
+interface CreateIndexProgressRow {
+  phase: string;
+  blocks_total: number | string | null;
+  blocks_done: number | string | null;
+  partitions_total: number | string | null;
+  partitions_done: number | string | null;
+}
+
+interface IndexProgressSnapshot {
+  phase: string;
+  blocksTotal: number;
+  blocksDone: number;
+  partitionsTotal: number;
+  partitionsDone: number;
+  percent: number | null;
+  elapsedSeconds: number;
+  etaSeconds: number | null;
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return 'unknown';
+  const rounded = Math.round(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const secs = rounded % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function buildIndexProgressSnapshot(row: CreateIndexProgressRow, startedAt: number): IndexProgressSnapshot {
+  const blocksTotal = Number(row.blocks_total ?? 0);
+  const blocksDone = Number(row.blocks_done ?? 0);
+  const partitionsTotal = Number(row.partitions_total ?? 0);
+  const partitionsDone = Number(row.partitions_done ?? 0);
+  const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+  const percent = blocksTotal > 0 ? (blocksDone / blocksTotal) * 100 : null;
+  const rate = blocksDone > 0 ? blocksDone / elapsedSeconds : 0;
+  const etaSeconds = blocksTotal > blocksDone && rate > 0 ? (blocksTotal - blocksDone) / rate : null;
+
+  return {
+    phase: row.phase,
+    blocksTotal,
+    blocksDone,
+    partitionsTotal,
+    partitionsDone,
+    percent,
+    elapsedSeconds,
+    etaSeconds,
+  };
+}
+
+async function readIndexProgress(
+  pool: Pool,
+  indexName: string,
+  startedAt: number,
+): Promise<IndexProgressSnapshot | null> {
+  const { rows } = await pool.query<CreateIndexProgressRow>(
+    `
+      SELECT p.phase, p.blocks_total, p.blocks_done, p.partitions_total, p.partitions_done
+      FROM pg_stat_progress_create_index p
+      JOIN pg_stat_activity a USING (pid)
+      WHERE a.query ILIKE '%' || $1 || '%'
+      ORDER BY a.query_start DESC
+      LIMIT 1
+    `,
+    [indexName],
+  );
+
+  const row = rows[0];
+  if (!row) return null;
+  return buildIndexProgressSnapshot(row, startedAt);
+}
+
+function publishIndexMaintenance(indexName: string, progress: IndexProgressSnapshot | null): void {
+  updateMaintenance({
+    task: 'create_index',
+    detail: `Recreating ${indexName} before live follow mode`,
+    currentIndex: indexName,
+    progress: progress
+      ? {
+          phase: progress.phase,
+          blocksDone: progress.blocksDone,
+          blocksTotal: progress.blocksTotal,
+          partitionsDone: progress.partitionsDone,
+          partitionsTotal: progress.partitionsTotal,
+          percent: progress.percent == null ? undefined : Number(progress.percent.toFixed(2)),
+          elapsedSeconds: progress.elapsedSeconds,
+          etaSeconds: progress.etaSeconds == null ? null : Math.round(progress.etaSeconds),
+        }
+      : null,
+  });
+}
+
+async function createIndexWithProgress(pool: Pool, idx: { name: string; create: string }): Promise<void> {
+  const startedAt = Date.now();
+  let progressQueryInFlight = false;
+
+  publishIndexMaintenance(idx.name, null);
+
+  const timer = setInterval(() => {
+    if (progressQueryInFlight) return;
+    progressQueryInFlight = true;
+
+    void readIndexProgress(pool, idx.name, startedAt)
+      .then((progress) => {
+        publishIndexMaintenance(idx.name, progress);
+        if (!progress) {
+          log.info('creating index %s still running; pg_stat_progress_create_index has no row yet', idx.name);
+          return;
+        }
+
+        const percent = progress.percent == null ? 'unknown' : `${progress.percent.toFixed(1)}%`;
+        log.info(
+          'creating index %s progress: phase=%s blocks=%d/%d partitions=%d/%d elapsed=%s eta=%s percent=%s',
+          idx.name,
+          progress.phase,
+          progress.blocksDone,
+          progress.blocksTotal,
+          progress.partitionsDone,
+          progress.partitionsTotal,
+          formatDuration(progress.elapsedSeconds),
+          formatDuration(progress.etaSeconds),
+          percent,
+        );
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        log.warn('creating index %s progress query failed: %s', idx.name, message);
+      })
+      .finally(() => {
+        progressQueryInFlight = false;
+      });
+  }, INDEX_PROGRESS_LOG_INTERVAL_MS);
+  timer.unref?.();
+
+  try {
+    await pool.query(idx.create);
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+async function reenableAutovacuum(pool: Pool): Promise<number> {
+  const children = await getPartitionChildren(pool, AUTOVACUUM_PARENT_TABLES);
+  for (const child of children) {
+    await pool.query(`ALTER TABLE ${child} SET (autovacuum_enabled = true)`);
+  }
+  log.info('re-enabled autovacuum on %d partitions', children.length);
+  return children.length;
+}
 
 /**
  * Recreates all 33 secondary indexes, re-enables autovacuum, and runs
@@ -378,30 +541,45 @@ export async function bulkModeOff(pool: Pool): Promise<void> {
   const t0 = Date.now();
   let created = 0;
 
-  await bulkSetLogged(pool);
+  startMaintenance('bulk_mode_restore', 'Restoring logged tables, secondary indexes, autovacuum, and planner stats');
 
-  for (const idx of INDEXES) {
-    const idxT0 = Date.now();
-    log.info('creating index %s...', idx.name);
-    await pool.query(idx.create);
-    created++;
-    log.info('created index %s (%d ms)', idx.name, Date.now() - idxT0);
+  try {
+    updateMaintenance({ task: 'set_logged', detail: 'Converting UNLOGGED partitions back to LOGGED', progress: null });
+    await bulkSetLogged(pool);
+
+    for (const idx of INDEXES) {
+      const idxT0 = Date.now();
+      log.info('creating index %s...', idx.name);
+      await createIndexWithProgress(pool, idx);
+      created++;
+      log.info('created index %s (%d ms)', idx.name, Date.now() - idxT0);
+    }
+
+    updateMaintenance({ task: 'autovacuum', detail: 'Re-enabling autovacuum on hot partitions', progress: null });
+    await reenableAutovacuum(pool);
+
+    for (const parent of AUTOVACUUM_PARENT_TABLES) {
+      const vacT0 = Date.now();
+      updateMaintenance({
+        task: 'vacuum_analyze',
+        detail: `Refreshing planner stats for ${parent}`,
+        currentIndex: null,
+        progress: null,
+      });
+      log.info('VACUUM ANALYZE %s...', parent);
+      await pool.query(`VACUUM ANALYZE ${parent}`);
+      log.info('VACUUM ANALYZE %s done (%d ms)', parent, Date.now() - vacT0);
+    }
+
+    log.info(
+      'bulk mode OFF: created %d indexes, vacuumed %d tables (%d ms)',
+      created,
+      AUTOVACUUM_PARENT_TABLES.length,
+      Date.now() - t0,
+    );
+  } finally {
+    clearMaintenance();
   }
-
-  const children = await getPartitionChildren(pool, AUTOVACUUM_PARENT_TABLES);
-  for (const child of children) {
-    await pool.query(`ALTER TABLE ${child} SET (autovacuum_enabled = true)`);
-  }
-  log.info('re-enabled autovacuum on %d partitions', children.length);
-
-  for (const parent of AUTOVACUUM_PARENT_TABLES) {
-    const vacT0 = Date.now();
-    log.info('VACUUM ANALYZE %s...', parent);
-    await pool.query(`VACUUM ANALYZE ${parent}`);
-    log.info('VACUUM ANALYZE %s done (%d ms)', parent, Date.now() - vacT0);
-  }
-
-  log.info('bulk mode OFF: created %d indexes, vacuumed %d tables (%d ms)', created, AUTOVACUUM_PARENT_TABLES.length, Date.now() - t0);
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +622,17 @@ export async function recoverDerived(pool: Pool): Promise<void> {
   const govDepositsH = Number(row.gov_deposits_height);
   const govVotesH = Number(row.gov_votes_height);
 
-  log.info('height check — events: %d, transfers: %d, stakeDeleg: %d, stakeDistr: %d, wasmExec: %d, wasmEvents: %d, govDeposits: %d, govVotes: %d', eventsH, transfersH, stakeDelegH, stakeDistrH, wasmExecH, wasmEventsH, govDepositsH, govVotesH);
+  log.info(
+    'height check — events: %d, transfers: %d, stakeDeleg: %d, stakeDistr: %d, wasmExec: %d, wasmEvents: %d, govDeposits: %d, govVotes: %d',
+    eventsH,
+    transfersH,
+    stakeDelegH,
+    stakeDistrH,
+    wasmExecH,
+    wasmEventsH,
+    govDepositsH,
+    govVotesH,
+  );
 
   // Step 2: find minimum derived height (only for tables that have data)
   // Tables with height=0 were never populated (e.g. wasm on Cosmos Hub) — skip them
@@ -459,13 +647,25 @@ export async function recoverDerived(pool: Pool): Promise<void> {
 
   // Step 3: warn about tables that cannot be recovered from events (only if they have data)
   if (wasmExecH > 0 && wasmExecH < eventsH) {
-    log.warn('cannot recover wasm.executions from events — requires re-indexing the gap range [%d, %d]', wasmExecH + 1, eventsH);
+    log.warn(
+      'cannot recover wasm.executions from events — requires re-indexing the gap range [%d, %d]',
+      wasmExecH + 1,
+      eventsH,
+    );
   }
   if (govDepositsH > 0 && govDepositsH < eventsH) {
-    log.warn('cannot recover gov.deposits from events — requires re-indexing the gap range [%d, %d]', govDepositsH + 1, eventsH);
+    log.warn(
+      'cannot recover gov.deposits from events — requires re-indexing the gap range [%d, %d]',
+      govDepositsH + 1,
+      eventsH,
+    );
   }
   if (govVotesH > 0 && govVotesH < eventsH) {
-    log.warn('cannot recover gov.votes from events — requires re-indexing the gap range [%d, %d]', govVotesH + 1, eventsH);
+    log.warn(
+      'cannot recover gov.votes from events — requires re-indexing the gap range [%d, %d]',
+      govVotesH + 1,
+      eventsH,
+    );
   }
 
   // Step 4: if event-recoverable tables are up to date, return

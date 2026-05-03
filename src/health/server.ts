@@ -44,6 +44,15 @@ interface HealthResponse {
   uptime_seconds: number;
   phase: string;
   bulk_mode: boolean;
+  maintenance?: {
+    active: boolean;
+    task: string | null;
+    detail: string | null;
+    current_index: string | null;
+    age_seconds: number | null;
+    updated_age_seconds: number | null;
+    progress: unknown;
+  };
   checks: Record<string, CheckResult>;
 }
 
@@ -104,10 +113,7 @@ async function handleRequest(
   res.end(JSON.stringify(result, null, 2) + '\n');
 }
 
-async function checkHealth(
-  opts: HealthServerOptions,
-  startupGraceSeconds: number,
-): Promise<HealthResponse> {
+async function checkHealth(opts: HealthServerOptions, startupGraceSeconds: number): Promise<HealthResponse> {
   const now = Date.now();
   const uptimeSec = Math.floor((now - healthState.startedAt) / 1000);
   const inStartupGrace = uptimeSec < startupGraceSeconds;
@@ -144,7 +150,7 @@ async function checkHealth(
   // ── Progress freshness: did we make forward progress recently?
   const ageSec = dbUpdatedAtMs != null ? Math.floor((now - dbUpdatedAtMs) / 1000) : null;
   let progressOk: boolean;
-  if (healthState.phase === 'shutdown') {
+  if (healthState.phase === 'shutdown' || healthState.phase === 'maintenance') {
     progressOk = true;
   } else if (dbUpdatedAtMs == null) {
     progressOk = inStartupGrace;
@@ -158,18 +164,14 @@ async function checkHealth(
       stale_threshold_seconds: opts.staleSeconds,
       last_indexed_height: dbHeight ?? healthState.lastIndexedHeight,
       in_startup_grace: inStartupGrace,
+      maintenance_pause: healthState.phase === 'maintenance',
     },
   };
 
   // ── RPC reachability: tracked by waitForRpcStatus()
-  const rpcAgeSec = healthState.rpcLastOkAt
-    ? Math.floor((now - healthState.rpcLastOkAt) / 1000)
-    : null;
+  const rpcAgeSec = healthState.rpcLastOkAt ? Math.floor((now - healthState.rpcLastOkAt) / 1000) : null;
   // RPC is allowed to be temporarily unreachable; fail only if down for >2x staleness.
-  const rpcOk =
-    healthState.rpcReachable ||
-    inStartupGrace ||
-    (rpcAgeSec != null && rpcAgeSec <= opts.staleSeconds * 2);
+  const rpcOk = healthState.rpcReachable || inStartupGrace || (rpcAgeSec != null && rpcAgeSec <= opts.staleSeconds * 2);
   checks.rpc = {
     ok: rpcOk,
     detail: {
@@ -180,12 +182,30 @@ async function checkHealth(
   };
 
   const healthy = Object.values(checks).every((c) => c.ok);
+  const maintenance =
+    healthState.maintenance.active || healthState.phase === 'maintenance'
+      ? {
+          active: healthState.maintenance.active,
+          task: healthState.maintenance.task,
+          detail: healthState.maintenance.detail,
+          current_index: healthState.maintenance.currentIndex,
+          age_seconds: healthState.maintenance.startedAt
+            ? Math.floor((now - healthState.maintenance.startedAt) / 1000)
+            : null,
+          updated_age_seconds: healthState.maintenance.updatedAt
+            ? Math.floor((now - healthState.maintenance.updatedAt) / 1000)
+            : null,
+          progress: healthState.maintenance.progress,
+        }
+      : undefined;
+
   return {
     healthy,
     status: healthy ? 'ok' : 'degraded',
     uptime_seconds: uptimeSec,
     phase: healthState.phase,
     bulk_mode: healthState.bulkMode,
+    ...(maintenance ? { maintenance } : {}),
     checks,
   };
 }

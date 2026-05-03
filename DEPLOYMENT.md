@@ -73,12 +73,12 @@ docker compose down -v
 
 ### Server Requirements
 
-| Resource | Minimum | Recommended |
-|----------|---------|-------------|
-| CPU | 4 cores | 8+ cores |
-| RAM | 16 GB | 32+ GB |
-| Disk | 200 GB SSD | 500+ GB NVMe |
-| Network | 100 Mbps | 1 Gbps |
+| Resource | Minimum    | Recommended  |
+| -------- | ---------- | ------------ |
+| CPU      | 4 cores    | 8+ cores     |
+| RAM      | 16 GB      | 32+ GB       |
+| Disk     | 200 GB SSD | 500+ GB NVMe |
+| Network  | 100 Mbps   | 1 Gbps       |
 
 ### Deployment Steps
 
@@ -149,7 +149,10 @@ PG_BULK_MODE=true
 RESUME=true
 ```
 
-The indexer will call `bulkModeOn()` at startup (drops ~32 secondary indexes, disables autovacuum on hot tables) and `bulkModeOff()` when the range is complete (recreates indexes, runs VACUUM ANALYZE).
+The indexer calls `bulkModeOn()` at startup (drops ~32 secondary indexes,
+disables autovacuum on hot tables) and `bulkModeOff()` when the range is
+complete (recreates indexes, runs VACUUM ANALYZE) before entering live follow
+mode.
 
 ### Firewall Configuration
 
@@ -205,6 +208,7 @@ INDEXER_DB_SSL=false
 ```
 
 **Connection string:**
+
 ```
 postgresql://cosmos_indexer_user:<PASSWORD>@<INDEXER_IP>:2432/cosmos_indexer_db
 ```
@@ -280,15 +284,23 @@ body with three checks:
 - **progress**: `now() - updated_at <= HEALTH_STALE_SECONDS` (default 180s)
 - **rpc**: in-memory `rpcReachable` flag updated by `waitForRpcStatus()`
 
+When `PG_BULK_MODE=true`, the indexer enters `phase: "maintenance"` after
+backfill while `bulkModeOff()` restores LOGGED tables, secondary indexes,
+autovacuum, and planner stats. During this expected pause the progress
+freshness check is treated as OK because block height does not advance until
+maintenance finishes. The `/health` body includes a `maintenance` section, and
+logs emit `pg_stat_progress_create_index` snapshots for long `CREATE INDEX`
+operations.
+
 Tunables (in `.env`):
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `HEALTH_PORT` | `3000` | TCP port inside the container |
-| `HEALTH_EXTERNAL_HOST` | `127.0.0.1` | Bind address on the host (set `0.0.0.0` to expose externally) |
-| `HEALTH_STALE_SECONDS` | `180` | How long without progress before `degraded` |
-| `HEALTH_STARTUP_GRACE_SECONDS` | `300` | No 503 during cold start |
-| `HEALTH_ENABLED` | `true` | Set `false` to disable the server |
+| Variable                       | Default     | Purpose                                                       |
+| ------------------------------ | ----------- | ------------------------------------------------------------- |
+| `HEALTH_PORT`                  | `3000`      | TCP port inside the container                                 |
+| `HEALTH_EXTERNAL_HOST`         | `127.0.0.1` | Bind address on the host (set `0.0.0.0` to expose externally) |
+| `HEALTH_STALE_SECONDS`         | `180`       | How long without progress before `degraded`                   |
+| `HEALTH_STARTUP_GRACE_SECONDS` | `300`       | No 503 during cold start                                      |
+| `HEALTH_ENABLED`               | `true`      | Set `false` to disable the server                             |
 
 The compose file wires this into a Docker `healthcheck:` (interval 30s,
 start_period 5m, retries 3). With `restart: unless-stopped`, a container
@@ -305,10 +317,10 @@ prefixed `cdi_node_*`.
 curl -sS http://127.0.0.1:${HEALTH_PORT:-3000}/metrics | head
 ```
 
-| Variable | Default | Notes |
-|---|---|---|
-| `METRICS_ENABLED` | `true` | Set `false` to disable the `/metrics` route and the sampler |
-| `METRICS_SAMPLE_INTERVAL_MS` | `5000` | How often the sampler refreshes pg pool / decode pool / chain tip gauges |
+| Variable                     | Default | Notes                                                                    |
+| ---------------------------- | ------- | ------------------------------------------------------------------------ |
+| `METRICS_ENABLED`            | `true`  | Set `false` to disable the `/metrics` route and the sampler              |
+| `METRICS_SAMPLE_INTERVAL_MS` | `5000`  | How often the sampler refreshes pg pool / decode pool / chain tip gauges |
 
 Selected series (full list in `src/metrics/registry.ts`):
 
@@ -319,7 +331,7 @@ Selected series (full list in `src/metrics/registry.ts`):
 - `cdi_rpc_outage_state` (1 while RPC is down)
 - `cdi_decode_pool_busy`, `cdi_decode_pool_size`
 - `cdi_pg_pool_active`, `cdi_pg_pool_idle`, `cdi_pg_pool_waiting`
-- `cdi_bulk_mode`, `cdi_phase_info{phase}`
+- `cdi_bulk_mode`, `cdi_phase_info{phase}` (`starting`, `backfill`, `maintenance`, `follow`, `shutdown`)
 
 > **Cardinality discipline**: never label series by `height`, `tx_hash`, or
 > `validator_addr` — use only low-cardinality dimensions (`module`, `level`,
@@ -329,10 +341,10 @@ Selected series (full list in `src/metrics/registry.ts`):
 
 `LOG_FORMAT` controls the log encoder explicitly (no auto-detection):
 
-| Value | Meaning |
-|---|---|
-| `pretty` (default) | Colorized printf, human-readable. Use locally. |
-| `json` | One JSON object per line: `{ts, level, label, message, metadata}`. Required for Loki / ELK ingestion. |
+| Value              | Meaning                                                                                               |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `pretty` (default) | Colorized printf, human-readable. Use locally.                                                        |
+| `json`             | One JSON object per line: `{ts, level, label, message, metadata}`. Required for Loki / ELK ingestion. |
 
 The shipped `docker-compose.yaml` defaults to `LOG_FORMAT=json` so production
 containers emit machine-parseable lines out of the box.
@@ -392,16 +404,16 @@ deployments should prefer Alloy.
 
 ```sql
 -- Indexing progress
-SELECT progress_id, last_height, updated_at 
+SELECT progress_id, last_height, updated_at
 FROM core.indexer_progress;
 
 -- Indexing speed (blocks in last hour)
 SELECT COUNT(*) as blocks_last_hour
-FROM core.blocks 
+FROM core.blocks
 WHERE time > NOW() - INTERVAL '1 hour';
 
 -- Table sizes
-SELECT 
+SELECT
     schemaname || '.' || tablename as table,
     pg_size_pretty(pg_total_relation_size(schemaname || '.' || tablename)) as size
 FROM pg_tables
@@ -410,7 +422,7 @@ ORDER BY pg_total_relation_size(schemaname || '.' || tablename) DESC
 LIMIT 20;
 
 -- Active partitions
-SELECT 
+SELECT
     parent.relname as parent,
     child.relname as partition
 FROM pg_inherits
@@ -478,11 +490,12 @@ SELECT util.ensure_next_height_partition('core', 'blocks');
 ### PostgreSQL Not Accepting External Connections
 
 1. Check firewall:
+
    ```bash
    sudo ufw status
    ```
 
-3. Check port mapping:
+2. Check port mapping:
    ```bash
    docker port cosmosindexer
    # Should show: 5432/tcp -> 0.0.0.0:2432

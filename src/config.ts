@@ -49,7 +49,9 @@ export function getConfig(): Config {
   if (shardId < 0 || shardId >= shards) throw new Error(`shard-id must be in [0..${shards - 1}], got ${shardId}`);
 
   const concurrency = asPositiveInt('concurrency', (args.concurrency as string) ?? process.env.CONCURRENCY ?? 48);
-  const decodeWorkers = process.env.DECODE_WORKERS ? asPositiveInt('decode-workers', process.env.DECODE_WORKERS) : undefined;
+  const decodeWorkers = process.env.DECODE_WORKERS
+    ? asPositiveInt('decode-workers', process.env.DECODE_WORKERS)
+    : undefined;
   const timeoutMs = asPositiveInt('timeout-ms', (args['timeout-ms'] as string) ?? process.env.TIMEOUT_MS ?? 5000);
   const rps = asPositiveInt('rps', (args.rps as string) ?? process.env.RPS ?? 150);
   const retries = asPositiveInt('retries', (args.retries as string) ?? process.env.RETRIES ?? 3);
@@ -140,14 +142,46 @@ export function getConfig(): Config {
         ? Number(args['pg-batch-events'])
         : Number(process.env.PG_BATCH_EVENTS ?? 10000),
       batchAttrs: args['pg-batch-attrs'] ? Number(args['pg-batch-attrs']) : Number(process.env.PG_BATCH_ATTRS ?? 30000),
-      batchTransfers: args['pg-batch-transfers'] ? Number(args['pg-batch-transfers']) : (process.env.PG_BATCH_TRANSFERS ? Number(process.env.PG_BATCH_TRANSFERS) : undefined),
-      batchStakeDeleg: args['pg-batch-stake-deleg'] ? Number(args['pg-batch-stake-deleg']) : (process.env.PG_BATCH_STAKE_DELEG ? Number(process.env.PG_BATCH_STAKE_DELEG) : undefined),
-      batchStakeDistr: args['pg-batch-stake-distr'] ? Number(args['pg-batch-stake-distr']) : (process.env.PG_BATCH_STAKE_DISTR ? Number(process.env.PG_BATCH_STAKE_DISTR) : undefined),
-      batchWasmExec: args['pg-batch-wasm-exec'] ? Number(args['pg-batch-wasm-exec']) : (process.env.PG_BATCH_WASM_EXEC ? Number(process.env.PG_BATCH_WASM_EXEC) : undefined),
-      batchWasmEvents: args['pg-batch-wasm-events'] ? Number(args['pg-batch-wasm-events']) : (process.env.PG_BATCH_WASM_EVENTS ? Number(process.env.PG_BATCH_WASM_EVENTS) : undefined),
-      batchGovDeposits: args['pg-batch-gov-deposits'] ? Number(args['pg-batch-gov-deposits']) : (process.env.PG_BATCH_GOV_DEPOSITS ? Number(process.env.PG_BATCH_GOV_DEPOSITS) : undefined),
-      batchGovVotes: args['pg-batch-gov-votes'] ? Number(args['pg-batch-gov-votes']) : (process.env.PG_BATCH_GOV_VOTES ? Number(process.env.PG_BATCH_GOV_VOTES) : undefined),
-      batchGovProposals: args['pg-batch-gov-proposals'] ? Number(args['pg-batch-gov-proposals']) : (process.env.PG_BATCH_GOV_PROPOSALS ? Number(process.env.PG_BATCH_GOV_PROPOSALS) : undefined),
+      batchTransfers: args['pg-batch-transfers']
+        ? Number(args['pg-batch-transfers'])
+        : process.env.PG_BATCH_TRANSFERS
+          ? Number(process.env.PG_BATCH_TRANSFERS)
+          : undefined,
+      batchStakeDeleg: args['pg-batch-stake-deleg']
+        ? Number(args['pg-batch-stake-deleg'])
+        : process.env.PG_BATCH_STAKE_DELEG
+          ? Number(process.env.PG_BATCH_STAKE_DELEG)
+          : undefined,
+      batchStakeDistr: args['pg-batch-stake-distr']
+        ? Number(args['pg-batch-stake-distr'])
+        : process.env.PG_BATCH_STAKE_DISTR
+          ? Number(process.env.PG_BATCH_STAKE_DISTR)
+          : undefined,
+      batchWasmExec: args['pg-batch-wasm-exec']
+        ? Number(args['pg-batch-wasm-exec'])
+        : process.env.PG_BATCH_WASM_EXEC
+          ? Number(process.env.PG_BATCH_WASM_EXEC)
+          : undefined,
+      batchWasmEvents: args['pg-batch-wasm-events']
+        ? Number(args['pg-batch-wasm-events'])
+        : process.env.PG_BATCH_WASM_EVENTS
+          ? Number(process.env.PG_BATCH_WASM_EVENTS)
+          : undefined,
+      batchGovDeposits: args['pg-batch-gov-deposits']
+        ? Number(args['pg-batch-gov-deposits'])
+        : process.env.PG_BATCH_GOV_DEPOSITS
+          ? Number(process.env.PG_BATCH_GOV_DEPOSITS)
+          : undefined,
+      batchGovVotes: args['pg-batch-gov-votes']
+        ? Number(args['pg-batch-gov-votes'])
+        : process.env.PG_BATCH_GOV_VOTES
+          ? Number(process.env.PG_BATCH_GOV_VOTES)
+          : undefined,
+      batchGovProposals: args['pg-batch-gov-proposals']
+        ? Number(args['pg-batch-gov-proposals'])
+        : process.env.PG_BATCH_GOV_PROPOSALS
+          ? Number(process.env.PG_BATCH_GOV_PROPOSALS)
+          : undefined,
       copyAppendOnlyTables: asBool(
         'pg-copy-append-only-tables',
         args['pg-copy-append-only-tables'] ?? process.env.PG_COPY_APPEND_ONLY_TABLES ?? false,

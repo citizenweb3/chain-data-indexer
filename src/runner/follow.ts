@@ -11,7 +11,7 @@ import { syncRange, CaseMode } from './syncRange.ts';
 import { sleep } from '../utils/sleep.ts';
 import { bulkModeOff } from '../db/bulk-mode.ts';
 import { getPgPool } from '../db/pg.ts';
-import { setBulkMode } from '../health/state.ts';
+import { setBulkMode, setPhase } from '../health/state.ts';
 
 const log = getLogger('follow');
 
@@ -51,11 +51,13 @@ export async function followLoop(
   log.info(`[follow] entering live mode from height ${next}, poll=${opts.pollMs}ms`);
 
   if (opts.bulkMode) {
+    setPhase('maintenance');
     log.info('[follow] draining derived queue before restoring indexes...');
     await sink.flush?.();
     (sink as any).setBulkMode?.(false);
     await bulkModeOff(getPgPool());
     setBulkMode(false);
+    setPhase('follow');
     log.info('[follow] bulk mode off, entering live mode with INSERT');
   }
 

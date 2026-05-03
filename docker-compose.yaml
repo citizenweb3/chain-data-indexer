@@ -4,76 +4,76 @@ services:
     container_name: cosmosindexer
     restart: unless-stopped
     command:
-      - "postgres"
+      - 'postgres'
       # Networking
-      - "-c"
-      - "listen_addresses=*"
-      - "-c"
-      - "max_connections=500"
+      - '-c'
+      - 'listen_addresses=*'
+      - '-c'
+      - 'max_connections=500'
       # Memory (tuned for 314 GB RAM server)
-      - "-c"
-      - "shared_buffers=64GB"
-      - "-c"
-      - "effective_cache_size=200GB"
-      - "-c"
-      - "work_mem=256MB"
-      - "-c"
-      - "maintenance_work_mem=4GB"
-      - "-c"
-      - "huge_pages=try"
+      - '-c'
+      - 'shared_buffers=64GB'
+      - '-c'
+      - 'effective_cache_size=200GB'
+      - '-c'
+      - 'work_mem=256MB'
+      - '-c'
+      - 'maintenance_work_mem=4GB'
+      - '-c'
+      - 'huge_pages=try'
       # WAL tuning for batch inserts
-      - "-c"
-      - "wal_buffers=64MB"
-      - "-c"
-      - "max_wal_size=16GB"
-      - "-c"
-      - "min_wal_size=4GB"
-      - "-c"
-      - "checkpoint_completion_target=0.9"
-      - "-c"
-      - "checkpoint_timeout=15min"
-      - "-c"
-      - "synchronous_commit=off"
-      - "-c"
-      - "fsync=on"
-      - "-c"
-      - "full_page_writes=on"
+      - '-c'
+      - 'wal_buffers=64MB'
+      - '-c'
+      - 'max_wal_size=16GB'
+      - '-c'
+      - 'min_wal_size=4GB'
+      - '-c'
+      - 'checkpoint_completion_target=0.9'
+      - '-c'
+      - 'checkpoint_timeout=15min'
+      - '-c'
+      - 'synchronous_commit=off'
+      - '-c'
+      - 'fsync=on'
+      - '-c'
+      - 'full_page_writes=on'
       # GIN pending list — larger = fewer flushes during bulk insert
-      - "-c"
-      - "gin_pending_list_limit=65536"
+      - '-c'
+      - 'gin_pending_list_limit=65536'
       # Parallelism
-      - "-c"
-      - "max_worker_processes=40"
-      - "-c"
-      - "max_parallel_workers_per_gather=8"
-      - "-c"
-      - "max_parallel_workers=20"
-      - "-c"
-      - "max_parallel_maintenance_workers=8"
+      - '-c'
+      - 'max_worker_processes=40'
+      - '-c'
+      - 'max_parallel_workers_per_gather=8'
+      - '-c'
+      - 'max_parallel_workers=20'
+      - '-c'
+      - 'max_parallel_maintenance_workers=8'
       # Storage (SSD/NVMe)
-      - "-c"
-      - "random_page_cost=1.1"
-      - "-c"
-      - "effective_io_concurrency=200"
+      - '-c'
+      - 'random_page_cost=1.1'
+      - '-c'
+      - 'effective_io_concurrency=200'
       # Autovacuum
-      - "-c"
-      - "autovacuum=on"
+      - '-c'
+      - 'autovacuum=on'
       # Connection keepalives (for external ValidatorInfo connections)
-      - "-c"
-      - "tcp_keepalives_idle=60"
-      - "-c"
-      - "tcp_keepalives_interval=10"
-      - "-c"
-      - "tcp_keepalives_count=6"
+      - '-c'
+      - 'tcp_keepalives_idle=60'
+      - '-c'
+      - 'tcp_keepalives_interval=10'
+      - '-c'
+      - 'tcp_keepalives_count=6'
       # Logging (only slow queries and checkpoint events)
-      - "-c"
-      - "log_statement=none"
-      - "-c"
-      - "log_min_duration_statement=1000"
-      - "-c"
-      - "log_checkpoints=on"
+      - '-c'
+      - 'log_statement=none'
+      - '-c'
+      - 'log_min_duration_statement=1000'
+      - '-c'
+      - 'log_checkpoints=on'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
       interval: 10s
       timeout: 5s
       retries: 10
@@ -88,7 +88,7 @@ services:
     # IMPORTANT: Secure with firewall rules (allow only validatorinfo server IP):
     #   sudo ufw allow from <VALIDATORINFO_IP> to any port ${PG_PORT:-2432}
     ports:
-      - "${PG_EXTERNAL_HOST:-0.0.0.0}:${PG_PORT:-2432}:5432"
+      - '${PG_EXTERNAL_HOST:-0.0.0.0}:${PG_PORT:-2432}:5432'
     volumes:
       - pgdata_cosmosindexer:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
@@ -99,10 +99,10 @@ services:
         reservations:
           memory: 64G
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-size: "500m"
-        max-file: "10"
+        max-size: '500m'
+        max-file: '10'
 
   indexer:
     build:
@@ -179,11 +179,11 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       METRICS_SAMPLE_INTERVAL_MS: ${METRICS_SAMPLE_INTERVAL_MS:-5000}
     ports:
-      - "${HEALTH_EXTERNAL_HOST:-127.0.0.1}:${HEALTH_PORT:-3000}:${HEALTH_PORT:-3000}"
+      - '${HEALTH_EXTERNAL_HOST:-127.0.0.1}:${HEALTH_PORT:-3000}:${HEALTH_PORT:-3000}'
     healthcheck:
       test:
-        - "CMD-SHELL"
-        - "wget -qO- --tries=1 --timeout=5 http://127.0.0.1:${HEALTH_PORT:-3000}/health > /dev/null || exit 1"
+        - 'CMD-SHELL'
+        - 'wget -qO- --tries=1 --timeout=5 http://127.0.0.1:${HEALTH_PORT:-3000}/health > /dev/null || exit 1'
       interval: 30s
       timeout: 10s
       start_period: 5m
@@ -199,11 +199,10 @@ services:
         reservations:
           memory: 32G
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-size: "500m"
-        max-file: "20"
-
+        max-size: '500m'
+        max-file: '20'
 
 volumes:
   pgdata_cosmosindexer:

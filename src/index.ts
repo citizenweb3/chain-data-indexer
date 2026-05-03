@@ -205,6 +205,7 @@ async function main() {
     });
   } else if (cfg.pg?.bulkMode && cfg.sinkKind === 'postgres') {
     // FOLLOW=false: restore indexes before exit, otherwise DB is left without them
+    setPhase('maintenance');
     await sink.flush?.();
     (sink as any).setBulkMode?.(false);
     await bulkModeOff(getPgPool());
