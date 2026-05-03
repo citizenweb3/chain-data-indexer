@@ -3,6 +3,42 @@ import { PoolClient } from 'pg';
 import { execBatchedInsert } from '../batch.js';
 import { dedupeCopyRows, execCopyFrom } from '../copy.js';
 
+export type GovProposalUpsertRow = {
+  proposal_id: bigint;
+  submitter: string | null;
+  title: string | null;
+  summary: string | null;
+  proposal_type: string | null;
+  status: string | null;
+  submit_time: Date | null;
+};
+
+export function dedupeGovProposalRows(rows: GovProposalUpsertRow[]): GovProposalUpsertRow[] {
+  const byProposalId = new Map<string, GovProposalUpsertRow>();
+
+  for (const row of rows) {
+    const key = row.proposal_id.toString();
+    const existing = byProposalId.get(key);
+
+    if (!existing) {
+      byProposalId.set(key, { ...row });
+      continue;
+    }
+
+    existing.submitter ??= row.submitter;
+    existing.title ??= row.title;
+    existing.summary ??= row.summary;
+    existing.proposal_type ??= row.proposal_type;
+    existing.status ??= row.status;
+
+    if (!existing.submit_time || (row.submit_time && row.submit_time < existing.submit_time)) {
+      existing.submit_time = row.submit_time;
+    }
+  }
+
+  return [...byProposalId.values()];
+}
+
 /**
  * Insert governance deposits in batches.
  *
@@ -127,21 +163,13 @@ export async function flushGovVotes(
  */
 export async function upsertGovProposals(
   client: PoolClient,
-  rows: Array<{
-    proposal_id: bigint;
-    submitter: string | null;
-    title: string | null;
-    summary: string | null;
-    proposal_type: string | null;
-    status: string | null;
-    submit_time: Date | null;
-  }>,
+  rows: GovProposalUpsertRow[],
 ) {
   if (!rows.length) return;
 
   const columns = ['proposal_id', 'submitter', 'title', 'summary', 'proposal_type', 'status', 'submit_time'] as const;
 
-  const shaped = rows.map((r) => ({
+  const shaped = dedupeGovProposalRows(rows).map((r) => ({
     proposal_id: r.proposal_id.toString(),
     submitter: r.submitter,
     title: r.title,
