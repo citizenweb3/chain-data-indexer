@@ -25,9 +25,11 @@ Logos v0.1.2 block headers do **not** expose a stable validator identity.
 header; on the current testnet dataset every indexed block has a distinct key.
 Do not use it as a validator/account identifier.
 
-Logos v0.1.2 `/cryptarchia/blocks` also omits per-block height. Finality is
-therefore tracked by `/cryptarchia/lib-stream` `header_id` and the stored
-`parent_block` chain, not by comparing heights.
+Logos v0.1.2 `/cryptarchia/blocks` usually omits per-block height. The indexer
+therefore stores the block hash/parent chain first, then deterministically
+derives canonical heights from `/cryptarchia/info` and `/cryptarchia/lib-stream`
+anchors plus the stored `parent_block` chain. Slot is never used as a fallback
+for block height.
 
 ---
 
@@ -111,6 +113,7 @@ src/
 ├── sink/postgres.ts     processBlock (tx), processBatch (bulk unnest), markBlocksFinalized
 ├── runner/
 │   ├── syncRange.ts     Slot-range backfill with retry + resume
+│   ├── heightRepair.ts  Canonical height derivation + missing-parent repair
 │   ├── follow.ts        block-stream follower: gap-fill → subscribe → serial queue + exp. backoff
 │   └── followLib.ts     LIB NDJSON follower: marks blocks finalized
 └── utils/
@@ -129,7 +132,7 @@ Full endpoint schemas, parameters, response fields, and error responses are in
 | Endpoint | Description |
 |---|---|
 | `GET /api/v1/stats` | Network/indexer summary: counts, latest slots/heights, lag |
-| `GET /api/v1/blocks?limit=20&offset=0&finalized=true&order=desc` | Blocks sorted by numeric slot (`finalized=all` includes non-finalized blocks) |
+| `GET /api/v1/blocks?limit=20&offset=0&finalized=true&order=desc` | Blocks sorted by derived block height by default (`sort=slot` is available for slot order; `finalized=all` includes non-finalized blocks) |
 | `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
 | `GET /api/v1/leader-keys?limit=20&offset=0` | Proof leader keys ordered by observed block count |
 | `GET /api/v1/leader-keys/:leader_key` | Diagnostics for one proof leader key |
@@ -139,6 +142,7 @@ Example:
 
 ```bash
 curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true&order=desc"
+curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=all&sort=slot&order=desc"
 curl http://localhost:3001/api/v1/stats
 ```
 
@@ -150,9 +154,9 @@ Use `/api/v1/*` for all new code.
 ## Explorer SQL queries
 
 ```sql
--- Latest blocks (finalized only)
+-- Latest finalized blocks by canonical height
 SELECT slot, height, leader_key, tx_count, indexed_at
-FROM logos_blocks WHERE finalized ORDER BY slot DESC LIMIT 20;
+FROM logos_blocks WHERE finalized ORDER BY height DESC, slot DESC LIMIT 20;
 
 -- Proof leader keys by observed block count.
 -- These are not stable validator identities in Logos v0.1.2.

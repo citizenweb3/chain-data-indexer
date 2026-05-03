@@ -1,5 +1,6 @@
 import { fetchInfo, subscribeLib } from '../rpc/client.js';
 import { markBlocksFinalized } from '../sink/postgres.js';
+import { getStoredBlockHeight, repairAndDeriveHeightsFromAnchor } from './heightRepair.js';
 import { logger } from '../utils/logger.js';
 import type { LibStreamEvent } from '../types.js';
 
@@ -19,6 +20,9 @@ export function followLib(): () => void {
 
   async function markFinalized(headerId: string, height: number | undefined, source: string): Promise<void> {
     try {
+      if (height !== undefined) {
+        await repairAndDeriveHeightsFromAnchor(headerId, height, source);
+      }
       const count = await markBlocksFinalized(headerId, height);
       reconnectDelay = MIN_RECONNECT_MS;
       if (count > 0) {
@@ -39,9 +43,10 @@ export function followLib(): () => void {
     logger.info('Subscribing to LIB stream for finality tracking');
 
     fetchInfo(4_000, 1)
-      .then((info) => {
-        if (!stopped) return markFinalized(info.lib, undefined, 'cryptarchia/info');
-        return undefined;
+      .then(async (info) => {
+        if (stopped) return undefined;
+        const derivedLibHeight = await getStoredBlockHeight(info.lib);
+        return markFinalized(info.lib, derivedLibHeight ?? undefined, 'cryptarchia/info');
       })
       .catch((err: unknown) => {
         logger.warn('Initial LIB finality lookup failed', { err });

@@ -184,8 +184,9 @@ Key series:
 
 `logos_lag_blocks` is derived from sampled chain tip height minus indexed height.
 It stays `0` until the node tip has been sampled. Indexed height is updated only
-from real Logos block heights; v0.1.2 blocks may omit height in some paths, and
-the indexer does not silently substitute slot values for height metrics.
+from real or deterministically derived Logos block heights; when v0.1.2 omits
+height on `/cryptarchia/blocks`, the indexer reconstructs it from tip/LIB
+anchors plus the stored `parent_block` chain, and never substitutes slot values.
 
 ### Cardinality discipline
 

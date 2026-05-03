@@ -2,6 +2,7 @@ import { subscribeBlocks, fetchInfo } from '../rpc/client.js';
 import { processBlock } from '../sink/postgres.js';
 import { setLastSlot } from '../db/progress.js';
 import { syncFromProgress } from './syncRange.js';
+import { deriveHeightFromParent, repairAndDeriveHeightsFromAnchor } from './heightRepair.js';
 import { logger } from '../utils/logger.js';
 import { setPhase } from '../metrics/registry.js';
 import type { LogosBlock } from '../types.js';
@@ -73,6 +74,7 @@ export function followBlocks(): () => void {
       const info = await fetchInfo();
       setPhase('backfill');
       await syncFromProgress(info.slot);
+      await repairAndDeriveHeightsFromAnchor(info.tip, info.height, 'pre-stream-tip');
       setPhase('follow');
     } catch (err) {
       setPhase('follow');
@@ -98,7 +100,10 @@ export function followBlocks(): () => void {
             if (stopped || !acceptingEvents || generation !== streamGeneration) return;
 
             await processBlock(block);
-            await setLastSlot(block.header.slot, block.header.height ?? null);
+            const derivedHeight = block.header.height ?? (
+              block.header.id ? await deriveHeightFromParent(block.header.id) : null
+            );
+            await setLastSlot(block.header.slot, derivedHeight);
 
             // Reset backoff on a successfully committed block.
             reconnectDelay = MIN_RECONNECT_MS;

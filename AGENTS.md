@@ -50,9 +50,10 @@ Any agent picking up work here should follow the **research → execute → revi
   continuing; gap-fill on reconnect recovers missed slots.
 - Public explorer views should default to finalized blocks unless a caller
   explicitly requests `finalized=all`.
-- Logos v0.1.2 blocks usually have `height = null`; finality must be marked by
-  `/cryptarchia/lib-stream` `header_id` plus `parent_block` traversal, not
-  height comparisons.
+- Logos v0.1.2 `/cryptarchia/blocks` often omits `height` at ingest time. The
+  indexer must derive canonical heights from `/cryptarchia/info` or
+  `/cryptarchia/lib-stream` anchors plus `parent_block`, and must never use
+  slot as a fallback for block height.
 
 ---
 

@@ -30,9 +30,33 @@ export async function setLastSlot(
        VALUES ('default', $1, $2, now())
      ON CONFLICT (id) DO UPDATE
        SET last_slot   = GREATEST(logos_indexer_progress.last_slot, EXCLUDED.last_slot),
-           last_height = COALESCE(EXCLUDED.last_height, logos_indexer_progress.last_height),
+           last_height = CASE
+             WHEN EXCLUDED.last_height IS NULL THEN logos_indexer_progress.last_height
+             WHEN logos_indexer_progress.last_height IS NULL THEN EXCLUDED.last_height
+             ELSE GREATEST(logos_indexer_progress.last_height, EXCLUDED.last_height)
+           END,
            updated_at  = now()`,
     [slot, height],
+  );
+  observeFlush('progress', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
+    logos_indexer_progress: 1,
+  });
+  setIndexedHeight(height);
+}
+
+export async function setLastHeight(height: number): Promise<void> {
+  const pool = getPool();
+  const start = process.hrtime.bigint();
+  await pool.query(
+    `INSERT INTO logos_indexer_progress (id, last_slot, last_height, updated_at)
+       VALUES ('default', 0, $1, now())
+     ON CONFLICT (id) DO UPDATE
+       SET last_height = CASE
+             WHEN logos_indexer_progress.last_height IS NULL THEN EXCLUDED.last_height
+             ELSE GREATEST(logos_indexer_progress.last_height, EXCLUDED.last_height)
+           END,
+           updated_at = now()`,
+    [height],
   );
   observeFlush('progress', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
     logos_indexer_progress: 1,
