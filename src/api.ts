@@ -12,6 +12,7 @@ const MAX_LIMIT = 100;
 const STATS_CACHE_MS = 5_000;
 
 type SortOrder = 'asc' | 'desc';
+type BlockSort = 'height' | 'slot';
 
 interface BlockApiRow {
   id: string;
@@ -74,6 +75,10 @@ function parseFinalized(url: URL): boolean | null {
 
 function parseOrder(url: URL): SortOrder {
   return url.searchParams.get('order') === 'asc' ? 'asc' : 'desc';
+}
+
+function parseBlockSort(url: URL): BlockSort {
+  return url.searchParams.get('sort') === 'slot' ? 'slot' : 'height';
 }
 
 function toNumber(value: string | null): number | null {
@@ -235,7 +240,9 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   const offset = parseOffset(url);
   const finalized = parseFinalized(url);
   const order = parseOrder(url);
+  const sort = parseBlockSort(url);
   const direction = order === 'asc' ? 'ASC' : 'DESC';
+  const primarySort = sort === 'slot' ? 'logos_blocks.slot' : 'logos_blocks.height';
   const leaderKey = url.searchParams.get('leader_key');
   const conditions: string[] = [];
   const values: unknown[] = [];
@@ -260,7 +267,9 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
             voucher_cm, entropy, tx_count, finalized, indexed_at
        FROM logos_blocks
        ${where}
-       ORDER BY logos_blocks.slot ${direction}, logos_blocks.id ${direction}
+       ORDER BY ${primarySort} ${direction} NULLS LAST,
+                logos_blocks.slot ${direction},
+                logos_blocks.id ${direction}
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
     values,
   );
@@ -274,6 +283,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
       limit,
       offset,
       order,
+      sort,
       has_more: hasMore,
     },
   });
