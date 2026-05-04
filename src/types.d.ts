@@ -95,6 +95,7 @@ export interface BlockRow {
   tx_count: number;
   raw: LogosBlock;
   finalized: boolean;
+  is_canonical: boolean;
   indexed_at: Date;
 }
 

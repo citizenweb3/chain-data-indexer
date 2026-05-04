@@ -9,6 +9,7 @@ import { fetchInfo } from './rpc/client.js';
 import { setPhase } from './metrics/registry.js';
 import { startMetricsSampler } from './metrics/sampler.js';
 import { repairAndDeriveHeightsFromAnchor } from './runner/heightRepair.js';
+import { markCanonicalChain } from './runner/canonicalChain.js';
 
 async function main(): Promise<void> {
   setPhase('starting');
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
   logger.info('Starting backfill to current tip', { slot: info.slot, height: info.height });
   await syncFromProgress(info.slot);
   await repairAndDeriveHeightsFromAnchor(info.tip, info.height, 'startup-tip');
+  await markCanonicalChain(info.tip, 'startup-tip');
 
   if (config.FOLLOW) {
     setPhase('follow');

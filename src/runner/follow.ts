@@ -3,9 +3,10 @@ import { processBlock } from '../sink/postgres.js';
 import { setLastSlot } from '../db/progress.js';
 import { syncFromProgress } from './syncRange.js';
 import { deriveHeightFromParent, repairAndDeriveHeightsFromAnchor } from './heightRepair.js';
+import { markCanonicalChain } from './canonicalChain.js';
 import { logger } from '../utils/logger.js';
 import { setPhase } from '../metrics/registry.js';
-import type { LogosBlock } from '../types.js';
+import type { BlockStreamEvent } from '../types.js';
 
 const MIN_RECONNECT_MS = 5_000;
 const MAX_RECONNECT_MS = 60_000;
@@ -33,6 +34,7 @@ export function followBlocks(): () => void {
   let acceptingEvents = false;
   let streamGeneration = 0;
   let queueDepth = 0;
+  let lastCanonicalTip = '';
   // Serial queue: each stream event is chained onto the previous one's promise.
   let processingChain: Promise<void> = Promise.resolve();
 
@@ -70,13 +72,15 @@ export function followBlocks(): () => void {
     acceptingEvents = false;
 
     // ── Gap fill: catch up to current tip before opening the stream ──────────
-    try {
-      const info = await fetchInfo();
-      setPhase('backfill');
-      await syncFromProgress(info.slot);
-      await repairAndDeriveHeightsFromAnchor(info.tip, info.height, 'pre-stream-tip');
-      setPhase('follow');
-    } catch (err) {
+      try {
+        const info = await fetchInfo();
+        setPhase('backfill');
+        await syncFromProgress(info.slot);
+        await repairAndDeriveHeightsFromAnchor(info.tip, info.height, 'pre-stream-tip');
+        await markCanonicalChain(info.tip, 'pre-stream-tip');
+        lastCanonicalTip = info.tip;
+        setPhase('follow');
+      } catch (err) {
       setPhase('follow');
       logger.warn('Gap-fill before block-stream subscribe failed — proceeding anyway', { err });
     }
@@ -85,7 +89,7 @@ export function followBlocks(): () => void {
     logger.info('Subscribing to live block stream');
 
     cleanupSse = subscribeBlocks(
-      (block: LogosBlock) => {
+      (event: BlockStreamEvent) => {
         if (!acceptingEvents) return;
         if (queueDepth >= MAX_LIVE_QUEUE_DEPTH) {
           scheduleReconnect('Live block queue full; applying backpressure');
@@ -99,10 +103,15 @@ export function followBlocks(): () => void {
           .then(async () => {
             if (stopped || !acceptingEvents || generation !== streamGeneration) return;
 
+            const block = event.block;
             await processBlock(block);
             const derivedHeight = block.header.height ?? (
               block.header.id ? await deriveHeightFromParent(block.header.id) : null
             );
+            if (event.tip && event.tip !== lastCanonicalTip) {
+              await markCanonicalChain(event.tip, 'block-stream-tip');
+              lastCanonicalTip = event.tip;
+            }
             await setLastSlot(block.header.slot, derivedHeight);
 
             // Reset backoff on a successfully committed block.

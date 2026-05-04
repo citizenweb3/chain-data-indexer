@@ -17,13 +17,15 @@ CREATE TABLE IF NOT EXISTS logos_blocks (
     entropy         TEXT        NOT NULL,       -- proof_of_leadership.entropy_contribution
     tx_count        INTEGER     NOT NULL DEFAULT 0,
     raw             JSONB       NOT NULL,       -- full block JSON for forward compatibility
-    finalized       BOOLEAN     NOT NULL DEFAULT false, -- true once block height ≤ LIB height
+    finalized       BOOLEAN     NOT NULL DEFAULT false, -- true only on the canonical LIB ancestry
+    is_canonical    BOOLEAN     NOT NULL DEFAULT false, -- true only on the current canonical tip ancestry
     indexed_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS logos_blocks_slot       ON logos_blocks (slot);
 CREATE INDEX IF NOT EXISTS logos_blocks_leader     ON logos_blocks (leader_key);
 CREATE INDEX IF NOT EXISTS logos_blocks_height     ON logos_blocks (height) WHERE height IS NOT NULL;
+CREATE INDEX IF NOT EXISTS logos_blocks_canonical_height ON logos_blocks (height, slot DESC) WHERE is_canonical AND height IS NOT NULL;
 CREATE INDEX IF NOT EXISTS logos_blocks_unfinalized ON logos_blocks (height) WHERE NOT finalized;
 
 -- Proof leader-key diagnostics — updated on every block insert.

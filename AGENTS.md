@@ -22,6 +22,9 @@ Any agent picking up work here should follow the **research → execute → revi
 - Check `docs/future.md` before implementing anything related to balances or
   decoded note/UTXO state — raw transaction indexing is active, but richer
   balance and note semantics remain future work.
+- Safe explorer decode may expose opcode names, proof kinds, and normalized
+  known payload fields, but must not invent note ownership, wallet balances, or
+  high-level semantics for opaque binary payloads.
 - Logos v0.1.2 does not expose a stable validator identity in block headers.
   `proof_of_leadership.leader_key` is a per-proof/per-block key in the current
   dataset; do not present it as a validator/account identifier.
@@ -49,12 +52,16 @@ Any agent picking up work here should follow the **research → execute → revi
   re-indexes the same slot range idempotently.
 - Live processing errors should close/reconnect the block stream instead of silently
   continuing; gap-fill on reconnect recovers missed slots.
-- Public explorer views should default to finalized blocks unless a caller
-  explicitly requests `finalized=all`.
+- Public explorer views should default to canonical blocks, and usually to
+  canonical finalized blocks unless a caller explicitly requests
+  `finalized=all` or `canonical=all`.
 - Logos v0.1.2 `/cryptarchia/blocks` often omits `height` at ingest time. The
   indexer must derive canonical heights from `/cryptarchia/info` or
   `/cryptarchia/lib-stream` anchors plus `parent_block`, and must never use
   slot as a fallback for block height.
+- Multi-leader slots can produce sibling blocks with the same `height`. Public
+  APIs must distinguish `is_canonical` from `finalized` and must not expose
+  competing siblings as canonical explorer rows by default.
 
 ---
 

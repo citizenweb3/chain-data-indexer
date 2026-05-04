@@ -110,12 +110,35 @@ function parseBlockStreamLine(line: string): LogosBlock | null {
   if (!parsed || typeof parsed !== 'object') return null;
 
   const record = parsed as Record<string, unknown>;
-  if (record.block && typeof record.block === 'object') {
+  if (record.block && typeof record.block === 'object' && typeof record.tip === 'string') {
     return (record as unknown as BlockStreamEvent).block;
   }
 
   if (record.header && typeof record.header === 'object') {
     return parsed as LogosBlock;
+  }
+
+  return null;
+}
+
+function parseBlockStreamEvent(line: string): BlockStreamEvent | null {
+  const parsed = JSON.parse(line) as unknown;
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const record = parsed as Record<string, unknown>;
+  if (record.block && typeof record.block === 'object' && typeof record.tip === 'string') {
+    return parsed as BlockStreamEvent;
+  }
+
+  if (record.header && typeof record.header === 'object') {
+    const block = parsed as LogosBlock;
+    return {
+      block,
+      tip: typeof block.header.id === 'string' ? block.header.id : '',
+      tip_slot: block.header.slot,
+      lib: '',
+      lib_slot: 0,
+    };
   }
 
   return null;
@@ -131,7 +154,7 @@ function parseBlockStreamLine(line: string): LogosBlock | null {
  * Returns a cleanup function to close the connection.
  */
 export function subscribeBlocks(
-  onBlock: (block: LogosBlock) => void,
+  onBlock: (event: BlockStreamEvent) => void,
   onError?: (err: Error) => void,
   staleLimitMs = 120_000,
   stalePollMs  = 30_000,
@@ -171,14 +194,14 @@ export function subscribeBlocks(
       const trimmed = line.trim();
       if (!trimmed) return;
       try {
-        const block = parseBlockStreamLine(trimmed);
-        if (!block) {
+        const event = parseBlockStreamEvent(trimmed);
+        if (!event) {
           logger.warn('Ignoring malformed block stream event');
           return;
         }
         lastMessageAt = Date.now();
-        lastReceivedSlot = block.header.slot;
-        onBlock(block);
+        lastReceivedSlot = event.block.header.slot;
+        onBlock(event);
       } catch (err) {
         logger.warn('Ignoring malformed block stream line', { err });
       }

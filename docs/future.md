@@ -14,6 +14,11 @@ whenever the current node emits them. The remaining future work is richer
 protocol-aware decoding (notes, commitments, lifecycle tables) once the shape is
 stable enough to treat as an explorer contract.
 
+The current explorer API already adds a **safe decode v1** layer: opcode names,
+proof kinds, normalized known payload fields, and compact byte previews. This is
+intentionally limited and does not claim full semantic decoding of notes,
+transfers, or opaque metadata.
+
 Transactions currently look like:
 
 ```json

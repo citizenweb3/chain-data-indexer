@@ -5,7 +5,7 @@ import { fetchInfo } from './rpc/client.js';
 import { config } from './config.js';
 import { logger } from './utils/logger.js';
 import { metricsContentType, metricsText } from './metrics/registry.js';
-import type { LogosTransaction } from './types.js';
+import { getTransactionShape } from './txDecode.js';
 
 const startedAt = Date.now();
 const DEFAULT_LIMIT = 20;
@@ -26,6 +26,7 @@ interface BlockApiRow {
   entropy: string;
   tx_count: number;
   finalized: boolean;
+  is_canonical: boolean;
   indexed_at: Date;
 }
 
@@ -58,6 +59,7 @@ interface TransactionApiRow {
   slot: string;
   height: string | null;
   finalized: boolean;
+  is_canonical: boolean;
   indexed_at: Date;
   raw: unknown;
 }
@@ -83,6 +85,12 @@ function parseOffset(url: URL): number {
 
 function parseFinalized(url: URL): boolean | null {
   const value = url.searchParams.get('finalized') ?? 'true';
+  if (value === 'all') return null;
+  return value !== 'false';
+}
+
+function parseCanonical(url: URL): boolean | null {
+  const value = url.searchParams.get('canonical') ?? 'true';
   if (value === 'all') return null;
   return value !== 'false';
 }
@@ -134,6 +142,7 @@ function blockSummary(row: BlockApiRow): Record<string, unknown> {
     entropy: row.entropy,
     tx_count: row.tx_count,
     finalized: row.finalized,
+    is_canonical: row.is_canonical,
     indexed_at: row.indexed_at,
   };
 }
@@ -150,24 +159,11 @@ function leaderKeySummary(row: LeaderKeyApiRow): Record<string, unknown> {
   };
 }
 
-function transactionShape(raw: unknown): {
-  hash: string | null;
-  opCount: number;
-  storageGasPrice: number | null;
-  executionGasPrice: number | null;
-} {
-  const tx = raw as LogosTransaction | null;
-  const mantleTx = tx?.mantle_tx;
-  return {
-    hash: typeof mantleTx?.hash === 'string' ? mantleTx.hash : null,
-    opCount: Array.isArray(mantleTx?.ops) ? mantleTx.ops.length : 0,
-    storageGasPrice: typeof mantleTx?.storage_gas_price === 'number' ? mantleTx.storage_gas_price : null,
-    executionGasPrice: typeof mantleTx?.execution_gas_price === 'number' ? mantleTx.execution_gas_price : null,
-  };
-}
-
-function transactionSummary(row: TransactionApiRow, includeRaw = false): Record<string, unknown> {
-  const shape = transactionShape(row.raw);
+function transactionSummary(
+  row: TransactionApiRow,
+  options: { includeRaw?: boolean; includeDecoded?: boolean } = {},
+): Record<string, unknown> {
+  const shape = getTransactionShape(row.raw);
   const summary: Record<string, unknown> = {
     id: row.id,
     hash: shape.hash ?? row.id,
@@ -177,12 +173,16 @@ function transactionSummary(row: TransactionApiRow, includeRaw = false): Record<
     slot: Number(row.slot),
     height: toNumber(row.height),
     finalized: row.finalized,
+    is_canonical: row.is_canonical,
     op_count: shape.opCount,
+    op_types: shape.opTypes,
+    proof_types: shape.proofTypes,
     storage_gas_price: shape.storageGasPrice,
     execution_gas_price: shape.executionGasPrice,
     indexed_at: row.indexed_at,
   };
-  if (includeRaw) summary.raw = row.raw;
+  if (options.includeDecoded && shape.decoded) summary.decoded = shape.decoded;
+  if (options.includeRaw) summary.raw = row.raw;
   return summary;
 }
 
@@ -256,13 +256,16 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
   const [statsResult, progressResult, nodeInfo] = await Promise.all([
     pool.query<StatsApiRow>(
       `SELECT
-         COUNT(*)::text AS total_blocks,
-         (SELECT COUNT(*)::text FROM logos_transactions) AS total_transactions,
+         COUNT(*) FILTER (WHERE is_canonical)::text AS total_blocks,
+         (SELECT COUNT(*)::text
+            FROM logos_transactions tx
+            JOIN logos_blocks b ON b.id = tx.block_id
+           WHERE b.is_canonical) AS total_transactions,
          COUNT(*) FILTER (WHERE finalized)::text AS finalized_blocks,
-         MAX(slot)::text AS latest_slot,
-         MAX(height)::text AS latest_height,
+         MAX(slot) FILTER (WHERE is_canonical)::text AS latest_slot,
+         MAX(height) FILTER (WHERE is_canonical)::text AS latest_height,
          (SELECT COUNT(*)::text FROM logos_leaders) AS leader_keys_count
-       FROM logos_blocks`,
+        FROM logos_blocks`,
     ),
     getLastSlot(),
     fetchInfoQuick(),
@@ -291,6 +294,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   const limit = parseLimit(url);
   const offset = parseOffset(url);
   const finalized = parseFinalized(url);
+  const canonical = parseCanonical(url);
   const order = parseOrder(url);
   const sort = parseBlockSort(url);
   const direction = order === 'asc' ? 'ASC' : 'DESC';
@@ -302,6 +306,10 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   if (finalized !== null) {
     values.push(finalized);
     conditions.push(`finalized = $${values.length}`);
+  }
+  if (canonical !== null) {
+    values.push(canonical);
+    conditions.push(`is_canonical = $${values.length}`);
   }
   if (leaderKey) {
     values.push(leaderKey);
@@ -316,7 +324,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   const pool = getPool();
   const { rows } = await pool.query<BlockApiRow>(
     `SELECT id, parent_block, slot::text, height::text, block_root, leader_key,
-            voucher_cm, entropy, tx_count, finalized, indexed_at
+            voucher_cm, entropy, tx_count, finalized, is_canonical, indexed_at
        FROM logos_blocks
        ${where}
        ORDER BY ${primarySort} ${direction} NULLS LAST,
@@ -344,7 +352,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
 async function handleBlockById(id: string, res: http.ServerResponse): Promise<void> {
   const { rows } = await getPool().query<BlockDetailApiRow>(
     `SELECT id, parent_block, slot::text, height::text, block_root, leader_key,
-            voucher_cm, entropy, tx_count, finalized, indexed_at, raw
+            voucher_cm, entropy, tx_count, finalized, is_canonical, indexed_at, raw
        FROM logos_blocks
        WHERE id = $1`,
     [id],
@@ -357,7 +365,7 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
 
   const txResult = await getPool().query<TransactionApiRow>(
     `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
-            b.finalized, tx.indexed_at, tx.raw
+            b.finalized, b.is_canonical, tx.indexed_at, tx.raw
        FROM logos_transactions tx
        JOIN logos_blocks b ON b.id = tx.block_id
       WHERE tx.block_id = $1
@@ -367,7 +375,7 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
 
   sendJson(res, 200, {
     ...blockSummary(rows[0]),
-    transactions: txResult.rows.map((row) => transactionSummary(row)),
+    transactions: txResult.rows.map((row) => transactionSummary(row, { includeDecoded: true })),
     raw: rows[0].raw,
   });
 }
@@ -376,6 +384,7 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
   const limit = parseLimit(url);
   const offset = parseOffset(url);
   const finalized = parseFinalized(url);
+  const canonical = parseCanonical(url);
   const order = parseOrder(url);
   const sort = parseBlockSort(url);
   const direction = order === 'asc' ? 'ASC' : 'DESC';
@@ -387,6 +396,10 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
   if (finalized !== null) {
     values.push(finalized);
     conditions.push(`b.finalized = $${values.length}`);
+  }
+  if (canonical !== null) {
+    values.push(canonical);
+    conditions.push(`b.is_canonical = $${values.length}`);
   }
   if (blockId) {
     values.push(blockId);
@@ -400,7 +413,7 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
 
   const { rows } = await getPool().query<TransactionApiRow>(
     `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
-            b.finalized, tx.indexed_at, tx.raw
+            b.finalized, b.is_canonical, tx.indexed_at, tx.raw
        FROM logos_transactions tx
        JOIN logos_blocks b ON b.id = tx.block_id
        ${where}
@@ -430,12 +443,13 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
 async function handleTransactionById(id: string, res: http.ServerResponse): Promise<void> {
   const { rows } = await getPool().query<TransactionApiRow>(
     `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
-            b.finalized, tx.indexed_at, tx.raw
+            b.finalized, b.is_canonical, tx.indexed_at, tx.raw
        FROM logos_transactions tx
        JOIN logos_blocks b ON b.id = tx.block_id
-      WHERE tx.id = $1 OR tx.tx_hash = $1
-      ORDER BY CASE WHEN tx.id = $1 THEN 0 ELSE 1 END
-      LIMIT 1`,
+       WHERE tx.id = $1 OR tx.tx_hash = $1
+       ORDER BY CASE WHEN b.is_canonical THEN 0 ELSE 1 END,
+                CASE WHEN tx.id = $1 THEN 0 ELSE 1 END
+       LIMIT 1`,
     [id],
   );
 
@@ -444,7 +458,7 @@ async function handleTransactionById(id: string, res: http.ServerResponse): Prom
     return;
   }
 
-  sendJson(res, 200, transactionSummary(rows[0], true));
+  sendJson(res, 200, transactionSummary(rows[0], { includeDecoded: true, includeRaw: true }));
 }
 
 async function handleLeaderKeys(url: URL, res: http.ServerResponse): Promise<void> {

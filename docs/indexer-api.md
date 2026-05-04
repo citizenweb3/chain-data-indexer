@@ -70,7 +70,8 @@ is capped at `100`; `offset` defaults to `0`.
 | `voucher_cm` | string | Voucher commitment from proof of leadership. |
 | `entropy` | string | Entropy contribution from proof of leadership. |
 | `tx_count` | number | Number of transactions in `raw.transactions`. |
-| `finalized` | boolean | `true` after `/cryptarchia/lib-stream` reports this block or a descendant as LIB; the indexer walks `parent_block` links and derives finalized heights from the same anchor. |
+| `finalized` | boolean | `true` only for canonical blocks on the current LIB ancestry. Competing siblings are explicitly kept `false`. |
+| `is_canonical` | boolean | `true` only for blocks on the current tip ancestry. Public list endpoints default to `is_canonical=true`. |
 | `indexed_at` | string | PostgreSQL timestamp when the row was first indexed. |
 
 ### Transaction summary
@@ -85,10 +86,29 @@ is capped at `100`; `offset` defaults to `0`.
 | `slot` | number | Slot of the containing block. |
 | `height` | number \| null | Canonical height of the containing block. |
 | `finalized` | boolean | Finality of the containing block. |
+| `is_canonical` | boolean | Canonical status of the containing block. |
 | `op_count` | number | Number of operations in `mantle_tx.ops`. |
+| `op_types` | string[] | Safe operation names derived from known Mantle opcodes. Unknown opcodes are returned as `Unknown(0x..)`. |
+| `proof_types` | string[] | Safe proof kind names derived from `ops_proofs`. |
 | `storage_gas_price` | number \| null | Raw `mantle_tx.storage_gas_price`. |
 | `execution_gas_price` | number \| null | Raw `mantle_tx.execution_gas_price`. |
 | `indexed_at` | string | Timestamp when the transaction row was first indexed. |
+
+### Safe decoded transaction detail
+
+`GET /api/v1/transactions/:id` and block-detail embedded transaction rows include a
+`decoded` object when the node payload contains Mantle operations. This is a
+**safe explorer decode**, not a canonical protocol specification.
+
+The indexer only exposes:
+
+- stable opcode names from the current Logos source tree
+- proof kind names from `ops_proofs`
+- normalized payload fields already present in the node JSON
+- compact previews for byte arrays (`hex_preview`, `ascii_fragments`)
+
+It does **not** invent note ownership, transfer sender/recipient semantics, or
+high-level meaning for opaque binary metadata / ZK proof payloads.
 
 ### Leader-key summary
 
@@ -175,11 +195,11 @@ Response:
 
 | Field | Type | Description |
 |---|---|---|
-| `total_blocks` | number | Count of indexed block rows. |
-| `total_transactions` | number | Count of indexed transaction rows. |
-| `finalized_blocks` | number | Count of indexed rows marked finalized. |
-| `latest_slot` | number \| null | Highest indexed block slot. |
-| `latest_height` | number \| null | Highest indexed block height. |
+| `total_blocks` | number | Count of canonical indexed block rows. |
+| `total_transactions` | number | Count of indexed transaction rows whose containing block is canonical. |
+| `finalized_blocks` | number | Count of canonical indexed rows marked finalized. |
+| `latest_slot` | number \| null | Highest indexed canonical block slot. |
+| `latest_height` | number \| null | Highest indexed canonical block height. |
 | `leader_keys_count` | number | Number of distinct `proof_of_leadership.leader_key` values seen. This is not a validator count. |
 | `last_indexed_slot` | number | Last saved indexer progress slot. |
 | `node_tip_slot` | number \| null | Current node tip slot, or `null` if unavailable. |
@@ -191,7 +211,7 @@ Response:
 
 ### `GET /api/v1/blocks`
 
-Paginated block list. Defaults to finalized blocks only.
+Paginated block list. Defaults to **canonical finalized** blocks only.
 
 ```bash
 curl "http://localhost:3001/api/v1/blocks?limit=20&offset=0&finalized=true&order=desc"
@@ -204,6 +224,7 @@ Query parameters:
 | `limit` | integer `1..100` | `20` | Page size. Values above `100` are capped. |
 | `offset` | integer `>=0` | `0` | Zero-based row offset. |
 | `finalized` | `true` \| `false` \| `all` | `true` | Filter by finality. `all` disables the filter. |
+| `canonical` | `true` \| `false` \| `all` | `true` | Filter by canonical-chain membership. `all` exposes stored competing siblings/orphans. |
 | `order` | `desc` \| `asc` | `desc` | Sort direction for the selected sort key. |
 | `sort` | `height` \| `slot` | `height` | Sort by canonical block height (default) or by raw slot number. |
 | `leader_key` | string | none | Optional `proof_of_leadership.leader_key` filter. |
@@ -224,6 +245,7 @@ Response:
       "entropy": "395a4020...",
       "tx_count": 0,
       "finalized": true,
+      "is_canonical": true,
       "indexed_at": "2026-04-28T13:40:00.000Z"
     }
   ],
@@ -261,6 +283,7 @@ Response contains all block summary fields plus `transactions` and `raw`.
   "entropy": "395a4020...",
   "tx_count": 0,
   "finalized": true,
+  "is_canonical": true,
   "indexed_at": "2026-04-28T13:40:00.000Z",
   "transactions": [],
   "raw": {
@@ -280,7 +303,8 @@ Status codes: `200` on success, `404` when the block ID is unknown.
 
 ### `GET /api/v1/transactions`
 
-Paginated transaction list. Defaults to transactions in finalized blocks only.
+Paginated transaction list. Defaults to transactions in **canonical finalized**
+blocks only.
 
 ```bash
 curl "http://localhost:3001/api/v1/transactions?limit=20&offset=0&finalized=true&order=desc"
@@ -293,6 +317,7 @@ Query parameters:
 | `limit` | integer `1..100` | `20` | Page size. Values above `100` are capped. |
 | `offset` | integer `>=0` | `0` | Zero-based row offset. |
 | `finalized` | `true` \| `false` \| `all` | `true` | Filter by containing block finality. |
+| `canonical` | `true` \| `false` \| `all` | `true` | Filter by containing block canonical status. `all` exposes transactions from orphaned/competing blocks. |
 | `order` | `desc` \| `asc` | `desc` | Sort direction for the selected sort key. |
 | `sort` | `height` \| `slot` | `height` | Sort by containing block height (default) or slot. |
 | `block_id` | string | none | Optional containing block filter. |
@@ -311,7 +336,10 @@ Response:
       "slot": 1722623,
       "height": 90629,
       "finalized": false,
+      "is_canonical": true,
       "op_count": 1,
+      "op_types": ["ChannelInscribe"],
+      "proof_types": ["Ed25519Sig"],
       "storage_gas_price": 0,
       "execution_gas_price": 0,
       "indexed_at": "2026-05-03T00:00:00.000Z"
@@ -337,7 +365,57 @@ Transaction detail by transaction ID/hash.
 curl http://localhost:3001/api/v1/transactions/ebbd8ae2...
 ```
 
-Response contains all transaction summary fields plus `raw`.
+Response contains all transaction summary fields plus `decoded` and `raw`.
+
+Example:
+
+```json
+{
+  "id": "ebbd8ae2...",
+  "hash": "ebbd8ae2...",
+  "tx_hash": "ebbd8ae2...",
+  "block_id": "133daa76...",
+  "position": 0,
+  "slot": 1722623,
+  "height": 90629,
+  "finalized": false,
+  "is_canonical": true,
+  "op_count": 1,
+  "op_types": ["ChannelInscribe"],
+  "proof_types": ["Ed25519Sig"],
+  "storage_gas_price": 0,
+  "execution_gas_price": 0,
+  "indexed_at": "2026-05-03T00:00:00.000Z",
+  "decoded": {
+    "format": "safe-explorer-v1",
+    "op_count": 1,
+    "proof_count": 1,
+    "op_types": ["ChannelInscribe"],
+    "proof_types": ["Ed25519Sig"],
+    "ops": [
+      {
+        "index": 0,
+        "opcode": 17,
+        "opcode_name": "ChannelInscribe",
+        "proof_type": "Ed25519Sig",
+        "payload": {
+          "channel_id": "010101...",
+          "parent": "a560b9...",
+          "signer": "0e5775...",
+          "inscription": {
+            "format": "bytes",
+            "length": 320,
+            "hex_preview": "da63000000000000...",
+            "truncated": true,
+            "ascii_fragments": ["/LEZ/ClockProgramAccount/..."]
+          }
+        }
+      }
+    ]
+  },
+  "raw": {}
+}
+```
 
 Status codes: `200` on success, `404` when the transaction ID is unknown.
 
@@ -449,6 +527,10 @@ Query parameters:
    non-finalized blocks.
 3. Prefer `GET /api/v1/transactions` for explorer transaction pages; `raw.transactions`
    on block detail remains the unmodified node payload.
+4. Public list endpoints default to `canonical=true`; use `canonical=all` only
+   for debugging stored side branches and orphaned transactions.
+5. Treat `decoded` as an explorer convenience layer. For protocol-accurate
+   binary details, fall back to `raw`.
 4. All query parameters are snake_case and should be URL-encoded.
 5. This API does not expose wallet balances for arbitrary addresses; see
    `docs/future.md` for the privacy limitation.

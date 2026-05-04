@@ -16,6 +16,7 @@ Designed for integration with the [validatorinfo](https://validatorinfo.com) exp
 | All blocks (slot, height, leader, raw JSON) | `/cryptarchia/blocks` | `logos_blocks` |
 | Raw mantle transactions (`hash`, position, raw JSON) | `block.transactions[]` | `logos_transactions` |
 | Block finality status | `/cryptarchia/lib-stream` header IDs + parent chain | `logos_blocks.finalized` |
+| Canonical chain membership | `/cryptarchia/info` tip hash + stored `parent_block` chain | `logos_blocks.is_canonical` |
 | Proof leader-key diagnostics (first/last seen slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
 | Indexer resume position | internal | `logos_indexer_progress` |
 
@@ -31,6 +32,10 @@ therefore stores the block hash/parent chain first, then deterministically
 derives canonical heights from `/cryptarchia/info` and `/cryptarchia/lib-stream`
 anchors plus the stored `parent_block` chain. Slot is never used as a fallback
 for block height.
+
+Cryptarchia may produce multiple sibling blocks at the same height. Public API
+lists therefore default to the **current canonical chain only** (`is_canonical=true`)
+so explorer users see one block per canonical height by default.
 
 ---
 
@@ -53,7 +58,7 @@ cp .env.example .env
 # Edit .env: set PG_PASSWORD and NODE_URL
 
 # 3. Initialise database
-psql "postgresql://$PG_USER:$PG_PASSWORD@$PG_HOST:$PG_PORT/$PG_DB" -f initdb/001-schema.sql
+npm run db:init
 
 # 4. Run (dev mode)
 npm run dev
@@ -115,8 +120,9 @@ src/
 ├── runner/
 │   ├── syncRange.ts     Slot-range backfill with retry + resume
 │   ├── heightRepair.ts  Canonical height derivation + missing-parent repair
+│   ├── canonicalChain.ts canonical tip-chain tracking + orphan finality cleanup
 │   ├── follow.ts        block-stream follower: gap-fill → subscribe → serial queue + exp. backoff
-│   └── followLib.ts     LIB NDJSON follower: marks blocks finalized
+│   └── followLib.ts     LIB NDJSON follower: marks canonical blocks finalized
 └── utils/
     ├── logger.ts        Winston logger (Error-safe JSON)
     └── retry.ts         withRetry: exp. backoff, retries only transient errors
@@ -132,11 +138,11 @@ Full endpoint schemas, parameters, response fields, and error responses are in
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/v1/stats` | Network/indexer summary: counts, latest slots/heights, lag |
-| `GET /api/v1/blocks?limit=20&offset=0&finalized=true&order=desc` | Blocks sorted by derived block height by default (`sort=slot` is available for slot order; `finalized=all` includes non-finalized blocks) |
+| `GET /api/v1/stats` | Network/indexer summary over canonical rows: counts, latest slots/heights, lag |
+| `GET /api/v1/blocks?limit=20&offset=0&finalized=true&order=desc` | Canonical blocks by default, sorted by derived block height (`canonical=all` exposes stored side-branches; `sort=slot` is available for raw slot order) |
 | `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
-| `GET /api/v1/transactions?limit=20&offset=0&finalized=true&order=desc` | Transactions sorted by block height by default (`sort=slot` is available) |
-| `GET /api/v1/transactions/:id` | Transaction detail by tx hash/id, including raw tx JSON |
+| `GET /api/v1/transactions?limit=20&offset=0&finalized=true&order=desc` | Transactions from canonical blocks by default, sorted by block height (`canonical=all` exposes orphaned block txs; `sort=slot` is available) |
+| `GET /api/v1/transactions/:id` | Transaction detail by tx hash/id, including raw tx JSON plus safe decoded operation/proof metadata |
 | `GET /api/v1/leader-keys?limit=20&offset=0` | Proof leader keys ordered by observed block count |
 | `GET /api/v1/leader-keys/:leader_key` | Diagnostics for one proof leader key |
 | `GET /api/v1/leader-keys/:leader_key/blocks` | Blocks carrying one proof leader key |
@@ -145,7 +151,7 @@ Example:
 
 ```bash
 curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true&order=desc"
-curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=all&sort=slot&order=desc"
+curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=all&canonical=all&sort=slot&order=desc"
 curl "http://localhost:3001/api/v1/transactions?limit=20&finalized=all&order=desc"
 curl http://localhost:3001/api/v1/stats
 ```
@@ -160,7 +166,10 @@ Use `/api/v1/*` for all new code.
 ```sql
 -- Latest finalized blocks by canonical height
 SELECT slot, height, leader_key, tx_count, indexed_at
-FROM logos_blocks WHERE finalized ORDER BY height DESC, slot DESC LIMIT 20;
+FROM logos_blocks
+WHERE is_canonical AND finalized
+ORDER BY height DESC, slot DESC
+LIMIT 20;
 
 -- Proof leader keys by observed block count.
 -- These are not stable validator identities in Logos v0.1.2.
@@ -171,11 +180,14 @@ SELECT leader_key,
 FROM logos_leaders ORDER BY blocks_produced DESC LIMIT 20;
 
 -- Network summary
-SELECT COUNT(*) AS total_blocks,
-       (SELECT COUNT(*) FROM logos_transactions) AS total_transactions,
+SELECT COUNT(*) FILTER (WHERE is_canonical) AS total_blocks,
+       (SELECT COUNT(*)
+        FROM logos_transactions tx
+        JOIN logos_blocks b ON b.id = tx.block_id
+        WHERE b.is_canonical) AS total_transactions,
        COUNT(*) FILTER (WHERE finalized) AS finalized_blocks,
-       MAX(slot) AS latest_slot,
-       MAX(height) AS latest_height
+       MAX(slot) FILTER (WHERE is_canonical) AS latest_slot,
+       MAX(height) FILTER (WHERE is_canonical) AS latest_height
 FROM logos_blocks;
 ```
 
