@@ -90,6 +90,16 @@ export async function queryTxsList(params: {
   `;
 }
 
+export async function queryTxsStats(): Promise<{ total_txs: bigint; last_height: bigint }> {
+  const rows = await db<[{ total: bigint | null; last_height: bigint | null }]>`
+    SELECT COUNT(*)::bigint AS total, MAX(height) AS last_height FROM core.transactions
+  `;
+  return {
+    total_txs: rows[0]?.total ?? BigInt(0),
+    last_height: rows[0]?.last_height ?? BigInt(0),
+  };
+}
+
 export async function queryTxsTotal(): Promise<bigint> {
   // Sum reltuples across all child partitions — parent always shows 0 for partitioned tables
   const rows = await db<[{ total: bigint }]>`
@@ -121,11 +131,11 @@ export async function queryTxMessages(hash: string, height: bigint): Promise<Mes
   `;
 }
 
-export async function queryTxEvents(hash: string, height: bigint): Promise<EventRow[]> {
+export async function queryTxEvents(hash: string): Promise<EventRow[]> {
   return db<EventRow[]>`
     SELECT msg_index, event_index, event_type, attributes
     FROM core.events
-    WHERE tx_hash = ${hash} AND height = ${height}
+    WHERE tx_hash = ${hash}
     ORDER BY msg_index, event_index
   `;
 }

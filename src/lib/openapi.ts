@@ -1,5 +1,7 @@
-import { OpenApiGeneratorV31, OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
+import { extendZodWithOpenApi, OpenApiGeneratorV31, OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
 import { z } from 'zod';
+
+extendZodWithOpenApi(z);
 
 export const registry = new OpenAPIRegistry();
 
@@ -140,6 +142,54 @@ registry.registerPath({
       },
     },
     400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
+const BlocksStats = registry.register(
+  'BlocksStats',
+  z.object({
+    total_blocks: z.string().describe('Latest indexed block height (uint64 as decimal string)'),
+    last_height: z.string().describe('Latest indexed block height (uint64 as decimal string)'),
+  }),
+);
+
+const TxsStats = registry.register(
+  'TxsStats',
+  z.object({
+    total_txs: z.string().describe('Total transaction count (uint64 as decimal string)'),
+    last_height: z.string().describe('Max block height containing a transaction (uint64 as decimal string)'),
+  }),
+);
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/blocks/stats',
+  summary: 'Block stats (chain head + total)',
+  tags: ['blocks'],
+  request: { headers: z.object({ 'x-api-key': z.string() }) },
+  responses: {
+    200: {
+      description: 'Block stats',
+      content: { 'application/json': { schema: z.object({ data: BlocksStats }) } },
+    },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/txs/stats',
+  summary: 'Transaction stats (count + last height, cached 60s)',
+  tags: ['transactions'],
+  request: { headers: z.object({ 'x-api-key': z.string() }) },
+  responses: {
+    200: {
+      description: 'Transaction stats',
+      content: { 'application/json': { schema: z.object({ data: TxsStats }) } },
+    },
     401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
   },
   security: [{ apiKey: [] }],

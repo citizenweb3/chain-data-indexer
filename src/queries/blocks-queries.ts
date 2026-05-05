@@ -49,6 +49,14 @@ export async function queryBlocksTotal(): Promise<bigint> {
   return rows[0]?.total ?? BigInt(0);
 }
 
+export async function queryBlocksStats(): Promise<{ total_blocks: bigint; last_height: bigint }> {
+  const rows = await db<[{ last_height: bigint | null }]>`
+    SELECT MAX(height) AS last_height FROM core.blocks
+  `;
+  const last = rows[0]?.last_height ?? BigInt(0);
+  return { total_blocks: last, last_height: last };
+}
+
 export async function queryBlockByHeight(height: bigint): Promise<BlockDetailRow | null> {
   const rows = await db<BlockDetailRow[]>`
     SELECT block_hash, height, time, proposer_address, tx_count,

@@ -1,4 +1,9 @@
-import { queryBlockByHeight, queryBlocksList, queryBlocksTotal } from '@/queries/blocks-queries';
+import {
+  queryBlockByHeight,
+  queryBlocksList,
+  queryBlocksStats,
+  queryBlocksTotal,
+} from '@/queries/blocks-queries';
 
 export async function listBlocks(params: { limit: number; beforeHeight?: bigint }) {
   const [rows, total] = await Promise.all([queryBlocksList(params), queryBlocksTotal()]);
@@ -18,6 +23,14 @@ export async function listBlocks(params: { limit: number; beforeHeight?: bigint 
   const cursor = hasMore && last !== undefined ? { next_before_height: last.height.toString() } : null;
 
   return { data, cursor, has_more: hasMore, total: total.toString() };
+}
+
+export async function getBlocksStats() {
+  const stats = await queryBlocksStats();
+  return {
+    total_blocks: stats.total_blocks.toString(),
+    last_height: stats.last_height.toString(),
+  };
 }
 
 export async function getBlockByHeight(height: bigint) {

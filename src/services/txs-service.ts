@@ -4,8 +4,33 @@ import {
   queryTxMessages,
   queryTxRaw,
   queryTxsList,
+  queryTxsStats,
   queryTxsTotal,
 } from '@/queries/txs-queries';
+
+const TXS_STATS_TTL_MS = 60_000;
+let txsStatsCache: { value: { total_txs: string; last_height: string }; expiresAt: number } | null = null;
+let txsStatsInflight: Promise<{ total_txs: string; last_height: string }> | null = null;
+
+export async function getTxsStats() {
+  const now = Date.now();
+  if (txsStatsCache && txsStatsCache.expiresAt > now) return txsStatsCache.value;
+  if (txsStatsInflight) return txsStatsInflight;
+
+  txsStatsInflight = (async () => {
+    const stats = await queryTxsStats();
+    const value = {
+      total_txs: stats.total_txs.toString(),
+      last_height: stats.last_height.toString(),
+    };
+    txsStatsCache = { value, expiresAt: Date.now() + TXS_STATS_TTL_MS };
+    return value;
+  })().finally(() => {
+    txsStatsInflight = null;
+  });
+
+  return txsStatsInflight;
+}
 
 interface Fee {
   amount: { amount: string; denom: string }[];
@@ -58,7 +83,7 @@ export async function getTxDetail(hash: string) {
   const tx = await queryTxByHash(hash);
   if (!tx) return null;
 
-  const [messages, events] = await Promise.all([queryTxMessages(hash, tx.height), queryTxEvents(hash, tx.height)]);
+  const [messages, events] = await Promise.all([queryTxMessages(hash, tx.height), queryTxEvents(hash)]);
 
   return {
     tx_hash: tx.tx_hash,
