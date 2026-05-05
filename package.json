@@ -1,0 +1,36 @@
+{
+  "name": "cosmos-indexer-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.3.4",
+    "@scalar/api-reference-react": "^0.7.32",
+    "next": "^16.0.0",
+    "pino": "^9.7.0",
+    "postgres": "^3.4.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.25.20"
+  },
+  "devDependencies": {
+    "@next/eslint-plugin-next": "^16.2.4",
+    "@types/node": "^22.15.29",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.1",
+    "@typescript-eslint/parser": "^8.59.1",
+    "eslint": "^9.29.0",
+    "eslint-config-next": "^16.0.0",
+    "pino-pretty": "^13.0.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3"
+  }
+}

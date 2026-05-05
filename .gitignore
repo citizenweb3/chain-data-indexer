@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+next-env.d.ts
+
+# build artifacts
+dist/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+.env.test
+.env.production
+
+# logs
+*.log
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# claude / agents
+.claude/
+.gitnexus/
+
+# misc
+coverage/
