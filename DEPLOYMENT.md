@@ -526,3 +526,175 @@ ANALYZE core.transactions;
 - [ ] (Optional) Enable SSL for PostgreSQL
 - [ ] (Optional) Set up VPN between servers
 - [ ] Regular backups: `pg_dump` or replication
+
+---
+
+## cosmos-indexer-api: Read-Only API Deployment
+
+A separate service (`cosmos-indexer-api`, branch `cosmos-indexer-api`) exposes a
+public Next.js HTTP API on top of this indexer's Postgres. It is sandboxed with
+**four independent barriers** so that a compromised or buggy API cannot write
+to or destroy the indexer database.
+
+### Layout
+
+```
+/pool0/chain-data-indexer/   indexer worktree (main)
+/pool0/cosmos-indexer-api/   API worktree (cosmos-indexer-api branch)
+                             ├── docker-compose.override.yaml  (hardening)
+                             ├── .env                          (secrets, mode 600)
+                             └── .api-ro.password              (DB password, mode 600)
+```
+
+The API worktree is created with:
+
+```bash
+cd /pool0/chain-data-indexer
+git worktree add /pool0/cosmos-indexer-api cosmos-indexer-api
+```
+
+### Four security barriers
+
+1. **Database role** (`initdb/050-readonly-api-role.sql`)
+   * `cosmos_api_ro` LOGIN, SELECT-only on all domain schemas.
+   * `default_transaction_read_only=on` — even with broader grants, write
+     transactions cannot be opened.
+   * `statement_timeout=30s` — runaway queries cannot block autovacuum.
+   * `idle_in_transaction_session_timeout=60s` — leaked transactions cannot
+     block VACUUM.
+   * `CONNECTION LIMIT 30` — bounded so an API leak cannot exhaust
+     `max_connections=500` and lock out the indexer.
+   * `ALTER DEFAULT PRIVILEGES` ensures new partitions are auto-granted SELECT.
+
+2. **`pg_hba.conf` isolation** (top of file, **above** any `trust` rule)
+   ```
+   host    cosmos_indexer_db   cosmos_api_ro   172.26.0.0/16   scram-sha-256
+   host    all                 cosmos_api_ro   all             reject
+   ```
+   The role can authenticate only from the `cosmos-indexer-net` docker subnet.
+   From the host loopback, other docker networks, or external IPs → reject.
+
+3. **Docker network isolation**
+   * Shared external network `cosmos-indexer-net` connects only the indexer DB
+     and the API container. The indexer service itself is not on this network.
+   * API host port is bound to `127.0.0.1:3001` only — never exposed publicly;
+     TLS termination lives on a separate nginx host (`192.168.5.12`).
+
+4. **Container hardening** (`docker-compose.override.yaml`)
+   * `read_only: true` + tmpfs for `/tmp` and `/app/.next/cache`
+   * `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`
+   * Runs as unprivileged `1001:1001`
+
+### Initial bootstrap
+
+```bash
+# 1. Create the worktree
+cd /pool0/chain-data-indexer
+git worktree add /pool0/cosmos-indexer-api cosmos-indexer-api
+
+# 2. Bootstrap the RO role (idempotent; safe to re-run for password rotation)
+PG_PASSWORD=<from .env>
+RO_PASSWORD=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)
+docker cp initdb/050-readonly-api-role.sql cosmosindexer:/tmp/050.sql
+docker exec -e PGPASSWORD="$PG_PASSWORD" cosmosindexer \
+  psql -U cosmos_indexer_user -d cosmos_indexer_db -v ON_ERROR_STOP=1 \
+       -v api_ro_password="$RO_PASSWORD" -f /tmp/050.sql
+docker exec cosmosindexer rm /tmp/050.sql
+printf '%s' "$RO_PASSWORD" | install -m 600 /dev/stdin /pool0/cosmos-indexer-api/.api-ro.password
+
+# 3. Create the docker network (idempotent; ignore "already exists")
+docker network create cosmos-indexer-net || true
+
+# 4. Attach the running DB container to the network (no rebuild)
+docker network connect cosmos-indexer-net cosmosindexer
+
+# 5. Tighten pg_hba.conf — insert these two lines at the TOP of the active
+#    rules (above any `trust` line). The role must only authenticate from the
+#    cosmos-indexer-net subnet (default 172.26.0.0/16):
+#
+#      host    cosmos_indexer_db   cosmos_api_ro   172.26.0.0/16   scram-sha-256
+#      host    all                 cosmos_api_ro   all             reject
+#
+#    Then reload:
+docker exec -e PGPASSWORD="$PG_PASSWORD" cosmosindexer \
+  psql -U cosmos_indexer_user -d cosmos_indexer_db -tAc 'SELECT pg_reload_conf();'
+
+# 6. Build & start the API
+cd /pool0/cosmos-indexer-api
+# Create .env with COSMOS_INDEXER_API_KEY=<openssl rand -hex 32> and
+# API_DB_PASSWORD=<contents of .api-ro.password>; chmod 600 .env
+docker compose --env-file .env up -d --build
+```
+
+### Nginx (192.168.5.12) — TLS + proxy_pass
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name indexer.cosmoshub-4.citizenweb3.com;
+
+    ssl_certificate     /etc/letsencrypt/live/indexer.cosmoshub-4.citizenweb3.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/indexer.cosmoshub-4.citizenweb3.com/privkey.pem;
+
+    server_tokens off;
+    client_max_body_size 16k;
+
+    location / {
+        proxy_pass http://192.168.5.218:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+(Both hosts are in `192.168.5.0/24`, so no tunnel is needed.)
+
+### Verification (must all pass before going live)
+
+```bash
+RO_PASSWORD=$(cat /pool0/cosmos-indexer-api/.api-ro.password)
+API_KEY=$(grep COSMOS_INDEXER_API_KEY /pool0/cosmos-indexer-api/.env | cut -d= -f2)
+
+# A. API works from its own subnet
+curl -s -H "x-api-key: $API_KEY" http://127.0.0.1:3001/api/v1/blocks?limit=1
+
+# B. RO from host loopback → MUST be rejected
+docker exec -e PGPASSWORD="$RO_PASSWORD" cosmosindexer \
+  psql -U cosmos_api_ro -d cosmos_indexer_db -h 127.0.0.1 -c 'SELECT 1;'
+# expected: pg_hba.conf rejects connection ...
+
+# C. RO from a foreign docker network → MUST be rejected
+docker run --rm --network chain-data-indexer_default \
+  -e PGPASSWORD="$RO_PASSWORD" postgres:16 \
+  psql -U cosmos_api_ro -d cosmos_indexer_db -h cosmosindexer -c 'SELECT 1;'
+# expected: pg_hba.conf rejects connection ...
+
+# D. Writes are impossible even from inside the allowed subnet
+docker exec cosmos-indexer-api sh -c \
+  'PGPASSWORD="$API_DB_PASSWORD" psql -U cosmos_api_ro -d cosmos_indexer_db \
+    -h cosmosindexer -c "INSERT INTO core.blocks(height) VALUES(0);"' 2>&1 | tail -1
+# expected: cannot execute INSERT in a read-only transaction
+
+# E. statement_timeout fires after ~30s
+docker exec -e PGPASSWORD="$RO_PASSWORD" cosmosindexer \
+  psql -U cosmos_api_ro -d cosmos_indexer_db -h cosmosindexer -c 'SELECT pg_sleep(60);'
+# expected: canceling statement due to statement timeout
+```
+
+### Operational runbook
+
+* **Rotate `COSMOS_INDEXER_API_KEY`**: edit `.env`, then
+  `docker compose --env-file .env up -d --force-recreate api`.
+* **Rotate `cosmos_api_ro` password**: re-run step 2 of bootstrap with a new
+  `RO_PASSWORD`, update `.env`, then `up -d --force-recreate api`.
+* **Add a new schema/table**: re-run `050-readonly-api-role.sql` to refresh
+  grants and default privileges.
+* **Update API code**: `cd /pool0/cosmos-indexer-api && git pull && \
+  docker compose --env-file .env up -d --build`.
+* **Monitoring**: alert on `pg_hba.conf rejects connection ... cosmos_api_ro`
+  in Postgres logs (someone is probing the read-only role from outside the
+  allowed subnet).
+* **Backup**: include `pg_dumpall --globals-only` in your regular backup so
+  the role + per-role settings are restorable.

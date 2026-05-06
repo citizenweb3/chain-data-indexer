@@ -89,6 +89,9 @@ services:
     #   sudo ufw allow from <VALIDATORINFO_IP> to any port ${PG_PORT:-2432}
     ports:
       - '${PG_EXTERNAL_HOST:-0.0.0.0}:${PG_PORT:-2432}:5432'
+    networks:
+      - default
+      - cosmos-indexer-net
     volumes:
       - pgdata_cosmosindexer:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
@@ -206,3 +209,7 @@ services:
 
 volumes:
   pgdata_cosmosindexer:
+
+networks:
+  cosmos-indexer-net:
+    external: true
