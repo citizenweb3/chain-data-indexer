@@ -131,11 +131,11 @@ export async function queryTxMessages(hash: string, height: bigint): Promise<Mes
   `;
 }
 
-export async function queryTxEvents(hash: string): Promise<EventRow[]> {
+export async function queryTxEvents(hash: string, height: bigint): Promise<EventRow[]> {
   return db<EventRow[]>`
     SELECT msg_index, event_index, event_type, attributes
     FROM core.events
-    WHERE tx_hash = ${hash}
+    WHERE tx_hash = ${hash} AND height = ${height}
     ORDER BY msg_index, event_index
   `;
 }

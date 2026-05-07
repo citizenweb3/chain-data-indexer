@@ -80,7 +80,7 @@ DB is owned by the indexer (separate repo). Tables we read:
 - `core.blocks` — partitioned `RANGE(height)`. PK `(height)`.
 - `core.transactions` — partitioned `RANGE(height)`. PK `(height, tx_hash)`. Has `tx_index`, `code`, `gas_*`, `fee` (jsonb), `signers`, `raw_tx` (jsonb).
 - `core.messages` — partitioned `RANGE(height)`. PK `(height, tx_hash, msg_index)`.
-- `core.events` — partitioned `HASH(tx_hash)` — **no `height` column**. Filter by `tx_hash` only.
+- `core.events` — partitioned `RANGE(height)`. PK `(height, tx_hash, msg_index, event_index)`. **No `tx_hash` index** — always include `height` when filtering by tx.
 
 For row counts on partitioned tables, `pg_class.reltuples` on the parent is always 0 — sum across child partitions via `pg_inherits` (see `queryTxsTotal`).
 

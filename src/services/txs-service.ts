@@ -83,7 +83,7 @@ export async function getTxDetail(hash: string) {
   const tx = await queryTxByHash(hash);
   if (!tx) return null;
 
-  const [messages, events] = await Promise.all([queryTxMessages(hash, tx.height), queryTxEvents(hash)]);
+  const [messages, events] = await Promise.all([queryTxMessages(hash, tx.height), queryTxEvents(hash, tx.height)]);
 
   return {
     tx_hash: tx.tx_hash,

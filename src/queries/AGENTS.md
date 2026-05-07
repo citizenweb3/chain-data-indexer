@@ -33,8 +33,9 @@ ORDER BY height DESC, tx_index DESC
 
 ## Schema gotchas
 
-- `core.events` is partitioned `HASH(tx_hash)` — **has no `height` column**. Filter by `tx_hash` only.
+- `core.events` is partitioned `RANGE(height)` with PK `(height, tx_hash, msg_index, event_index)`. Only index outside PK is `(event_type)` — **no `tx_hash` index**, so always include `height` in WHERE when filtering by tx (partition pruning + PK seek).
 - `core.blocks/transactions/messages` are partitioned `RANGE(height)` — always include `height` in WHERE if known (partition pruning).
+- `core.transactions` has `idx_txs_hash` on `tx_hash` — `WHERE tx_hash = ?` alone is fine for tx lookup; height isn't strictly required.
 - `pg_class.reltuples` on a partitioned parent is always 0. Sum across child partitions:
   ```sql
   SELECT COALESCE(SUM(c.reltuples), 0)::bigint
