@@ -1,11 +1,12 @@
 import http from 'node:http';
-import { getPool } from './db/pg.js';
-import { getLastSlot } from './db/progress.js';
-import { fetchInfo } from './rpc/client.js';
 import { config } from './config.js';
-import { logger } from './utils/logger.js';
+import { getPool } from './db/pg.js';
+import { getProgress } from './db/progress.js';
 import { metricsContentType, metricsText } from './metrics/registry.js';
+import { getOpenApiDocument, swaggerHtml } from './openapi.js';
+import { fetchInfo, fetchPruneStatus } from './rpc/client.js';
 import { getTransactionShape } from './txDecode.js';
+import { logger } from './utils/logger.js';
 
 const startedAt = Date.now();
 const DEFAULT_LIMIT = 20;
@@ -13,55 +14,64 @@ const MAX_LIMIT = 100;
 const STATS_CACHE_MS = 5_000;
 
 type SortOrder = 'asc' | 'desc';
-type BlockSort = 'height' | 'slot';
 
 interface BlockApiRow {
-  id: string;
-  parent_block: string;
-  slot: string;
-  height: string | null;
-  block_root: string;
-  leader_key: string;
-  voucher_cm: string;
-  entropy: string;
-  tx_count: number;
-  finalized: boolean;
+  hash: string;
+  prev_hash: string;
+  height: string;
+  timestamp: string;
+  major_version: number;
+  minor_version: number;
+  nonce: string;
+  block_size: string;
+  block_weight: string;
+  long_term_weight: string;
+  num_txes: number;
+  miner_tx_hash: string;
+  reward_atomic: string;
+  difficulty_hex: string;
+  cumulative_difficulty_hex: string;
+  orphan_status: boolean;
   is_canonical: boolean;
+  is_settled: boolean;
   indexed_at: Date;
+  raw?: unknown;
 }
 
-interface BlockDetailApiRow extends BlockApiRow {
+interface TransactionApiRow {
+  hash: string;
+  block_hash: string;
+  block_height: string;
+  position: number;
+  version: number;
+  unlock_time: string;
+  inputs_count: number;
+  outputs_count: number;
+  fee_atomic: string | null;
+  in_pool: boolean;
+  confirmations: string | null;
+  indexed_at: Date;
+  is_canonical: boolean;
+  is_settled: boolean;
   raw: unknown;
 }
 
-interface LeaderKeyApiRow {
-  leader_key: string;
-  blocks_produced: string;
-  first_block_slot: string | null;
-  last_block_slot: string | null;
-  updated_at: Date;
+interface SupplyApiRow {
+  height: string;
+  block_hash: string;
+  block_timestamp: string;
+  cumulative_emission_atomic: string;
+  cumulative_fee_atomic: string;
+  source_method: string;
+  computed_at: Date;
 }
 
 interface StatsApiRow {
   total_blocks: string;
   total_transactions: string;
-  finalized_blocks: string;
-  latest_slot: string | null;
+  settled_blocks: string;
   latest_height: string | null;
-  leader_keys_count: string;
-}
-
-interface TransactionApiRow {
-  id: string;
-  tx_hash: string | null;
-  block_id: string;
-  position: number;
-  slot: string;
-  height: string | null;
-  finalized: boolean;
-  is_canonical: boolean;
-  indexed_at: Date;
-  raw: unknown;
+  latest_settled_height: string | null;
 }
 
 interface StatsCache {
@@ -83,14 +93,9 @@ function parseOffset(url: URL): number {
   return Math.floor(n);
 }
 
-function parseFinalized(url: URL): boolean | null {
-  const value = url.searchParams.get('finalized') ?? 'true';
-  if (value === 'all') return null;
-  return value !== 'false';
-}
-
-function parseCanonical(url: URL): boolean | null {
-  const value = url.searchParams.get('canonical') ?? 'true';
+function parseBooleanFilter(url: URL, key: string, defaultValue: boolean | null): boolean | null {
+  const value = url.searchParams.get(key);
+  if (value === null) return defaultValue;
   if (value === 'all') return null;
   return value !== 'false';
 }
@@ -99,19 +104,13 @@ function parseOrder(url: URL): SortOrder {
   return url.searchParams.get('order') === 'asc' ? 'asc' : 'desc';
 }
 
-function parseBlockSort(url: URL): BlockSort {
-  return url.searchParams.get('sort') === 'slot' ? 'slot' : 'height';
-}
-
 function toNumber(value: string | null): number | null {
   return value === null ? null : Number(value);
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error(`operation timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    const timeout = setTimeout(() => reject(new Error(`operation timed out after ${timeoutMs}ms`)), timeoutMs);
     timeout.unref();
     promise.then(
       (value) => {
@@ -126,64 +125,71 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-async function fetchInfoQuick(): Promise<Awaited<ReturnType<typeof fetchInfo>> | null> {
+async function fetchInfoQuick() {
   return withTimeout(fetchInfo(4_000, 1), 4_500).catch(() => null);
+}
+
+async function fetchPruneStatusQuick() {
+  return withTimeout(fetchPruneStatus(4_000, 1), 4_500).catch(() => null);
 }
 
 function blockSummary(row: BlockApiRow): Record<string, unknown> {
   return {
-    id: row.id,
-    parent_block: row.parent_block,
-    slot: Number(row.slot),
-    height: toNumber(row.height),
-    block_root: row.block_root,
-    leader_key: row.leader_key,
-    voucher_cm: row.voucher_cm,
-    entropy: row.entropy,
-    tx_count: row.tx_count,
-    finalized: row.finalized,
+    hash: row.hash,
+    prev_hash: row.prev_hash,
+    height: Number(row.height),
+    timestamp: Number(row.timestamp),
+    major_version: row.major_version,
+    minor_version: row.minor_version,
+    nonce: Number(row.nonce),
+    block_size: Number(row.block_size),
+    block_weight: Number(row.block_weight),
+    long_term_weight: Number(row.long_term_weight),
+    num_txes: row.num_txes,
+    miner_tx_hash: row.miner_tx_hash,
+    reward_atomic: row.reward_atomic,
+    difficulty_hex: row.difficulty_hex,
+    cumulative_difficulty_hex: row.cumulative_difficulty_hex,
+    orphan_status: row.orphan_status,
     is_canonical: row.is_canonical,
+    is_settled: row.is_settled,
     indexed_at: row.indexed_at,
   };
 }
 
-function leaderKeySummary(row: LeaderKeyApiRow): Record<string, unknown> {
-  return {
-    leader_key: row.leader_key,
-    blocks_with_key: Number(row.blocks_produced),
-    first_seen_slot: toNumber(row.first_block_slot),
-    last_seen_slot: toNumber(row.last_block_slot),
-    stable_validator_identity: false,
-    identity_scope: 'proof_of_leadership.leader_key',
-    updated_at: row.updated_at,
-  };
-}
-
-function transactionSummary(
-  row: TransactionApiRow,
-  options: { includeRaw?: boolean; includeDecoded?: boolean } = {},
-): Record<string, unknown> {
+function transactionSummary(row: TransactionApiRow, includeRaw = false): Record<string, unknown> {
   const shape = getTransactionShape(row.raw);
   const summary: Record<string, unknown> = {
-    id: row.id,
-    hash: shape.hash ?? row.id,
-    tx_hash: row.tx_hash,
-    block_id: row.block_id,
+    hash: row.hash,
+    block_hash: row.block_hash,
+    block_height: Number(row.block_height),
     position: row.position,
-    slot: Number(row.slot),
-    height: toNumber(row.height),
-    finalized: row.finalized,
+    version: row.version,
+    unlock_time: Number(row.unlock_time),
+    inputs_count: row.inputs_count,
+    outputs_count: row.outputs_count,
+    fee_atomic: row.fee_atomic,
+    confirmations: toNumber(row.confirmations),
+    in_pool: row.in_pool,
     is_canonical: row.is_canonical,
-    op_count: shape.opCount,
-    op_types: shape.opTypes,
-    proof_types: shape.proofTypes,
-    storage_gas_price: shape.storageGasPrice,
-    execution_gas_price: shape.executionGasPrice,
+    is_settled: row.is_settled,
     indexed_at: row.indexed_at,
+    safe_decode: shape.decoded,
   };
-  if (options.includeDecoded && shape.decoded) summary.decoded = shape.decoded;
-  if (options.includeRaw) summary.raw = row.raw;
+  if (includeRaw) summary.raw = row.raw;
   return summary;
+}
+
+function supplySummary(row: SupplyApiRow): Record<string, unknown> {
+  return {
+    height: Number(row.height),
+    block_hash: row.block_hash,
+    block_timestamp: Number(row.block_timestamp),
+    cumulative_emission_atomic: row.cumulative_emission_atomic,
+    cumulative_fee_atomic: row.cumulative_fee_atomic,
+    source_method: row.source_method,
+    computed_at: row.computed_at,
+  };
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -194,19 +200,20 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
   res.end(JSON.stringify(body));
 }
 
+function sendHtml(res: http.ServerResponse, html: string): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  res.end(html);
+}
+
 function sendNotFound(res: http.ServerResponse): void {
   sendJson(res, 404, { error: 'not_found' });
 }
 
 function sendMethodNotAllowed(res: http.ServerResponse): void {
   sendJson(res, 405, { error: 'method_not_allowed' });
-}
-
-function sendValidatorIdentityUnavailable(res: http.ServerResponse): void {
-  sendJson(res, 410, {
-    error: 'validator_identity_unavailable',
-    message: 'Logos v0.1.2 block headers expose proof_of_leadership.leader_key, not a stable validator identity. Use /api/v1/leader-keys for proof-key diagnostics.',
-  });
 }
 
 async function handleMetrics(res: http.ServerResponse): Promise<void> {
@@ -224,22 +231,37 @@ async function handleMetrics(res: http.ServerResponse): Promise<void> {
 
 async function handleHealth(res: http.ServerResponse): Promise<void> {
   try {
-    const [lastSlot, info] = await Promise.all([
-      getLastSlot(),
+    const [progress, info, pruneStatus] = await Promise.all([
+      getProgress(),
       fetchInfoQuick(),
+      fetchPruneStatusQuick(),
     ]);
 
-    const lagSlots = info ? Math.max(0, info.slot - lastSlot) : null;
-    const healthy = info !== null;
+    const lagBlocks = info ? Math.max(0, info.height - Math.max(progress.lastHeight, 0)) : null;
+    const progressAgeMs = progress.updatedAt ? Date.now() - progress.updatedAt.getTime() : null;
+    const reasons: string[] = [];
 
+    if (!info) reasons.push('node_unreachable');
+    if (info?.busy_syncing || (info && !info.synchronized)) reasons.push('node_syncing');
+    if (lagBlocks !== null && lagBlocks > config.HEALTH_MAX_LAG_BLOCKS) reasons.push('lag_blocks');
+    if (progressAgeMs !== null && progressAgeMs > config.HEALTH_MAX_STALL_MS) reasons.push('progress_stale');
+
+    const healthy = reasons.length === 0;
     sendJson(res, healthy ? 200 : 503, {
       status: healthy ? 'ok' : 'degraded',
-      last_slot: lastSlot,
-      node_tip_slot: info?.slot ?? null,
+      last_height: progress.lastHeight,
+      last_hash: progress.lastHash,
+      last_progress_at: progress.updatedAt,
+      last_progress_age_ms: progressAgeMs,
       node_height: info?.height ?? null,
-      node_mode: info?.mode ?? null,
-      lag_slots: lagSlots,
+      node_target_height: info?.target_height ?? null,
+      node_synchronized: info?.synchronized ?? null,
+      node_busy_syncing: info?.busy_syncing ?? null,
+      node_pruned: pruneStatus?.pruned ?? null,
+      lag_blocks: lagBlocks,
+      settlement_depth: config.SETTLEMENT_DEPTH,
       uptime_s: Math.floor((Date.now() - startedAt) / 1_000),
+      reasons,
     });
   } catch (err) {
     sendJson(res, 503, { status: 'error', error: String(err) });
@@ -253,37 +275,49 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
   }
 
   const pool = getPool();
-  const [statsResult, progressResult, nodeInfo] = await Promise.all([
+  const [statsResult, progress, info, pruneStatus, supplyResult] = await Promise.all([
     pool.query<StatsApiRow>(
       `SELECT
          COUNT(*) FILTER (WHERE is_canonical)::text AS total_blocks,
          (SELECT COUNT(*)::text
-            FROM logos_transactions tx
-            JOIN logos_blocks b ON b.id = tx.block_id
+            FROM monero_transactions tx
+            JOIN monero_blocks b ON b.hash = tx.block_hash
            WHERE b.is_canonical) AS total_transactions,
-         COUNT(*) FILTER (WHERE finalized)::text AS finalized_blocks,
-         MAX(slot) FILTER (WHERE is_canonical)::text AS latest_slot,
+         COUNT(*) FILTER (WHERE is_settled)::text AS settled_blocks,
          MAX(height) FILTER (WHERE is_canonical)::text AS latest_height,
-         (SELECT COUNT(*)::text FROM logos_leaders) AS leader_keys_count
-        FROM logos_blocks`,
+         MAX(height) FILTER (WHERE is_settled)::text AS latest_settled_height
+        FROM monero_blocks`,
     ),
-    getLastSlot(),
+    getProgress(),
     fetchInfoQuick(),
+    fetchPruneStatusQuick(),
+    pool.query<SupplyApiRow>(
+      `SELECT height::text, block_hash, block_timestamp::text, cumulative_emission_atomic,
+              cumulative_fee_atomic, source_method, computed_at
+         FROM monero_supply_checkpoints
+        ORDER BY height DESC
+        LIMIT 1`,
+    ),
   ]);
 
   const stats = statsResult.rows[0];
+  const latestSupply = supplyResult.rows[0] ? supplySummary(supplyResult.rows[0]) : null;
   const body = {
     total_blocks: Number(stats.total_blocks),
     total_transactions: Number(stats.total_transactions),
-    finalized_blocks: Number(stats.finalized_blocks),
-    latest_slot: toNumber(stats.latest_slot),
+    settled_blocks: Number(stats.settled_blocks),
     latest_height: toNumber(stats.latest_height),
-    leader_keys_count: Number(stats.leader_keys_count),
-    last_indexed_slot: progressResult,
-    node_tip_slot: nodeInfo?.slot ?? null,
-    node_height: nodeInfo?.height ?? null,
-    node_mode: nodeInfo?.mode ?? null,
-    lag_slots: nodeInfo ? Math.max(0, nodeInfo.slot - progressResult) : null,
+    latest_settled_height: toNumber(stats.latest_settled_height),
+    last_indexed_height: progress.lastHeight,
+    last_indexed_hash: progress.lastHash,
+    node_height: info?.height ?? null,
+    node_target_height: info?.target_height ?? null,
+    node_synchronized: info?.synchronized ?? null,
+    node_busy_syncing: info?.busy_syncing ?? null,
+    node_pruned: pruneStatus?.pruned ?? null,
+    lag_blocks: info ? Math.max(0, info.height - Math.max(progress.lastHeight, 0)) : null,
+    settlement_depth: config.SETTLEMENT_DEPTH,
+    latest_supply: latestSupply,
   };
 
   statsCache = { expiresAt: Date.now() + STATS_CACHE_MS, body };
@@ -293,27 +327,20 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
 async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   const limit = parseLimit(url);
   const offset = parseOffset(url);
-  const finalized = parseFinalized(url);
-  const canonical = parseCanonical(url);
+  const canonical = parseBooleanFilter(url, 'canonical', true);
+  const settled = parseBooleanFilter(url, 'settled', null);
   const order = parseOrder(url);
-  const sort = parseBlockSort(url);
   const direction = order === 'asc' ? 'ASC' : 'DESC';
-  const primarySort = sort === 'slot' ? 'logos_blocks.slot' : 'logos_blocks.height';
-  const leaderKey = url.searchParams.get('leader_key');
-  const conditions: string[] = [];
   const values: unknown[] = [];
+  const conditions: string[] = [];
 
-  if (finalized !== null) {
-    values.push(finalized);
-    conditions.push(`finalized = $${values.length}`);
-  }
   if (canonical !== null) {
     values.push(canonical);
     conditions.push(`is_canonical = $${values.length}`);
   }
-  if (leaderKey) {
-    values.push(leaderKey);
-    conditions.push(`leader_key = $${values.length}`);
+  if (settled !== null) {
+    values.push(settled);
+    conditions.push(`is_settled = $${values.length}`);
   }
 
   values.push(limit + 1, offset);
@@ -321,16 +348,15 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
   const limitParam = values.length - 1;
   const offsetParam = values.length;
 
-  const pool = getPool();
-  const { rows } = await pool.query<BlockApiRow>(
-    `SELECT id, parent_block, slot::text, height::text, block_root, leader_key,
-            voucher_cm, entropy, tx_count, finalized, is_canonical, indexed_at
-       FROM logos_blocks
+  const { rows } = await getPool().query<BlockApiRow>(
+    `SELECT hash, prev_hash, height::text, timestamp::text, major_version, minor_version, nonce::text,
+            block_size::text, block_weight::text, long_term_weight::text, num_txes, miner_tx_hash,
+            reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status,
+            is_canonical, is_settled, indexed_at
+       FROM monero_blocks
        ${where}
-       ORDER BY ${primarySort} ${direction} NULLS LAST,
-                logos_blocks.slot ${direction},
-                logos_blocks.id ${direction}
-       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      ORDER BY height ${direction}, hash ${direction}
+      LIMIT $${limitParam} OFFSET $${offsetParam}`,
     values,
   );
 
@@ -339,43 +365,49 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
 
   sendJson(res, 200, {
     data: pageRows.map(blockSummary),
-    pagination: {
-      limit,
-      offset,
-      order,
-      sort,
-      has_more: hasMore,
-    },
+    pagination: { limit, offset, order, has_more: hasMore },
   });
 }
 
 async function handleBlockById(id: string, res: http.ServerResponse): Promise<void> {
-  const { rows } = await getPool().query<BlockDetailApiRow>(
-    `SELECT id, parent_block, slot::text, height::text, block_root, leader_key,
-            voucher_cm, entropy, tx_count, finalized, is_canonical, indexed_at, raw
-       FROM logos_blocks
-       WHERE id = $1`,
-    [id],
-  );
+  const isHeightLookup = /^\d+$/.test(id);
+  const query = isHeightLookup
+    ? `SELECT hash, prev_hash, height::text, timestamp::text, major_version, minor_version, nonce::text,
+              block_size::text, block_weight::text, long_term_weight::text, num_txes, miner_tx_hash,
+              reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status,
+              is_canonical, is_settled, indexed_at, raw
+         FROM monero_blocks
+        WHERE height = $1
+        ORDER BY CASE WHEN is_canonical THEN 0 ELSE 1 END, hash ASC
+        LIMIT 1`
+    : `SELECT hash, prev_hash, height::text, timestamp::text, major_version, minor_version, nonce::text,
+              block_size::text, block_weight::text, long_term_weight::text, num_txes, miner_tx_hash,
+              reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status,
+              is_canonical, is_settled, indexed_at, raw
+         FROM monero_blocks
+        WHERE hash = $1
+        LIMIT 1`;
 
+  const { rows } = await getPool().query<BlockApiRow>(query, [isHeightLookup ? Number(id) : id]);
   if (rows.length === 0) {
     sendNotFound(res);
     return;
   }
 
   const txResult = await getPool().query<TransactionApiRow>(
-    `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
-            b.finalized, b.is_canonical, tx.indexed_at, tx.raw
-       FROM logos_transactions tx
-       JOIN logos_blocks b ON b.id = tx.block_id
-      WHERE tx.block_id = $1
+    `SELECT tx.hash, tx.block_hash, tx.block_height::text, tx.position, tx.version, tx.unlock_time::text,
+            tx.inputs_count, tx.outputs_count, tx.fee_atomic, tx.in_pool, tx.confirmations::text,
+            tx.indexed_at, block.is_canonical, block.is_settled, tx.raw
+       FROM monero_transactions tx
+       JOIN monero_blocks block ON block.hash = tx.block_hash
+      WHERE tx.block_hash = $1
       ORDER BY tx.position ASC`,
-    [id],
+    [rows[0].hash],
   );
 
   sendJson(res, 200, {
     ...blockSummary(rows[0]),
-    transactions: txResult.rows.map((row) => transactionSummary(row, { includeDecoded: true })),
+    transactions: txResult.rows.map((row) => transactionSummary(row, false)),
     raw: rows[0].raw,
   });
 }
@@ -383,27 +415,25 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
 async function handleTransactions(url: URL, res: http.ServerResponse): Promise<void> {
   const limit = parseLimit(url);
   const offset = parseOffset(url);
-  const finalized = parseFinalized(url);
-  const canonical = parseCanonical(url);
+  const canonical = parseBooleanFilter(url, 'canonical', true);
+  const settled = parseBooleanFilter(url, 'settled', null);
   const order = parseOrder(url);
-  const sort = parseBlockSort(url);
+  const blockHash = url.searchParams.get('block_hash');
   const direction = order === 'asc' ? 'ASC' : 'DESC';
-  const primarySort = sort === 'slot' ? 'b.slot' : 'b.height';
-  const blockId = url.searchParams.get('block_id');
-  const conditions: string[] = [];
   const values: unknown[] = [];
+  const conditions: string[] = [];
 
-  if (finalized !== null) {
-    values.push(finalized);
-    conditions.push(`b.finalized = $${values.length}`);
-  }
   if (canonical !== null) {
     values.push(canonical);
-    conditions.push(`b.is_canonical = $${values.length}`);
+    conditions.push(`block.is_canonical = $${values.length}`);
   }
-  if (blockId) {
-    values.push(blockId);
-    conditions.push(`tx.block_id = $${values.length}`);
+  if (settled !== null) {
+    values.push(settled);
+    conditions.push(`block.is_settled = $${values.length}`);
+  }
+  if (blockHash) {
+    values.push(blockHash);
+    conditions.push(`tx.block_hash = $${values.length}`);
   }
 
   values.push(limit + 1, offset);
@@ -412,15 +442,13 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
   const offsetParam = values.length;
 
   const { rows } = await getPool().query<TransactionApiRow>(
-    `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
-            b.finalized, b.is_canonical, tx.indexed_at, tx.raw
-       FROM logos_transactions tx
-       JOIN logos_blocks b ON b.id = tx.block_id
+    `SELECT tx.hash, tx.block_hash, tx.block_height::text, tx.position, tx.version, tx.unlock_time::text,
+            tx.inputs_count, tx.outputs_count, tx.fee_atomic, tx.in_pool, tx.confirmations::text,
+            tx.indexed_at, block.is_canonical, block.is_settled, tx.raw
+       FROM monero_transactions tx
+       JOIN monero_blocks block ON block.hash = tx.block_hash
        ${where}
-      ORDER BY ${primarySort} ${direction} NULLS LAST,
-               b.slot ${direction},
-               tx.position ${direction},
-               tx.id ${direction}
+      ORDER BY tx.block_height ${direction}, tx.position ${direction}, tx.hash ${direction}
       LIMIT $${limitParam} OFFSET $${offsetParam}`,
     values,
   );
@@ -430,26 +458,20 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
 
   sendJson(res, 200, {
     data: pageRows.map((row) => transactionSummary(row)),
-    pagination: {
-      limit,
-      offset,
-      order,
-      sort,
-      has_more: hasMore,
-    },
+    pagination: { limit, offset, order, has_more: hasMore },
   });
 }
 
 async function handleTransactionById(id: string, res: http.ServerResponse): Promise<void> {
   const { rows } = await getPool().query<TransactionApiRow>(
-    `SELECT tx.id, tx.tx_hash, tx.block_id, tx.position, b.slot::text, b.height::text,
-            b.finalized, b.is_canonical, tx.indexed_at, tx.raw
-       FROM logos_transactions tx
-       JOIN logos_blocks b ON b.id = tx.block_id
-       WHERE tx.id = $1 OR tx.tx_hash = $1
-       ORDER BY CASE WHEN b.is_canonical THEN 0 ELSE 1 END,
-                CASE WHEN tx.id = $1 THEN 0 ELSE 1 END
-       LIMIT 1`,
+    `SELECT tx.hash, tx.block_hash, tx.block_height::text, tx.position, tx.version, tx.unlock_time::text,
+            tx.inputs_count, tx.outputs_count, tx.fee_atomic, tx.in_pool, tx.confirmations::text,
+            tx.indexed_at, block.is_canonical, block.is_settled, tx.raw
+       FROM monero_transactions tx
+       JOIN monero_blocks block ON block.hash = tx.block_hash
+      WHERE tx.hash = $1
+      ORDER BY CASE WHEN block.is_canonical THEN 0 ELSE 1 END
+      LIMIT 1`,
     [id],
   );
 
@@ -458,53 +480,31 @@ async function handleTransactionById(id: string, res: http.ServerResponse): Prom
     return;
   }
 
-  sendJson(res, 200, transactionSummary(rows[0], { includeDecoded: true, includeRaw: true }));
+  sendJson(res, 200, transactionSummary(rows[0], true));
 }
 
-async function handleLeaderKeys(url: URL, res: http.ServerResponse): Promise<void> {
+async function handleSupply(url: URL, res: http.ServerResponse): Promise<void> {
   const limit = parseLimit(url);
   const offset = parseOffset(url);
-  const pool = getPool();
-  const [leaderKeysResult, countResult] = await Promise.all([
-    pool.query<LeaderKeyApiRow>(
-      `SELECT leader_key, blocks_produced::text, first_block_slot::text,
-              last_block_slot::text, updated_at
-         FROM logos_leaders
-         ORDER BY blocks_produced DESC, leader_key ASC
-         LIMIT $1 OFFSET $2`,
-      [limit, offset],
-    ),
-    pool.query<{ total: string }>('SELECT COUNT(*)::text AS total FROM logos_leaders'),
-  ]);
+  const order = parseOrder(url);
+  const direction = order === 'asc' ? 'ASC' : 'DESC';
 
-  const total = Number(countResult.rows[0].total);
-
-  sendJson(res, 200, {
-    data: leaderKeysResult.rows.map(leaderKeySummary),
-    pagination: {
-      limit,
-      offset,
-      total,
-      has_more: offset + leaderKeysResult.rows.length < total,
-    },
-  });
-}
-
-async function handleLeaderKey(leaderKey: string, res: http.ServerResponse): Promise<void> {
-  const { rows } = await getPool().query<LeaderKeyApiRow>(
-    `SELECT leader_key, blocks_produced::text, first_block_slot::text,
-            last_block_slot::text, updated_at
-       FROM logos_leaders
-       WHERE leader_key = $1`,
-    [leaderKey],
+  const { rows } = await getPool().query<SupplyApiRow>(
+    `SELECT height::text, block_hash, block_timestamp::text, cumulative_emission_atomic,
+            cumulative_fee_atomic, source_method, computed_at
+       FROM monero_supply_checkpoints
+      ORDER BY height ${direction}
+      LIMIT $1 OFFSET $2`,
+    [limit + 1, offset],
   );
 
-  if (rows.length === 0) {
-    sendNotFound(res);
-    return;
-  }
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
 
-  sendJson(res, 200, leaderKeySummary(rows[0]));
+  sendJson(res, 200, {
+    data: pageRows.map(supplySummary),
+    pagination: { limit, offset, order, has_more: hasMore },
+  });
 }
 
 async function route(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -526,6 +526,16 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
 
   if (url.pathname === '/metrics') {
     await handleMetrics(res);
+    return;
+  }
+
+  if (url.pathname === '/openapi.json') {
+    sendJson(res, 200, getOpenApiDocument());
+    return;
+  }
+
+  if (url.pathname === '/docs') {
+    sendHtml(res, swaggerHtml());
     return;
   }
 
@@ -559,46 +569,14 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     return;
   }
 
-  if (routeParts[1] === 'validators') {
-    sendValidatorIdentityUnavailable(res);
-    return;
-  }
-
-  if (routeParts.length === 2 && routeParts[1] === 'leader-keys') {
-    await handleLeaderKeys(url, res);
-    return;
-  }
-
-  if (routeParts.length === 3 && routeParts[1] === 'leader-keys') {
-    await handleLeaderKey(routeParts[2], res);
-    return;
-  }
-
-  if (routeParts.length === 4 && routeParts[1] === 'leader-keys' && routeParts[3] === 'blocks') {
-    url.searchParams.set('leader_key', routeParts[2]);
-    await handleBlocks(url, res);
+  if (routeParts.length === 2 && routeParts[1] === 'supply') {
+    await handleSupply(url, res);
     return;
   }
 
   sendNotFound(res);
 }
 
-/**
- * Start the explorer API server on API_BIND:API_PORT (default: 0.0.0.0:3001).
- *
- * Endpoints:
- *   GET /health
- *   GET /metrics
- *   GET /api/stats
- *   GET /api/v1/stats
- *   GET /api/blocks?limit=20&offset=0&finalized=true|false|all
- *   GET /api/blocks/:id
- *   GET /api/transactions?limit=20&offset=0&finalized=true|false|all
- *   GET /api/transactions/:id
- *   GET /api/leader-keys?limit=20&offset=0
- *   GET /api/leader-keys/:leader_key
- *   GET /api/leader-keys/:leader_key/blocks
- */
 export function startApiServer(): () => void {
   const server = http.createServer((req, res) => {
     route(req, res).catch((err) => {
@@ -608,7 +586,7 @@ export function startApiServer(): () => void {
   });
 
   server.listen(config.API_PORT, config.API_BIND, () => {
-    logger.info('Explorer API server listening', {
+    logger.info('Monero explorer API listening', {
       host: config.API_BIND,
       port: config.API_PORT,
     });

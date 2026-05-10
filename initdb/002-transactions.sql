@@ -1,27 +1,42 @@
--- Add raw Logos transactions for already-initialized databases.
--- Safe to run multiple times.
-
-CREATE TABLE IF NOT EXISTS logos_transactions (
-    id              TEXT        PRIMARY KEY,
-    tx_hash         TEXT,
-    block_id        TEXT        NOT NULL REFERENCES logos_blocks(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS monero_transactions (
+    hash            TEXT        PRIMARY KEY,
+    block_hash      TEXT        NOT NULL REFERENCES monero_blocks(hash) ON DELETE CASCADE,
+    block_height    BIGINT      NOT NULL,
     position        INTEGER     NOT NULL,
+    version         INTEGER     NOT NULL,
+    unlock_time     BIGINT      NOT NULL,
+    inputs_count    INTEGER     NOT NULL DEFAULT 0,
+    outputs_count   INTEGER     NOT NULL DEFAULT 0,
+    fee_atomic      TEXT,
+    in_pool         BOOLEAN     NOT NULL DEFAULT false,
+    confirmations   BIGINT,
     raw             JSONB       NOT NULL,
     indexed_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (block_id, position)
+    UNIQUE (block_hash, position)
 );
 
-CREATE INDEX IF NOT EXISTS logos_transactions_block ON logos_transactions (block_id, position);
-CREATE INDEX IF NOT EXISTS logos_transactions_hash  ON logos_transactions (tx_hash) WHERE tx_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS monero_transactions_block_idx
+    ON monero_transactions (block_hash, position);
 
-INSERT INTO logos_transactions (id, tx_hash, block_id, position, raw)
-SELECT
-    COALESCE(tx_elem.value->'mantle_tx'->>'hash', logos_blocks.id || ':' || (tx_elem.ordinality - 1)::text) AS id,
-    tx_elem.value->'mantle_tx'->>'hash' AS tx_hash,
-    logos_blocks.id AS block_id,
-    (tx_elem.ordinality - 1)::integer AS position,
-    tx_elem.value AS raw
-FROM logos_blocks
-CROSS JOIN LATERAL jsonb_array_elements(logos_blocks.raw->'transactions') WITH ORDINALITY AS tx_elem(value, ordinality)
-WHERE jsonb_typeof(logos_blocks.raw->'transactions') = 'array'
-ON CONFLICT DO NOTHING;
+CREATE INDEX IF NOT EXISTS monero_transactions_height_idx
+    ON monero_transactions (block_height DESC, position ASC);
+
+CREATE INDEX IF NOT EXISTS monero_transactions_fee_idx
+    ON monero_transactions (fee_atomic)
+    WHERE fee_atomic IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS monero_supply_checkpoints (
+    height                      BIGINT      PRIMARY KEY,
+    block_hash                  TEXT        NOT NULL,
+    block_timestamp             BIGINT      NOT NULL,
+    cumulative_emission_atomic  TEXT        NOT NULL,
+    cumulative_fee_atomic       TEXT        NOT NULL DEFAULT '0',
+    source_method               TEXT        NOT NULL,
+    computed_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS monero_supply_checkpoints_hash_idx
+    ON monero_supply_checkpoints (block_hash);
+
+CREATE INDEX IF NOT EXISTS monero_supply_checkpoints_computed_idx
+    ON monero_supply_checkpoints (computed_at DESC);

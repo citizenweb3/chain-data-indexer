@@ -1,11 +1,12 @@
-# logos-indexer
+# monero-indexer
 
-Block indexer for the [Logos Blockchain](https://github.com/logos-blockchain/logos-blockchain) testnet.
+Production Monero explorer indexer for [ValidatorInfo](https://validatorinfo.com/).
 
-Indexes all blocks and proof-of-leadership key diagnostics from a local Logos node into PostgreSQL.
-Designed for integration with the [validatorinfo](https://validatorinfo.com) explorer.
+It indexes blocks, transactions, canonical-chain state, and XMR supply checkpoints
+from a Monero daemon into PostgreSQL and exposes a read-only explorer API.
 
-**Supported:** Logos testnet v0.1.2+
+**Supported:** monerod `v0.18.4.6`  
+**Recommended node mode:** full archival node (required for historical supply backfill)
 
 ---
 
@@ -13,66 +14,52 @@ Designed for integration with the [validatorinfo](https://validatorinfo.com) exp
 
 | Data | Source | Table |
 |---|---|---|
-| All blocks (slot, height, leader, raw JSON) | `/cryptarchia/blocks` | `logos_blocks` |
-| Raw mantle transactions (`hash`, position, raw JSON) | `block.transactions[]` | `logos_transactions` |
-| Block finality status | `/cryptarchia/lib-stream` header IDs + parent chain | `logos_blocks.finalized` |
-| Canonical chain membership | `/cryptarchia/info` tip hash + stored `parent_block` chain | `logos_blocks.is_canonical` |
-| Proof leader-key diagnostics (first/last seen slot) | `proof_of_leadership.leader_key` | `logos_leaders` |
-| Indexer resume position | internal | `logos_indexer_progress` |
+| Blocks (canonical + observed reorged rows) | `get_block` | `monero_blocks` |
+| Raw transactions + safe summary fields | `/get_transactions` | `monero_transactions` |
+| Resume position | internal | `monero_indexer_progress` |
+| Supply checkpoints | `get_coinbase_tx_sum` | `monero_supply_checkpoints` |
 
-Wallet balances are not indexed in v0.1.2 — see [`docs/future.md`](docs/future.md).
-
-Logos v0.1.2 block headers do **not** expose a stable validator identity.
-`proof_of_leadership.leader_key` is a proof/signing key observed in the block
-header; on the current testnet dataset every indexed block has a distinct key.
-Do not use it as a validator/account identifier.
-
-Logos v0.1.2 `/cryptarchia/blocks` usually omits per-block height. The indexer
-therefore stores the block hash/parent chain first, then deterministically
-derives canonical heights from `/cryptarchia/info` and `/cryptarchia/lib-stream`
-anchors plus the stored `parent_block` chain. Slot is never used as a fallback
-for block height.
-
-Cryptarchia may produce multiple sibling blocks at the same height. Public API
-lists therefore default to the **current canonical chain only** (`is_canonical=true`)
-so explorer users see one block per canonical height by default.
+Monero does **not** expose a stable validator identity. This branch does not
+invent miner/pool validators from coinbase data.
 
 ---
 
 ## Prerequisites
 
-- Node.js ≥ 20 with npm
+- Node.js ≥ 20 with Corepack-enabled Yarn
 - PostgreSQL ≥ 14
-- A running Logos node (v0.1.2 testnet) accessible at `NODE_URL`
+- A running Monero daemon reachable at `NODE_URL`
+- **Archival sync completed** if you want historical supply backfill
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Install dependencies
-npm install
+# 1. Enable Corepack + install dependencies
+corepack enable
+yarn install
 
 # 2. Configure
 cp .env.example .env
 # Edit .env: set PG_PASSWORD and NODE_URL
 
 # 3. Initialise database
-npm run db:init
+yarn db:init
 
 # 4. Run (dev mode)
-npm run dev
+yarn dev
 
 # 5. Build and run (production)
-npm run build
-npm start
+yarn build
+yarn start
 ```
 
 ### With Docker Compose
 
 ```bash
-cp .env.example .env   # set PG_PASSWORD
-docker compose up -d
+cp .env.example .env
+docker compose up -d --build
 ```
 
 ---
@@ -83,167 +70,110 @@ See [`.env.example`](.env.example) for all options.
 
 | Variable | Default | Description |
 |---|---|---|
-| `NODE_URL` | `http://localhost:8080` | Logos node HTTP API |
-| `PG_*` | see .env.example | PostgreSQL connection |
-| `PG_HOST_BIND` | `127.0.0.1` | Docker Compose bind address for PostgreSQL |
-| `PG_HOST_PORT` | `5432` | Docker Compose host port for PostgreSQL |
-| `PG_SSL` | `false` | Enable TLS for remote PostgreSQL connections |
-| `PG_SSL_CA` | unset | Optional CA certificate path for `PG_SSL=true` |
-| `FROM_SLOT` | `0` | Start slot (overridden by saved progress) |
-| `FOLLOW` | `true` | Subscribe to live blocks after backfill |
-| `BATCH_SIZE` | `500` | Slots per backfill request |
-| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-| `LOG_FORMAT` | `pretty` | `pretty` for terminals, `json` for log shipping |
-| `API_BIND` | `0.0.0.0` | Internal listener host for health, metrics, and API |
-| `API_PORT` | `3001` | HTTP port for `GET /health` and `GET /api/*` |
-| `API_HOST_BIND` | `0.0.0.0` | Docker Compose bind address for the public indexer API |
-| `API_HOST_PORT` | `3001` | Docker Compose host port for the indexer API |
-| `METRICS_ENABLED` | `true` | Enable `GET /metrics` Prometheus endpoint |
-| `METRICS_SAMPLE_INTERVAL_MS` | `5000` | Interval for node tip and PG pool metric sampling |
+| `NODE_URL` | `http://localhost:18089` | Monero daemon RPC endpoint |
+| `PG_*` | see `.env.example` | PostgreSQL connection |
+| `FROM_HEIGHT` | `0` | Start height when no saved progress exists |
+| `FOLLOW` | `true` | Poll for new blocks after backfill |
+| `BATCH_SIZE` | `200` | Heights per backfill batch |
+| `RPC_CONCURRENCY` | `16` | Concurrent `get_block` requests per batch |
+| `TX_BATCH_SIZE` | `200` | Transaction hashes per `/get_transactions` request |
+| `FOLLOW_POLL_INTERVAL_MS` | `10000` | Poll interval for new heights |
+| `SETTLEMENT_DEPTH` | `20` | Depth used for `is_settled` and supply updates |
+| `SUPPLY_ENABLED` | `true` | Enable supply bootstrap/hourly maintenance |
+| `SUPPLY_CHUNK_SIZE` | `25000` | Blocks per `get_coinbase_tx_sum` chunk |
+| `SUPPLY_UPDATE_INTERVAL_MS` | `3600000` | Supply updater interval |
+| `HEALTH_MAX_LAG_BLOCKS` | `50` | Lag threshold for `/health` degradation |
+| `HEALTH_MAX_STALL_MS` | `300000` | Progress-age threshold for `/health` degradation |
+| `API_*` | see `.env.example` | Explorer API/health listener |
+| `METRICS_ENABLED` | `true` | Enable `GET /metrics` |
 
 ---
 
 ## Architecture
 
-```
+```text
 src/
-├── index.ts             Entry point: wait for Online → backfill → follow + followLib
-├── config.ts            Env-based config (zod)
-├── types.d.ts           Logos API types (incl. LibStreamEvent)
-├── api.ts               HTTP explorer API + health server
-├── rpc/client.ts        HTTP client: REST + NDJSON streams (blocks + lib-stream)
-├── metrics/             Isolated Prometheus registry + sampler
+├── index.ts               entry point: wait for node → backfill → follow + supply scheduler
+├── config.ts              env-based config (zod)
+├── types.d.ts             Monero RPC + DB types
+├── api.ts                 explorer API + /health + /metrics + /openapi.json + /docs
+├── openapi.ts             static OpenAPI contract + Swagger UI HTML
+├── rpc/client.ts          Monero JSON-RPC + path RPC wrapper with retry and big-int safe parsing
+├── metrics/               isolated Prometheus registry + sampler
 ├── db/
-│   ├── pg.ts            PostgreSQL pool (with error handler)
-│   └── progress.ts      Resume: last indexed slot (UPSERT + GREATEST)
-├── sink/postgres.ts     processBlock (tx), processBatch (bulk unnest), markBlocksFinalized
+│   ├── pg.ts              PostgreSQL pool
+│   └── progress.ts        resume position (height + hash, always-forward)
+├── sink/postgres.ts       atomic block/tx writes + supply checkpoint writes
 ├── runner/
-│   ├── syncRange.ts     Slot-range backfill with retry + resume
-│   ├── heightRepair.ts  Canonical height derivation + missing-parent repair
-│   ├── canonicalChain.ts canonical tip-chain tracking + orphan finality cleanup
-│   ├── follow.ts        block-stream follower: gap-fill → subscribe → serial queue + exp. backoff
-│   └── followLib.ts     LIB NDJSON follower: marks canonical blocks finalized
-└── utils/
-    ├── logger.ts        Winston logger (Error-safe JSON)
-    └── retry.ts         withRetry: exp. backoff, retries only transient errors
+│   ├── syncRange.ts       height-range backfill with reorg detection
+│   ├── follow.ts          poll-based live follow
+│   ├── canonicalChain.ts  canonical flag + settlement updates
+│   ├── supplyBackfill.ts  chunked supply checkpoint builder
+│   └── supplyHourly.ts    periodic supply maintenance
+└── txDecode.ts            safe Monero tx summary (fee/input/output counts, no invented semantics)
 ```
 
 ---
 
 ## Explorer API
 
-The indexer exposes an HTTP API for explorer frontends on `API_PORT` (default `3001`).
-Full endpoint schemas, parameters, response fields, and error responses are in
-[`docs/indexer-api.md`](docs/indexer-api.md).
+The indexer exposes:
 
 | Endpoint | Description |
 |---|---|
-| `GET /api/v1/stats` | Network/indexer summary over canonical rows: counts, latest slots/heights, lag |
-| `GET /api/v1/blocks?limit=20&offset=0&finalized=true&order=desc` | Canonical blocks by default, sorted by derived block height (`canonical=all` exposes stored side-branches; `sort=slot` is available for raw slot order) |
-| `GET /api/v1/blocks/:id` | Block detail by `header.id`, including raw block JSON |
-| `GET /api/v1/transactions?limit=20&offset=0&finalized=true&order=desc` | Transactions from canonical blocks by default, sorted by block height (`canonical=all` exposes orphaned block txs; `sort=slot` is available) |
-| `GET /api/v1/transactions/:id` | Transaction detail by tx hash/id, including raw tx JSON plus safe decoded operation/proof metadata |
-| `GET /api/v1/leader-keys?limit=20&offset=0` | Proof leader keys ordered by observed block count |
-| `GET /api/v1/leader-keys/:leader_key` | Diagnostics for one proof leader key |
-| `GET /api/v1/leader-keys/:leader_key/blocks` | Blocks carrying one proof leader key |
+| `GET /health` | DB/node reachability, lag, sync status, prune status |
+| `GET /metrics` | Prometheus metrics |
+| `GET /openapi.json` | OpenAPI 3.1 contract |
+| `GET /docs` | Swagger UI |
+| `GET /api/v1/stats` | Network/indexer summary |
+| `GET /api/v1/blocks` | Paginated block list |
+| `GET /api/v1/blocks/:id` | Block detail by hash or canonical height |
+| `GET /api/v1/transactions` | Paginated transaction list |
+| `GET /api/v1/transactions/:id` | Transaction detail by hash |
+| `GET /api/v1/supply` | Paginated supply checkpoint series |
 
-Example:
+Unversioned `/api/*` routes remain local aliases; new clients should use `/api/v1/*`.
 
-```bash
-curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=true&order=desc"
-curl "http://localhost:3001/api/v1/blocks?limit=20&finalized=all&canonical=all&sort=slot&order=desc"
-curl "http://localhost:3001/api/v1/transactions?limit=20&finalized=all&order=desc"
-curl http://localhost:3001/api/v1/stats
-```
-
-Unversioned `/api/*` routes are kept as aliases for local tooling.
-Use `/api/v1/*` for all new code.
-
----
-
-## Explorer SQL queries
-
-```sql
--- Latest finalized blocks by canonical height
-SELECT slot, height, leader_key, tx_count, indexed_at
-FROM logos_blocks
-WHERE is_canonical AND finalized
-ORDER BY height DESC, slot DESC
-LIMIT 20;
-
--- Proof leader keys by observed block count.
--- These are not stable validator identities in Logos v0.1.2.
-SELECT leader_key,
-       blocks_produced AS blocks_with_key,
-       first_block_slot AS first_seen_slot,
-       last_block_slot AS last_seen_slot
-FROM logos_leaders ORDER BY blocks_produced DESC LIMIT 20;
-
--- Network summary
-SELECT COUNT(*) FILTER (WHERE is_canonical) AS total_blocks,
-       (SELECT COUNT(*)
-        FROM logos_transactions tx
-        JOIN logos_blocks b ON b.id = tx.block_id
-        WHERE b.is_canonical) AS total_transactions,
-       COUNT(*) FILTER (WHERE finalized) AS finalized_blocks,
-       MAX(slot) FILTER (WHERE is_canonical) AS latest_slot,
-       MAX(height) FILTER (WHERE is_canonical) AS latest_height
-FROM logos_blocks;
-```
+Full endpoint details: [`docs/indexer-api.md`](docs/indexer-api.md)
 
 ---
 
 ## Metrics and logs
 
 Prometheus metrics are exposed at `GET /metrics` on `API_PORT` when
-`METRICS_ENABLED=true`. Domain series use `logos_`; Node.js runtime series use
-`logos_node_`. Production log shipping should set `LOG_FORMAT=json` to emit one
-structured object per line with `ts`, `level`, `label`, `message`, and
-`metadata`. See [`docs/operations.md`](docs/operations.md) and
-[`docs/observability/`](docs/observability/) for integration examples.
+`METRICS_ENABLED=true`. Domain series use the `monero_` prefix; Node.js runtime
+series use `monero_node_`.
 
----
+For production log shipping, set `LOG_FORMAT=json` to emit one JSON object per line:
 
-## Health check
-
-```bash
-curl http://localhost:3001/health
-```
 ```json
-{
-  "status": "ok",
-  "last_slot": 1148474,
-  "node_tip_slot": 1148480,
-  "node_height": 58062,
-  "node_mode": "Online",
-  "lag_slots": 6,
-  "uptime_s": 3600
-}
+{"ts":"2026-01-01T00:00:00.000Z","level":"info","label":"monero-indexer","message":"Database connected","metadata":{}}
 ```
-Returns `200` when healthy, `503` when node unreachable. Useful for Docker / K8s liveness probes.
 
 ---
 
-## Operations and upgrades
+## Key product note: supply
 
-- [`docs/operations.md`](docs/operations.md) — environment variables, Docker
-  networking, health interpretation, troubleshooting, and deployment notes.
-- [`docs/network-upgrades.md`](docs/network-upgrades.md) — release upgrade
-  checklist for future Logos network versions.
-- [`docs/api.md`](docs/api.md) — upstream Logos node API consumed by the indexer.
-- [`docs/future.md`](docs/future.md) — deferred note decoding, wallet balance,
-  and other future protocol work.
+`totalSupply` is built from `get_coinbase_tx_sum`, but **only**
+`emission_amount` counts toward supply. `fee_amount` is stored for diagnostics
+and audit, not added to XMR issuance.
 
----
+The indexer does **not** run one giant full-range supply query every hour.
+Instead it:
 
-## Future work
-
-See [`docs/future.md`](docs/future.md) for the v0.2+ roadmap:
-- UTXO / note decoding beyond raw transaction storage
-- Wallet balance display (pending public API support)
+1. waits for an archival node,
+2. backfills supply in chunks,
+3. stores checkpoints with `(height, block_hash, cumulative_emission_atomic)`,
+4. verifies checkpoint hashes before appending more,
+5. extends only from the last valid checkpoint to the new settled tip.
 
 ---
 
-## Agent workflow
+## Operations and upgrade docs
 
-See [`AGENTS.md`](AGENTS.md) for sub-agent roles and constraints when working on this codebase.
+- [`docs/api.md`](docs/api.md) — upstream Monero RPC surface used by the indexer
+- [`docs/indexer-api.md`](docs/indexer-api.md) — explorer API contract
+- [`docs/operations.md`](docs/operations.md) — env vars, Docker, health, metrics
+- [`docs/network-upgrades.md`](docs/network-upgrades.md) — monerod upgrade workflow
+- [`docs/future.md`](docs/future.md) — explicit non-goals / deferred work
+- [`AGENTS.md`](AGENTS.md) — contributor/agent workflow

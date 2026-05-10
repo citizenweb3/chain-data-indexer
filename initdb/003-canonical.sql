@@ -1,6 +1,11 @@
-ALTER TABLE logos_blocks
-  ADD COLUMN IF NOT EXISTS is_canonical BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS monero_blocks_canonical_hash_idx
+  ON monero_blocks (hash)
+  WHERE is_canonical;
 
-CREATE INDEX IF NOT EXISTS logos_blocks_canonical_height
-  ON logos_blocks (height, slot DESC)
-  WHERE is_canonical AND height IS NOT NULL;
+CREATE INDEX IF NOT EXISTS monero_blocks_noncanonical_height_idx
+  ON monero_blocks (height DESC)
+  WHERE NOT is_canonical;
+
+CREATE INDEX IF NOT EXISTS monero_blocks_unsettled_height_idx
+  ON monero_blocks (height DESC)
+  WHERE NOT is_settled;

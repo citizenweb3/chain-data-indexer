@@ -1,299 +1,131 @@
-# Logos Blockchain Node — HTTP API Reference
+# Monero Node RPC — Surface Used by the Indexer
 
-This document describes the upstream Logos node API consumed by the indexer.
-For the indexer's own explorer API, see [`docs/indexer-api.md`](indexer-api.md).
+This document describes the upstream Monero daemon RPC surface consumed by this
+indexer branch. For the indexer's own explorer API, see
+[`docs/indexer-api.md`](indexer-api.md).
 
-Node version: **0.1.2** (testnet)  
-Default listen address: `0.0.0.0:8080` (configurable via `api.backend.listen_address` in `user_config.yaml`)  
-All endpoints are unauthenticated and local-only by default.
-
-Source of truth: [`nodes/api-common/src/paths.rs`](https://github.com/logos-blockchain/logos-blockchain/blob/master/nodes/api-common/src/paths.rs) and [`nodes/node/binary/src/api/backend.rs`](https://github.com/logos-blockchain/logos-blockchain/blob/master/nodes/node/binary/src/api/backend.rs).
+Node version target: **monerod v0.18.4.6**
 
 ---
 
-## Endpoint availability in v0.1.2
+## Endpoints used
 
-| Method | Path | Status in 0.1.2 | Description |
-|--------|------|-----------------|-------------|
-| GET | `/cryptarchia/info` | ✅ | Consensus + sync state |
-| GET | `/cryptarchia/headers` | ✅ | Recent fork-choice header IDs |
-| GET | `/cryptarchia/lib-stream` | ✅ NDJSON | Last irreversible block stream |
-| GET | `/cryptarchia/blocks` | ✅ | Blocks in slot range |
-| GET | `/cryptarchia/events/blocks/stream` | ✅ NDJSON | Live block stream |
-| GET | `/network/info` | ✅ | P2P peer + connection info |
-| GET | `/wallet/:public_key/balance` | ✅ | Wallet balance and notes |
-| POST | `/storage/block` | ✅ | Block by hash (body = JSON string) |
-| POST | `/mempool/add/tx` | ✅ | Submit a transaction |
-| GET | `/cryptarchia/blocks/:id` | ❌ 404 | Not enabled in v0.1.2 |
-| GET | `/cryptarchia/transaction/:id` | ❌ 404 | Not enabled in v0.1.2 |
-| GET | `/blend/info` | ❌ 404 | Blend Network — planned for v0.2 |
-| GET | `/mantle/metrics` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/mantle/status` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/wallet/transactions/transfer-funds` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/wallet/sign/ed25519` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/wallet/sign/zk` | ❌ 404 | Not enabled in v0.1.2 |
-| GET | `/channel/:id` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/channel/deposit` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/sdp/declaration` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/sdp/activity` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/sdp/withdrawal` | ❌ 404 | Not enabled in v0.1.2 |
-| POST | `/leader/claim` | ❌ 404 | Not enabled in v0.1.2 |
+| Method | Path | Purpose | Notes |
+|---|---|---|---|
+| POST | `/json_rpc` `get_info` | sync state, target height, health | primary health source |
+| POST | `/json_rpc` `get_block_count` | tip height | stable during sync |
+| POST | `/json_rpc` `get_block` | block body by height/hash | main backfill source |
+| POST | `/json_rpc` `get_block_header_by_height` | block hash/timestamp lookup | reorg anchoring |
+| POST | `/get_transactions` | raw tx bodies for tx hashes | batched per block batch |
+| POST | `/json_rpc` `get_coinbase_tx_sum` | supply checkpoints | admin-only, expensive |
+| POST | `/json_rpc` `prune_blockchain` with `{"check":true}` | detect pruned vs archival | historical supply requires archival |
+| POST | `/json_rpc` `sync_info` | optional sync diagnostics | useful for troubleshooting |
+| POST | `/json_rpc` `get_alternate_chains` | optional reorg diagnostics | troubleshooting/debug only |
 
 ---
 
-## Endpoints — detailed reference
+## Important RPC behavior
 
-### GET `/cryptarchia/info`
-
-Returns consensus state, sync progress, and current chain tip.
+### `get_info`
 
 ```bash
-curl http://localhost:8080/cryptarchia/info
+curl -s -X POST http://127.0.0.1:18089/json_rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_info"}'
 ```
 
-Response:
-```json
-{
-  "lib":      "56174b26...",   // last irreversible block (LIB) hash
-  "lib_slot": 1121932,         // slot of the LIB
-  "tip":      "8f7523a0...",   // current chain tip hash
-  "slot":     1122640,         // current slot number
-  "height":   56774,           // block height at tip
-  "mode":     "Online"         // "Bootstrapping" during IBD, "Online" when synced
-}
-```
+Used for:
 
-Key fields for an explorer:
-- `height` — current block height
-- `slot` — current slot (target: 20s per slot)
-- `mode` — `"Online"` means fully synced; `"Bootstrapping"` means IBD in progress
-- `lib` / `lib_slot` — last finalized block
+- daemon reachability,
+- current height / target height,
+- syncing state,
+- busy flag / net state,
+- node mode shown in `/health`.
 
----
+The indexer treats this as the primary operational heartbeat.
 
-### GET `/network/info`
-
-Returns P2P network identity and peer connectivity.
+### `get_block_count`
 
 ```bash
-curl http://localhost:8080/network/info
+curl -s -X POST http://127.0.0.1:18089/json_rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_block_count"}'
 ```
 
-Response:
-```json
-{
-  "listen_addresses": [
-    "/ip4/192.168.5.215/udp/3000/quic-v1",
-    ...
-  ],
-  "peer_id":             "12D3KooWPMT8rZHu8oBQMTW5VaWUDp52sBcHXQCLan42zJXZsbs8",
-  "n_peers":             23,
-  "n_connections":       23,
-  "n_pending_connections": 0
-}
-```
+Used for tip height. This is preferred over `get_last_block_header` during sync,
+because Monero may report `"status":"BUSY"` on some header-oriented calls while
+initial sync is still underway.
 
----
-
-### GET `/cryptarchia/headers`
-
-Returns the list of block header IDs currently tracked in the local fork-choice tree (last ~31 headers).
+### `get_block`
 
 ```bash
-curl http://localhost:8080/cryptarchia/headers
+curl -s -X POST http://127.0.0.1:18089/json_rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_block","params":{"height":1}}'
 ```
 
-Response: JSON array of hex-encoded header IDs.
+Returns a block envelope that includes:
 
-```json
-[
-  "2a7adcb17c20c7b3...",
-  "d29f1186d4865...",
-  ...
-]
-```
+- `blob`
+- `json` / block body
+- `block_header`
 
----
+The indexer uses `get_block` as the source of truth for stored raw block rows.
 
-### GET `/cryptarchia/blocks?slot_from=X&slot_to=Y`
-
-Returns blocks in a slot range. Both parameters are required.
+### `/get_transactions`
 
 ```bash
-curl "http://localhost:8080/cryptarchia/blocks?slot_from=1128000&slot_to=1128010"
+curl -s -X POST http://127.0.0.1:18089/get_transactions \
+  -H 'Content-Type: application/json' \
+  -d '{"txs_hashes":["<tx_hash>"],"decode_as_json":true,"prune":false}'
 ```
 
-Query parameters:
+Used to fetch transaction payloads for all non-coinbase tx hashes referenced by
+indexed blocks. Batched calls are safer than one-request-per-transaction.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `slot_from` | integer ≥ 0 | ✅ | Start of slot range (inclusive) |
-| `slot_to` | integer ≥ 0 | ✅ | End of slot range (inclusive) |
-
-Response: JSON array of block objects.
-
-```json
-[
-  {
-    "header": {
-      "id":           "18b2b264...",       // block header ID
-      "parent_block": "741695da...",       // parent block header ID
-      "slot":         1127922,
-      "block_root":   "89eb0d6a...",
-      "proof_of_leadership": {
-        "proof":               [160, 12, ...],  // 128-byte Groth16 proof
-        "entropy_contribution": "395a4020...",
-        "leader_key":           "9919de73...",  // proof leader/signing key; not a stable validator id in v0.1.2
-        "voucher_cm":           "0ef4be5d..."   // voucher commitment
-      }
-    },
-    "transactions": []
-  }
-]
-```
-
-Returns `[]` if no blocks were produced in the given range.
-
----
-
-### GET `/cryptarchia/lib-stream`
-
-NDJSON stream that emits each new last irreversible block (LIB) update.
+### `get_coinbase_tx_sum`
 
 ```bash
-curl -N http://localhost:8080/cryptarchia/lib-stream
+curl -s -X POST http://127.0.0.1:18089/json_rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"0","method":"get_coinbase_tx_sum","params":{"height":0,"count":25000}}'
 ```
 
-Observed response line:
+Returns:
 
-```json
-{"height":59390,"header_id":"77bcd6960f6c5e9f824733137c87298ce6d35d3c1fc8b2be44ab1d235cff26ef"}
-```
+- `emission_amount`
+- `fee_amount`
 
-The HTTP response content type is `application/x-ndjson`. Use a streaming HTTP
-client plus line parsing; do not use EventSource for this endpoint.
+**Supply rule:** only `emission_amount` contributes to XMR total supply.
+`fee_amount` is recorded for audit/diagnostics but must not be added to supply.
 
----
+Operational notes:
 
-### GET `/cryptarchia/events/blocks/stream`
+- admin-only RPC,
+- can be very slow on large ranges,
+- unsuitable as one giant hourly full-range query,
+- historical checkpoints require an archival node.
 
-NDJSON stream that emits each newly accepted block in real time. Each line is a
-JSON object containing the new block plus current tip/LIB metadata.
+### `prune_blockchain` with `check=true`
 
 ```bash
-curl -N http://localhost:8080/cryptarchia/events/blocks/stream
+curl -s -X POST http://127.0.0.1:18089/json_rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"0","method":"prune_blockchain","params":{"check":true}}'
 ```
 
-Observed line shape:
-
-```json
-{
-  "block": { "header": { "id": "...", "slot": 1552666 }, "transactions": [] },
-  "tip": "195519ac...",
-  "tip_slot": 1552666,
-  "lib": "80584c36...",
-  "lib_slot": 1552041
-}
-```
-
-The HTTP response content type is `application/x-ndjson`. Use a streaming HTTP
-client plus line parsing; do not use EventSource for this endpoint.
+Used to detect whether the daemon is pruned. If pruned, the indexer should avoid
+historical supply bootstrap and report degraded supply capability.
 
 ---
 
-### GET `/wallet/:public_key/balance`
+## RPC design rules for this branch
 
-Returns the current balance and UTXO notes for a wallet key.
-
-```bash
-curl http://localhost:8080/wallet/20385ef66ea93c145e2d2485d728dae9349acb95c8b1806607d724c05a57dc1a/balance
-```
-
-Path parameter: `public_key` — 64-character hex key from `wallet.known_keys` in `user_config.yaml`.
-
-Response:
-```json
-{
-  "tip":     "8f7523a0...",
-  "balance": 1000,
-  "notes": {
-    "c73f3f3a...": 1000
-  },
-  "address": "20385ef6..."
-}
-```
-
-Returns HTTP 400 with `"Requested wallet state for unknown block: ..."` if the node is still in IBD (not yet `Online`).
-
----
-
-### POST `/storage/block`
-
-Returns full block data by block hash. Body must be a JSON-encoded hex string (with quotes).
-
-```bash
-# Get the current tip hash first
-TIP=$(curl -s http://localhost:8080/cryptarchia/info | python3 -c "import sys,json; print(json.load(sys.stdin)['tip'])")
-
-curl -s -X POST http://localhost:8080/storage/block \
-  -H "Content-Type: application/json" \
-  -d "\"$TIP\""
-```
-
-Request body: `"<64-char hex block hash>"` (JSON string)
-
-Response:
-```json
-{
-  "header": {
-    "version":    "Bedrock",
-    "parent_block": "1d7c9927...",
-    "slot":         1128063,
-    "block_root":   "52c289ed...",
-    "proof_of_leadership": {
-      "proof":               [52, 213, ...],
-      "entropy_contribution": "...",
-      "leader_key":           "...",
-      "voucher_cm":           "..."
-    }
-  },
-  "signature":     [210, 99, ...],
-  "transactions":  []
-}
-```
-
-Note: `header` here does not include `id` (unlike `/cryptarchia/blocks`). The proof field is a raw byte array (128 bytes).
-
----
-
-### POST `/mempool/add/tx`
-
-Submit a signed transaction to the mempool.
-
-```bash
-curl -X POST http://localhost:8080/mempool/add/tx \
-  -H "Content-Type: application/json" \
-  -d '{ "mantle_tx": { ... } }'
-```
-
-Request body must contain a `mantle_tx` field with a serialized signed transaction. Returns HTTP 422 if the body is malformed.
-
----
-
-## Notes for explorer integration
-
-1. **Sync check**: poll `GET /cryptarchia/info` — only trust data when `"mode": "Online"`.
-2. **Latest block height**: `height` from `/cryptarchia/info`.
-3. **Block pagination**: use `/cryptarchia/blocks?slot_from=X&slot_to=Y`. Slots are not 1:1 with blocks — some slots produce no block.
-4. **Block detail**: use `POST /storage/block` with the block's hash (tip hash or parent hash from another block). The `header.id` returned by `/cryptarchia/blocks` is **not** the hash expected by `/storage/block` — use the tip/parent chain hashes instead.
-5. **Real-time**: subscribe to `/cryptarchia/events/blocks/stream` (NDJSON) for live block feed.
-6. **Peer count**: `n_peers` from `/network/info`.
-7. **No public transaction lookup**: `/cryptarchia/transaction/:id` returns 404 in v0.1.2 — transaction history is only queryable via wallet balance notes.
-8. **No built-in explorer**: Logos does not ship a block explorer in v0.1.2; the official dashboard at `https://testnet.blockchain.logos.co/web/` only shows team bootstrap nodes and requires auth.
-
-## Planned for v0.2
-
-- `/blend/info` — Blend Network proposer privacy info
-- Mantle endpoints (`/mantle/metrics`, `/mantle/status`)
-- SDP (zone) endpoints
-- Transaction lookup by ID
+1. Every RPC call must have a timeout.
+2. Retry only transient failures.
+3. Never assume normal JSON parsing is safe for Monero monetary values; use
+   big-int-safe parsing for RPC payloads that may contain large integers.
+4. Do not use undocumented semantics from raw Monero JSON. Store raw payloads and
+   expose only safe explorer summaries.
+5. If Monero adds a better bulk block RPC in a future release, document it here
+   before changing ingestion.

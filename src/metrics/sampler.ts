@@ -1,11 +1,18 @@
 import { config } from '../config.js';
 import { getPool, getPoolStats } from '../db/pg.js';
+import { getProgress } from '../db/progress.js';
 import { fetchInfo } from '../rpc/client.js';
 import { logger } from '../utils/logger.js';
-import { setChainTipHeight, setIndexedHeight, setPgPoolStats } from './registry.js';
+import {
+  setChainTipHeight,
+  setIndexedHeight,
+  setNodeSyncState,
+  setPgPoolStats,
+  setSupplyCheckpointHeight,
+} from './registry.js';
 
-interface HeightRow {
-  last_height: string | null;
+interface SupplyHeightRow {
+  height: string | null;
 }
 
 let timer: NodeJS.Timeout | null = null;
@@ -37,25 +44,33 @@ async function sampleOnce(): Promise<void> {
     const stats = getPoolStats();
     setPgPoolStats(stats.active, stats.idle, stats.waiting);
 
-    const [info, progress] = await Promise.all([
+    const [info, progress, supplyHeight] = await Promise.all([
       fetchInfo(4_000, 1).catch((err: unknown) => {
         logger.debug('Metrics tip sampling failed', { err });
         return null;
       }),
+      withTimeout(getProgress(), 4_000, 'Metrics progress sampling').catch((err: unknown) => {
+        logger.debug('Metrics progress sampling failed', { err });
+        return null;
+      }),
       withTimeout(
         getPool()
-          .query<HeightRow>("SELECT last_height::text FROM logos_indexer_progress WHERE id = 'default'")
-          .then((result) => result.rows[0]?.last_height ?? null),
+          .query<SupplyHeightRow>('SELECT MAX(height)::text AS height FROM monero_supply_checkpoints')
+          .then((result) => result.rows[0]?.height ?? null),
         4_000,
-        'Metrics indexed height sampling',
+        'Metrics supply sampling',
       ).catch((err: unknown) => {
-        logger.debug('Metrics indexed height sampling failed', { err });
+        logger.debug('Metrics supply sampling failed', { err });
         return null;
       }),
     ]);
 
-    if (info) setChainTipHeight(info.height);
-    if (progress !== null) setIndexedHeight(Number(progress));
+    if (info) {
+      setChainTipHeight(info.height);
+      setNodeSyncState(info.busy_syncing || !info.synchronized);
+    }
+    if (progress) setIndexedHeight(progress.lastHeight);
+    if (supplyHeight !== null) setSupplyCheckpointHeight(Number(supplyHeight));
   } finally {
     inFlight = false;
   }

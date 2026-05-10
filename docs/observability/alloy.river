@@ -1,12 +1,12 @@
-// Grafana Alloy reference config for logos-indexer.
+// Grafana Alloy reference config for monero-indexer.
 // All values are environment placeholders; provide them in the Alloy runtime environment.
 
-prometheus.scrape "logos_indexer" {
+prometheus.scrape "monero_indexer" {
   targets = [{
-    __address__ = env("LOGOS_INDEXER_METRICS_TARGET"),
-    job         = "logos-indexer",
+    __address__ = env("MONERO_INDEXER_METRICS_TARGET"),
+    job         = "monero-indexer",
   }]
-  scrape_interval = env("LOGOS_INDEXER_SCRAPE_INTERVAL")
+  scrape_interval = env("MONERO_INDEXER_SCRAPE_INTERVAL")
   forward_to      = [prometheus.remote_write.default.receiver]
 }
 
@@ -21,19 +21,19 @@ prometheus.remote_write "default" {
   }
 }
 
-local.file_match "logos_indexer_logs" {
+local.file_match "monero_indexer_logs" {
   path_targets = [{
-    __path__ = env("LOGOS_INDEXER_LOG_PATH"),
-    job      = "logos-indexer",
+    __path__ = env("MONERO_INDEXER_LOG_PATH"),
+    job      = "monero-indexer",
   }]
 }
 
-loki.source.file "logos_indexer" {
-  targets    = local.file_match.logos_indexer_logs.targets
-  forward_to = [loki.process.logos_indexer.receiver]
+loki.source.file "monero_indexer" {
+  targets    = local.file_match.monero_indexer_logs.targets
+  forward_to = [loki.process.monero_indexer.receiver]
 }
 
-loki.process "logos_indexer" {
+loki.process "monero_indexer" {
   stage.json {
     expressions = {
       ts       = "ts",

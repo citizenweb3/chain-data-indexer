@@ -1,219 +1,158 @@
+import { config } from '../config.js';
 import { getPool } from '../db/pg.js';
-import { fetchBlockByHash } from '../rpc/client.js';
-import { processBlock } from '../sink/postgres.js';
 import { observeFlush } from '../metrics/registry.js';
+import { fetchBlockHeaderByHeight } from '../rpc/client.js';
 import { logger } from '../utils/logger.js';
-import type { LogosBlock } from '../types.js';
+import type { MoneroBlockHeader } from '../types.js';
 
-interface MissingParentRow {
-  missing_id: string;
-  child_id: string;
+interface StoredCanonicalRow {
+  height: string;
+  hash: string;
 }
 
-interface CanonicalUpdateRow {
-  chain_count: number;
-  marked_count: number;
-  unmarked_count: number;
-  cleared_finality_count: number;
+export interface CanonicalPoint {
+  height: number;
+  hash: string;
 }
 
-interface CanonicalUpdateResult {
-  fetchedParents: number;
-  chainRows: number;
-  markedRows: number;
-  unmarkedRows: number;
-  clearedFinalityRows: number;
-}
+const COMMON_ANCESTOR_PAGE_SIZE = 128;
 
-const MAX_PARENT_REPAIR_FETCHES = 10_000;
-
-function isBlockLike(value: unknown): value is LogosBlock {
-  return !!value
-    && typeof value === 'object'
-    && 'header' in value
-    && !!(value as { header?: unknown }).header
-    && typeof (value as { header: { parent_block?: unknown; slot?: unknown } }).header.parent_block === 'string'
-    && typeof (value as { header: { parent_block: string; slot?: unknown } }).header.slot === 'number';
-}
-
-function enrichFetchedBlock(block: unknown, id: string): LogosBlock | null {
-  if (!isBlockLike(block)) return null;
-  return {
-    ...block,
-    header: {
-      ...block.header,
-      id,
-    },
-  };
-}
-
-async function ensureAnchorPresent(anchorId: string): Promise<boolean> {
-  const { rows } = await getPool().query<{ exists: boolean }>(
-    'SELECT EXISTS (SELECT 1 FROM logos_blocks WHERE id = $1) AS exists',
-    [anchorId],
+export async function clearCanonicalAbove(height: number): Promise<number> {
+  const start = process.hrtime.bigint();
+  const result = await getPool().query(
+    `UPDATE monero_blocks
+        SET is_canonical = false,
+            is_settled = false
+      WHERE height > $1
+        AND (is_canonical OR is_settled)`,
+    [height],
   );
-  if (rows[0]?.exists) return true;
-
-  const block = await fetchBlockByHash(anchorId);
-  const enriched = enrichFetchedBlock(block, anchorId);
-  if (!enriched) {
-    logger.warn('Canonical anchor block is unavailable from storage RPC', { anchor_id: anchorId });
-    return false;
-  }
-
-  await processBlock(enriched);
-  return true;
+  const count = result.rowCount ?? 0;
+  observeFlush('derived', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
+    monero_blocks: count,
+  });
+  return count;
 }
 
-async function findNearestMissingParent(anchorId: string): Promise<MissingParentRow | null> {
-  const { rows } = await getPool().query<MissingParentRow>(
-    `WITH RECURSIVE chain AS (
-       SELECT id, parent_block
-       FROM logos_blocks
-       WHERE id = $1
-       UNION ALL
-       SELECT parent.id, parent.parent_block
-       FROM logos_blocks parent
-       JOIN chain ON parent.id = chain.parent_block
-     )
-     SELECT
-       chain.parent_block AS missing_id,
-       chain.id AS child_id
-     FROM chain
-     LEFT JOIN logos_blocks parent ON parent.id = chain.parent_block
-     WHERE chain.parent_block IS NOT NULL
-       AND parent.id IS NULL
-     LIMIT 1`,
-    [anchorId],
-  );
-  return rows[0] ?? null;
-}
+export async function findCommonAncestor(startHeight: number): Promise<CanonicalPoint | null> {
+  let offset = 0;
 
-async function repairMissingParents(anchorId: string): Promise<number> {
-  const anchorPresent = await ensureAnchorPresent(anchorId);
-  if (!anchorPresent) return 0;
+  for (;;) {
+    const { rows } = await getPool().query<StoredCanonicalRow>(
+      `SELECT height::text, hash
+         FROM monero_blocks
+        WHERE is_canonical
+          AND height <= $1
+        ORDER BY height DESC
+        LIMIT $2 OFFSET $3`,
+      [startHeight, COMMON_ANCESTOR_PAGE_SIZE, offset],
+    );
 
-  let fetched = 0;
-  while (fetched < MAX_PARENT_REPAIR_FETCHES) {
-    const missing = await findNearestMissingParent(anchorId);
-    if (!missing) return fetched;
+    if (rows.length === 0) return null;
 
-    const block = await fetchBlockByHash(missing.missing_id);
-    const enriched = enrichFetchedBlock(block, missing.missing_id);
-    if (!enriched) {
-      logger.warn('Missing canonical parent block is unavailable from storage RPC', {
-        child_id: missing.child_id,
-        missing_id: missing.missing_id,
-      });
-      return fetched;
+    for (const row of rows) {
+      const height = Number(row.height);
+      const header = await fetchBlockHeaderByHeight(height, 10_000, 1).catch(() => null);
+      if (header?.hash === row.hash) {
+        return { height, hash: row.hash };
+      }
     }
 
-    await processBlock(enriched);
-    fetched++;
-    logger.info('Fetched missing parent block for canonical-chain repair', {
-      child_id: missing.child_id.slice(0, 12) + '…',
-      parent_id: missing.missing_id.slice(0, 12) + '…',
-      slot: block.header.slot,
-    });
+    offset += rows.length;
   }
-
-  logger.warn('Stopped canonical parent repair after fetch limit', {
-    anchor_id: anchorId.slice(0, 12) + '…',
-    fetched,
-    limit: MAX_PARENT_REPAIR_FETCHES,
-  });
-  return fetched;
 }
 
-async function updateCanonicalChain(anchorId: string): Promise<CanonicalUpdateRow> {
+async function updateSettlement(tipHeight: number): Promise<{ marked: number; cleared: number }> {
+  const settledHeight = Math.max(-1, tipHeight - config.SETTLEMENT_DEPTH);
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    const marked = await client.query(
+      `UPDATE monero_blocks
+          SET is_settled = true
+        WHERE is_canonical
+          AND NOT is_settled
+          AND height <= $1`,
+      [settledHeight],
+    );
+    const cleared = await client.query(
+      `UPDATE monero_blocks
+          SET is_settled = false
+        WHERE is_settled
+          AND (NOT is_canonical OR height > $1)`,
+      [settledHeight],
+    );
+    await client.query('COMMIT');
+    return {
+      marked: marked.rowCount ?? 0,
+      cleared: cleared.rowCount ?? 0,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function applyCanonicalBatch(headers: MoneroBlockHeader[], tipHeight: number): Promise<void> {
+  if (headers.length === 0) return;
+
+  const heights = headers.map((header) => header.height);
+  const hashes = headers.map((header) => header.hash);
+
   const start = process.hrtime.bigint();
-  const { rows } = await getPool().query<CanonicalUpdateRow>(
-    `WITH RECURSIVE canonical_chain AS (
-       SELECT id, parent_block
-       FROM logos_blocks
-       WHERE id = $1
-       UNION ALL
-       SELECT parent.id, parent.parent_block
-       FROM logos_blocks parent
-       JOIN canonical_chain child ON parent.id = child.parent_block
+  const result = await getPool().query<{
+    marked_count: number;
+    unmarked_count: number;
+  }>(
+    `WITH incoming AS (
+       SELECT * FROM unnest($1::bigint[], $2::text[]) AS t(height, hash)
      ),
      marked AS (
-       UPDATE logos_blocks b
-       SET is_canonical = true
-       FROM canonical_chain c
-       WHERE b.id = c.id
-         AND NOT b.is_canonical
-       RETURNING b.id
+       UPDATE monero_blocks block
+          SET is_canonical = true
+         FROM incoming
+        WHERE block.height = incoming.height
+          AND block.hash = incoming.hash
+          AND NOT block.is_canonical
+        RETURNING block.hash
      ),
      unmarked AS (
-       UPDATE logos_blocks b
-       SET is_canonical = false
-       WHERE b.is_canonical
-         AND NOT EXISTS (SELECT 1 FROM canonical_chain c WHERE c.id = b.id)
-       RETURNING b.id
-     ),
-     cleared_finality AS (
-       UPDATE logos_blocks b
-       SET finalized = false
-       WHERE b.finalized
-         AND NOT EXISTS (SELECT 1 FROM canonical_chain c WHERE c.id = b.id)
-       RETURNING b.id
+       UPDATE monero_blocks block
+          SET is_canonical = false,
+              is_settled = false
+        WHERE block.height IN (SELECT height FROM incoming)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM incoming
+             WHERE incoming.height = block.height
+               AND incoming.hash = block.hash
+          )
+          AND (block.is_canonical OR block.is_settled)
+        RETURNING block.hash
      )
      SELECT
-       (SELECT COUNT(*)::integer FROM canonical_chain) AS chain_count,
        (SELECT COUNT(*)::integer FROM marked) AS marked_count,
-       (SELECT COUNT(*)::integer FROM unmarked) AS unmarked_count,
-       (SELECT COUNT(*)::integer FROM cleared_finality) AS cleared_finality_count`,
-    [anchorId],
+       (SELECT COUNT(*)::integer FROM unmarked) AS unmarked_count`,
+    [heights, hashes],
   );
-  const result = rows[0] ?? {
-    chain_count: 0,
-    marked_count: 0,
-    unmarked_count: 0,
-    cleared_finality_count: 0,
-  };
 
+  const settlement = await updateSettlement(tipHeight);
+  const counts = result.rows[0] ?? { marked_count: 0, unmarked_count: 0 };
   observeFlush('derived', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
-    logos_blocks: result.marked_count + result.unmarked_count + result.cleared_finality_count,
+    monero_blocks: counts.marked_count + counts.unmarked_count + settlement.marked + settlement.cleared,
   });
-  return result;
-}
 
-export async function markCanonicalChain(anchorId: string, source: string): Promise<CanonicalUpdateResult> {
-  if (!anchorId) {
-    logger.warn('Skipping canonical-chain update for empty anchor', { source });
-    return {
-      fetchedParents: 0,
-      chainRows: 0,
-      markedRows: 0,
-      unmarkedRows: 0,
-      clearedFinalityRows: 0,
-    };
-  }
-
-  const fetchedParents = await repairMissingParents(anchorId);
-  const updated = await updateCanonicalChain(anchorId);
-
-  if (fetchedParents > 0
-    || updated.marked_count > 0
-    || updated.unmarked_count > 0
-    || updated.cleared_finality_count > 0) {
-    logger.info('Canonical chain updated', {
-      source,
-      anchor_id: anchorId.slice(0, 12) + '…',
-      fetched_parents: fetchedParents,
-      chain_rows: updated.chain_count,
-      marked_rows: updated.marked_count,
-      unmarked_rows: updated.unmarked_count,
-      cleared_finality_rows: updated.cleared_finality_count,
+  if (counts.marked_count > 0 || counts.unmarked_count > 0 || settlement.marked > 0 || settlement.cleared > 0) {
+    logger.info('Canonical Monero range updated', {
+      from_height: Math.min(...heights),
+      to_height: Math.max(...heights),
+      tip_height: tipHeight,
+      marked_rows: counts.marked_count,
+      unmarked_rows: counts.unmarked_count,
+      settled_rows: settlement.marked,
+      cleared_settlement_rows: settlement.cleared,
     });
   }
-
-  return {
-    fetchedParents,
-    chainRows: updated.chain_count,
-    markedRows: updated.marked_count,
-    unmarkedRows: updated.unmarked_count,
-    clearedFinalityRows: updated.cleared_finality_count,
-  };
 }

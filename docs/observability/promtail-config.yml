@@ -15,13 +15,13 @@ clients:
       password: ${LOKI_PASSWORD}
 
 scrape_configs:
-  - job_name: logos-indexer
+  - job_name: monero-indexer
     static_configs:
       - targets:
           - ${PROMTAIL_TARGET_LABEL}
         labels:
-          job: logos-indexer
-          __path__: ${LOGOS_INDEXER_LOG_PATH}
+          job: monero-indexer
+          __path__: ${MONERO_INDEXER_LOG_PATH}
     pipeline_stages:
       - json:
           expressions:

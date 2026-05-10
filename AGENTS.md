@@ -1,128 +1,92 @@
-# Agent Roles — Logos Indexer
+# Agent Roles — Monero Indexer
 
-This file describes the recommended sub-agent workflow for working on this project.
-Any agent picking up work here should follow the **research → execute → review** pattern.
+This branch follows a strict **research → execute → review** workflow.
 
 ---
 
 ## Roles
 
 ### `research`
-- Read `docs/api.md` before touching any RPC or network code.
-- Read `docs/indexer-api.md` before touching the explorer API.
-- Read `docs/operations.md` before changing deployment, env, Docker, or health checks.
-- Read `docs/network-upgrades.md` before adapting the indexer to a new Logos release.
-- Verify upstream Logos release notes at https://github.com/logos-blockchain/logos-blockchain/releases
-  before changing anything that depends on block structure or API behaviour.
-- Do NOT invent API fields, endpoints, or block schemas. If unsure, check the node directly:
+
+- Read `docs/api.md` before changing RPC or sync logic.
+- Read `docs/indexer-api.md` before changing public explorer responses.
+- Read `docs/operations.md` before touching env vars, Docker, health, or metrics.
+- Read `docs/network-upgrades.md` before adapting the branch to a new monerod release.
+- Validate behavior against a live Monero node before trusting docs:
+  ```bash
+  curl -s http://127.0.0.1:18089/get_info
+  curl -s -X POST http://127.0.0.1:18089/json_rpc \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":"0","method":"get_block_count"}'
   ```
-  curl http://localhost:8080/cryptarchia/info
-  curl "http://localhost:8080/cryptarchia/blocks?slot_from=X&slot_to=Y"
-  ```
-- Check `docs/future.md` before implementing anything related to balances or
-  decoded note/UTXO state — raw transaction indexing is active, but richer
-  balance and note semantics remain future work.
-- Safe explorer decode may expose opcode names, proof kinds, and normalized
-  known payload fields, but must not invent note ownership, wallet balances, or
-  high-level semantics for opaque binary payloads.
-- Logos v0.1.2 does not expose a stable validator identity in block headers.
-  `proof_of_leadership.leader_key` is a per-proof/per-block key in the current
-  dataset; do not present it as a validator/account identifier.
+- Do **not** invent miner identities, address ownership, or wallet balances from
+  Monero raw data.
+- Treat `get_coinbase_tx_sum` as an admin RPC with heavy performance cost.
+  Historical supply requires an archival node.
 
 ### `executor`
-- Make one logical change at a time. Run `npm run build` or `tsx src/index.ts` to verify.
-- Always use explicit types from `src/types.d.ts`; do not use `any`.
-- Keep server paths explicit: node binary at `/pool0/logos`, indexer at `/pool0/logos-indexer`.
-- Log every significant action at `info` level; use `debug` for per-block noise.
-- Never commit `.env` files or any secrets.
-- Keep public indexer HTTP listeners explicit: `API_BIND=0.0.0.0` and
-  Compose `API_HOST_BIND=0.0.0.0`; access control lives at nginx/API-token/UFW.
-- Keep PostgreSQL local/private by default; enable `PG_SSL=true` for remote PG.
-- Keep Prometheus metrics in `src/metrics/*` on the isolated registry; do not use the global `prom-client` registry.
-- For new metric labels, use only bounded fleet-approved names: `module`, `level`, `endpoint`, `group`, `table`, `phase`, `status`.
+
+- Keep changes surgical and type-safe; do not introduce `any`.
+- Use types from `src/types.d.ts`.
+- Preserve crash safety: block + transaction writes stay in one transaction.
+- Preserve idempotency: replays and restarts must converge to the same DB state.
+- Keep `monero_supply_checkpoints` reorg-safe: verify saved `(height, block_hash)`
+  against current chain state before appending new checkpoints.
+- Never add `fee_amount` into total XMR supply.
+- Keep public list endpoints canonical-only by default.
+- Keep metrics in the isolated registry under `src/metrics/*`.
+- Never commit `.env` files or secrets.
 
 ### `review`
-- After any change to `src/sink/postgres.ts`, verify SQL matches `initdb/001-schema.sql`.
-- After any change to `src/rpc/client.ts`, test against the live node at `localhost:8080`.
-- Confirm `ON CONFLICT DO NOTHING` / `DO UPDATE` semantics are correct for each upsert.
-- Check that `processBlock()` handles `block.header.id === undefined`
-  (blocks from `/storage/block` lack an `id` field).
-- Crash safety: `processBlock()` wraps block + leader writes in one transaction.
-  If the process crashes mid-block, the transaction rolls back and restart
-  re-indexes the same slot range idempotently.
-- Live processing errors should close/reconnect the block stream instead of silently
-  continuing; gap-fill on reconnect recovers missed slots.
-- Public explorer views should default to canonical blocks, and usually to
-  canonical finalized blocks unless a caller explicitly requests
-  `finalized=all` or `canonical=all`.
-- Logos v0.1.2 `/cryptarchia/blocks` often omits `height` at ingest time. The
-  indexer must derive canonical heights from `/cryptarchia/info` or
-  `/cryptarchia/lib-stream` anchors plus `parent_block`, and must never use
-  slot as a fallback for block height.
-- Multi-leader slots can produce sibling blocks with the same `height`. Public
-  APIs must distinguish `is_canonical` from `finalized` and must not expose
-  competing siblings as canonical explorer rows by default.
+
+- After schema changes, verify SQL matches `src/sink/postgres.ts`.
+- After RPC changes, test against a live node.
+- After reorg logic changes, verify orphaned rows are preserved and flags flip
+  instead of deleting history.
+- After supply changes, verify:
+  1. checkpoints store `emission_amount`,
+  2. hash validation happens before append,
+  3. rollback/recompute works from the last valid ancestor.
+- After API changes, keep `/openapi.json` and `/docs` in sync.
 
 ---
 
-## Key constraints (do not violate)
+## Key constraints
 
 | Constraint | Reason |
 |---|---|
-| No `any` types | TypeScript strict mode — use types from `types.d.ts` |
-| No wallet balance polling | Privacy limitation — see `docs/future.md` |
-| No inventing API fields | Logos API is underdocumented; stick to what `docs/api.md` confirms |
-| `ON CONFLICT DO NOTHING` on block insert | Re-runs from same slot must be idempotent |
-| `processBlock` wraps block+leader in one transaction | Prevents partial state on crash |
-| `processBatch` for backfill | Single transaction per batch; bulk unnest INSERT |
-| `setLastSlot` uses `GREATEST` | Progress never goes backwards (safe for concurrent updates) |
-| Progress table always updated after each batch | Enables safe restart without re-indexing |
-| Startup rescans from `MAX(logos_blocks.slot)+1` when progress is ahead | Repairs tail gaps after transient empty RPC range responses |
-| `lib-stream` and `events/blocks/stream` are NDJSON, not SSE | Use `http.request` + readline, not EventSource |
-| Metrics use `logos_` / `logos_node_` prefixes | Fleet observability contract; keep labels bounded |
-| `LOG_FORMAT=json` for production log shipping | Emits `{ts, level, label, message, metadata}` JSON lines |
+| No `any` types | Strict TS branch; use explicit Monero types |
+| No invented validator/miner identities | Monero does not expose a stable validator model |
+| No wallet balance / address ownership indexing | Unsafe without chain-native public semantics |
+| `emission_amount` only for supply | Fees do not mint new XMR |
+| `height + hash` progress anchoring | Height alone is not reorg-safe |
+| Preserve orphaned blocks/txs | Reorg debugging and canonical flips need history |
+| Canonical-only default public queries | Explorer users should not see side branches by default |
+| Per-request RPC timeout + retry cap | No infinite hangs on heavy RPC |
+| Bounded metric labels only | Avoid Prometheus cardinality explosions |
 
 ---
 
-## Quick-start for a new agent
+## Quick start for a new agent
 
 ```bash
-cd /pool0/logos-indexer
-cat docs/api.md          # understand the node API
-cat src/types.d.ts       # understand data shapes
-cat initdb/001-schema.sql  # understand the DB schema
-cat src/sink/postgres.ts   # understand write path (processBlock / processBatch)
-cat src/runner/follow.ts   # understand gap-fill + serial stream queue
-cat docs/indexer-api.md    # understand explorer API contract
-cat docs/operations.md     # understand env, Docker, troubleshooting
-cat docs/network-upgrades.md # understand future release workflow
-npm install
-cp .env.example .env     # fill in PG_PASSWORD
-npm run db:init
-npm run dev
+cd /pool0/chain-data-indexer-monero
+cat docs/api.md
+cat src/types.d.ts
+cat initdb/001-schema.sql
+cat src/sink/postgres.ts
+cat src/runner/syncRange.ts
+cat src/runner/canonicalChain.ts
+cat src/runner/supplyBackfill.ts
+cat docs/indexer-api.md
+corepack enable
+yarn install
+cp .env.example .env
+yarn db:init
+yarn build
+yarn dev
 ```
 
-Health check: `curl http://localhost:3001/health`
-Metrics: `curl http://localhost:3001/metrics`
+Health: `curl http://localhost:3001/health`  
+Metrics: `curl http://localhost:3001/metrics`  
 Explorer API: `curl http://localhost:3001/api/v1/stats`
-
-## Current status (v0.1.2)
-
-- [x] Block indexing (slot, height, leader_key, raw JSON)
-- [x] Proof leader-key diagnostics (not stable validator identities)
-- [x] Backfill with resume
-- [x] Live NDJSON block follow
-- [x] Gap-free operation: gap-fill on every connect/reconnect
-- [x] Serial block-stream event queue (no out-of-order progress)
-- [x] Atomic block + leader transactions (idempotent on restart)
-- [x] Bulk INSERT for backfill (`processBatch` with unnest)
-- [x] Retry with exponential backoff on all RPC calls
-- [x] Exponential backoff on block-stream reconnect (5s → 60s)
-- [x] Block-stream stall detection via fetchInfo heartbeat
-- [x] Finality tracking via `/cryptarchia/lib-stream` (NDJSON)
-- [x] Health endpoint `GET /health` (lag, node_mode, uptime)
-- [x] Prometheus endpoint `GET /metrics` and JSON log format (`LOG_FORMAT=json`)
-- [x] Raw transaction indexing (`logos_transactions`)
-- [x] Explorer API: `/api/v1/stats`, `/api/v1/blocks`, `/api/v1/transactions`, `/api/v1/leader-keys`
-- [x] API, operations, and network-upgrade documentation
-- [ ] Wallet balances — blocked by privacy design (see `docs/future.md`)

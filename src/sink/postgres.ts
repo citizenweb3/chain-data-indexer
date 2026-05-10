@@ -1,256 +1,179 @@
 import pg from 'pg';
 import { getPool } from '../db/pg.js';
-import { observeBlock, observeFlush, setIndexedHeight } from '../metrics/registry.js';
-import type { LogosBlock, LogosTransaction } from '../types.js';
+import {
+  observeBlock,
+  observeFlush,
+  setIndexedHeight,
+  setSupplyCheckpointHeight,
+} from '../metrics/registry.js';
+import { parseMoneroJson } from '../rpc/client.js';
+import { getTransactionShape } from '../txDecode.js';
+import type {
+  IndexedMoneroBlock,
+  MoneroRpcTransaction,
+  MoneroTxJson,
+  SupplyCheckpointRow,
+} from '../types.js';
 
 type QueryRunner = pg.Pool | pg.PoolClient;
 
 interface InsertedBlockRow {
-  id: string;
-  leader_key: string;
-  slot: string;
-  height: string | null;
+  hash: string;
+  height: string;
 }
 
-// ─── Internal helpers (accept either a pool or an in-progress client) ─────────
-
-async function _upsertBlock(
-  block: LogosBlock,
-  qr: QueryRunner,
-): Promise<boolean> {
-  const h = block.header;
-  const pol = h.proof_of_leadership;
-  if (!h.id) return false;
-
-  const result = await qr.query(
-    `INSERT INTO logos_blocks
-       (id, parent_block, slot, height, block_root, leader_key, voucher_cm, entropy, tx_count, raw)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-     ON CONFLICT (id) DO NOTHING`,
-    [
-      h.id,
-      h.parent_block,
-      h.slot,
-      h.height ?? null,
-      h.block_root,
-      pol.leader_key,
-      pol.voucher_cm,
-      pol.entropy_contribution,
-      block.transactions.length,
-      JSON.stringify(block),
-    ],
-  );
-  return result.rowCount === 1;
+function atomicString(value: number | string): string {
+  return typeof value === 'string' ? value : String(Math.trunc(value));
 }
 
-async function _upsertLeader(
-  leaderKey: string,
-  slot: number,
-  qr: QueryRunner,
-): Promise<number> {
-  const result = await qr.query(
-    `INSERT INTO logos_leaders (leader_key, blocks_produced, first_block_slot, last_block_slot)
-     VALUES ($1, 1, $2, $2)
-     ON CONFLICT (leader_key) DO UPDATE SET
-       blocks_produced  = logos_leaders.blocks_produced + 1,
-       first_block_slot = LEAST(logos_leaders.first_block_slot, EXCLUDED.first_block_slot),
-       last_block_slot  = GREATEST(logos_leaders.last_block_slot, EXCLUDED.last_block_slot),
-       updated_at       = now()`,
-    [leaderKey, slot],
-  );
-  return result.rowCount ?? 0;
-}
-
-function transactionIdentity(
-  tx: LogosTransaction,
-  blockId: string,
-  position: number,
-): { id: string; txHash: string | null } {
-  const hash = typeof tx.mantle_tx?.hash === 'string' && tx.mantle_tx.hash.length > 0
-    ? tx.mantle_tx.hash
-    : null;
+function transactionRaw(tx: MoneroRpcTransaction): Record<string, unknown> {
   return {
-    id: hash ?? `${blockId}:${position}`,
-    txHash: hash,
+    ...tx,
+    parsed_json: parseMoneroJson<MoneroTxJson>(tx.as_json),
   };
 }
 
-async function _upsertTransactions(
-  blockId: string,
-  transactions: LogosTransaction[],
+function blockRaw(entry: IndexedMoneroBlock): Record<string, unknown> {
+  return {
+    ...entry.block,
+    parsed_json: entry.parsedBlock,
+  };
+}
+
+async function insertTransactions(
+  entries: IndexedMoneroBlock[],
   qr: QueryRunner,
 ): Promise<number> {
-  if (transactions.length === 0) return 0;
-
-  const ids: string[] = [];
-  const hashes: Array<string | null> = [];
-  const blockIds: string[] = [];
+  const hashes: string[] = [];
+  const blockHashes: string[] = [];
+  const blockHeights: number[] = [];
   const positions: number[] = [];
-  const raws: LogosTransaction[] = [];
+  const versions: number[] = [];
+  const unlockTimes: number[] = [];
+  const inputsCounts: number[] = [];
+  const outputsCounts: number[] = [];
+  const feeAtomics: Array<string | null> = [];
+  const inPools: boolean[] = [];
+  const confirmations: Array<number | null> = [];
+  const raws: string[] = [];
 
-  for (let i = 0; i < transactions.length; i++) {
-    const tx = transactions[i];
-    const identity = transactionIdentity(tx, blockId, i);
-    ids.push(identity.id);
-    hashes.push(identity.txHash);
-    blockIds.push(blockId);
-    positions.push(i);
-    raws.push(tx);
+  for (const entry of entries) {
+    const blockHash = entry.block.block_header.hash;
+    const blockHeight = entry.block.block_header.height;
+
+    entry.transactions.forEach((tx, position) => {
+      const raw = transactionRaw(tx);
+      const shape = getTransactionShape(raw);
+      hashes.push(tx.tx_hash);
+      blockHashes.push(blockHash);
+      blockHeights.push(blockHeight);
+      positions.push(position);
+      versions.push(shape.version ?? 0);
+      unlockTimes.push(shape.unlockTime ?? 0);
+      inputsCounts.push(shape.inputsCount);
+      outputsCounts.push(shape.outputsCount);
+      feeAtomics.push(shape.feeAtomic);
+      inPools.push(tx.in_pool);
+      confirmations.push(tx.confirmations ?? null);
+      raws.push(JSON.stringify(raw));
+    });
   }
 
+  if (hashes.length === 0) return 0;
+
   const result = await qr.query(
-    `INSERT INTO logos_transactions (id, tx_hash, block_id, position, raw)
+    `INSERT INTO monero_transactions
+       (hash, block_hash, block_height, position, version, unlock_time, inputs_count, outputs_count,
+        fee_atomic, in_pool, confirmations, raw)
      SELECT * FROM unnest(
-       $1::text[], $2::text[], $3::text[], $4::integer[], $5::jsonb[]
-     ) AS t(id, tx_hash, block_id, position, raw)
+       $1::text[], $2::text[], $3::bigint[], $4::integer[], $5::integer[], $6::bigint[],
+       $7::integer[], $8::integer[], $9::text[], $10::boolean[], $11::bigint[], $12::jsonb[]
+     ) AS t(hash, block_hash, block_height, position, version, unlock_time, inputs_count, outputs_count,
+            fee_atomic, in_pool, confirmations, raw)
      ON CONFLICT DO NOTHING`,
-    [ids, hashes, blockIds, positions, raws.map((tx) => JSON.stringify(tx))],
+    [hashes, blockHashes, blockHeights, positions, versions, unlockTimes, inputsCounts, outputsCounts, feeAtomics, inPools, confirmations, raws],
   );
+
   return result.rowCount ?? 0;
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-/**
- * Process a single block atomically: insert block + update proof-key diagnostics
- * in one transaction. The key row is only updated when the block is newly
- * inserted (idempotent on restart — avoids double-counting on re-processed slot
- * ranges).
- */
-export async function processBlock(block: LogosBlock): Promise<void> {
-  if (!block.header.id) return;
-
-  const client = await getPool().connect();
-  const start = process.hrtime.bigint();
-  let inserted = false;
-  let leaderRows = 0;
-  let transactionRows = 0;
-  try {
-    await client.query('BEGIN');
-    inserted = await _upsertBlock(block, client);
-    if (inserted) {
-      leaderRows = await _upsertLeader(
-        block.header.proof_of_leadership.leader_key,
-        block.header.slot,
-        client,
-      );
-      transactionRows = await _upsertTransactions(block.header.id, block.transactions, client);
-    }
-    await client.query('COMMIT');
-    const duration = Number(process.hrtime.bigint() - start) / 1_000_000_000;
-    observeFlush('core', duration, {
-      logos_blocks: inserted ? 1 : 0,
-      logos_leaders: leaderRows,
-      logos_transactions: transactionRows,
-    });
-    if (inserted) {
-      observeBlock(duration);
-      setIndexedHeight(block.header.height);
-    }
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+export async function processBlock(entry: IndexedMoneroBlock): Promise<void> {
+  await processBatch([entry]);
 }
 
-/**
- * Process a batch of blocks in a single database transaction.
- * Uses unnest for a multi-row INSERT, then aggregates proof-key diagnostics in
- * one query.
- * Returns the number of newly inserted blocks.
- */
-export async function processBatch(blocks: LogosBlock[]): Promise<number> {
-  const valid = blocks.filter((b) => b.header.id);
-  if (valid.length === 0) return 0;
+export async function processBatch(entries: IndexedMoneroBlock[]): Promise<number> {
+  if (entries.length === 0) return 0;
 
-  const ids         = valid.map((b) => b.header.id!);
-  const parents     = valid.map((b) => b.header.parent_block);
-  const slots       = valid.map((b) => b.header.slot);
-  const heights     = valid.map((b) => b.header.height ?? null);
-  const roots       = valid.map((b) => b.header.block_root);
-  const leaderKeys  = valid.map((b) => b.header.proof_of_leadership.leader_key);
-  const voucherCms  = valid.map((b) => b.header.proof_of_leadership.voucher_cm);
-  const entropies   = valid.map((b) => b.header.proof_of_leadership.entropy_contribution);
-  const txCounts    = valid.map((b) => b.transactions.length);
-  const raws        = valid.map((b) => JSON.stringify(b));
-  const blocksById  = new Map(valid.map((block) => [block.header.id!, block]));
+  const hashes = entries.map((entry) => entry.block.block_header.hash);
+  const prevHashes = entries.map((entry) => entry.block.block_header.prev_hash);
+  const heights = entries.map((entry) => entry.block.block_header.height);
+  const timestamps = entries.map((entry) => entry.block.block_header.timestamp);
+  const majorVersions = entries.map((entry) => entry.block.block_header.major_version);
+  const minorVersions = entries.map((entry) => entry.block.block_header.minor_version);
+  const nonces = entries.map((entry) => entry.block.block_header.nonce);
+  const blockSizes = entries.map((entry) => entry.block.block_header.block_size);
+  const blockWeights = entries.map((entry) => entry.block.block_header.block_weight);
+  const longTermWeights = entries.map((entry) => entry.block.block_header.long_term_weight);
+  const numTxes = entries.map((entry) => entry.block.block_header.num_txes);
+  const minerTxHashes = entries.map((entry) => entry.block.block_header.miner_tx_hash);
+  const rewardAtomics = entries.map((entry) => atomicString(entry.block.block_header.reward));
+  const difficultyHexes = entries.map((entry) => entry.block.block_header.wide_difficulty);
+  const cumulativeDifficultyHexes = entries.map((entry) => entry.block.block_header.wide_cumulative_difficulty);
+  const orphanStatuses = entries.map((entry) => entry.block.block_header.orphan_status);
+  const raws = entries.map((entry) => JSON.stringify(blockRaw(entry)));
 
   const client = await getPool().connect();
   try {
     await client.query('BEGIN');
-
-    // Multi-row insert; RETURNING gives us which rows were actually new
     const start = process.hrtime.bigint();
+
     const { rows: inserted } = await client.query<InsertedBlockRow>(
-      `INSERT INTO logos_blocks
-         (id, parent_block, slot, height, block_root, leader_key, voucher_cm, entropy, tx_count, raw)
+      `INSERT INTO monero_blocks
+         (hash, prev_hash, height, timestamp, major_version, minor_version, nonce,
+          block_size, block_weight, long_term_weight, num_txes, miner_tx_hash,
+          reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status, raw)
        SELECT * FROM unnest(
-         $1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::text[],
-         $6::text[], $7::text[], $8::text[], $9::integer[], $10::jsonb[]
-       ) AS t(id, parent_block, slot, height, block_root, leader_key, voucher_cm, entropy, tx_count, raw)
-       ON CONFLICT (id) DO NOTHING
-       RETURNING id, leader_key, slot, height::text`,
-      [ids, parents, slots, heights, roots, leaderKeys, voucherCms, entropies, txCounts, raws],
+         $1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::integer[], $6::integer[],
+         $7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[], $11::integer[], $12::text[],
+         $13::text[], $14::text[], $15::text[], $16::boolean[], $17::jsonb[]
+       ) AS t(hash, prev_hash, height, timestamp, major_version, minor_version, nonce,
+              block_size, block_weight, long_term_weight, num_txes, miner_tx_hash,
+              reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status, raw)
+       ON CONFLICT (hash) DO NOTHING
+       RETURNING hash, height::text`,
+      [
+        hashes,
+        prevHashes,
+        heights,
+        timestamps,
+        majorVersions,
+        minorVersions,
+        nonces,
+        blockSizes,
+        blockWeights,
+        longTermWeights,
+        numTxes,
+        minerTxHashes,
+        rewardAtomics,
+        difficultyHexes,
+        cumulativeDifficultyHexes,
+        orphanStatuses,
+        raws,
+      ],
     );
 
-    let leaderRows = 0;
-    let transactionRows = 0;
-    if (inserted.length > 0) {
-      // Aggregate per proof leader key from newly inserted rows, then upsert once.
-      const leaderStats = new Map<string, { count: number; minSlot: number; maxSlot: number }>();
-      for (const row of inserted) {
-        const s = Number(row.slot);
-        const existing = leaderStats.get(row.leader_key);
-        if (existing) {
-          existing.count++;
-          existing.minSlot = Math.min(existing.minSlot, s);
-          existing.maxSlot = Math.max(existing.maxSlot, s);
-        } else {
-          leaderStats.set(row.leader_key, { count: 1, minSlot: s, maxSlot: s });
-        }
-      }
-
-      const lKeys    = [...leaderStats.keys()];
-      const lCounts  = lKeys.map((k) => leaderStats.get(k)!.count);
-      const lMins    = lKeys.map((k) => leaderStats.get(k)!.minSlot);
-      const lMaxs    = lKeys.map((k) => leaderStats.get(k)!.maxSlot);
-
-      const leaderResult = await client.query(
-        `INSERT INTO logos_leaders (leader_key, blocks_produced, first_block_slot, last_block_slot)
-         SELECT * FROM unnest($1::text[], $2::bigint[], $3::bigint[], $4::bigint[])
-           AS t(leader_key, blocks_produced, first_block_slot, last_block_slot)
-         ON CONFLICT (leader_key) DO UPDATE SET
-           blocks_produced  = logos_leaders.blocks_produced + EXCLUDED.blocks_produced,
-           first_block_slot = LEAST(logos_leaders.first_block_slot, EXCLUDED.first_block_slot),
-           last_block_slot  = GREATEST(logos_leaders.last_block_slot, EXCLUDED.last_block_slot),
-           updated_at       = now()`,
-        [lKeys, lCounts, lMins, lMaxs],
-      );
-      leaderRows = leaderResult.rowCount ?? 0;
-
-      const insertedIds = new Set(inserted.map((row) => row.id));
-      for (const insertedId of insertedIds) {
-        const block = blocksById.get(insertedId);
-        if (!block) continue;
-        transactionRows += await _upsertTransactions(insertedId, block.transactions, client);
-      }
-    }
+    const transactionRows = await insertTransactions(entries, client);
 
     await client.query('COMMIT');
+
     const duration = Number(process.hrtime.bigint() - start) / 1_000_000_000;
     observeFlush('core', duration, {
-      logos_blocks: inserted.length,
-      logos_leaders: leaderRows,
-      logos_transactions: transactionRows,
+      monero_blocks: inserted.length,
+      monero_transactions: transactionRows,
     });
     if (inserted.length > 0) {
       observeBlock(duration, inserted.length);
-      const heights = inserted
-        .map((row) => (row.height === null ? null : Number(row.height)))
-        .filter((height): height is number => height !== null && Number.isFinite(height));
-      if (heights.length > 0) setIndexedHeight(Math.max(...heights));
+      setIndexedHeight(Math.max(...inserted.map((row) => Number(row.height))));
     }
     return inserted.length;
   } catch (err) {
@@ -261,39 +184,78 @@ export async function processBatch(blocks: LogosBlock[]): Promise<number> {
   }
 }
 
-/**
- * Mark the LIB block and all indexed canonical ancestors as finalized.
- * Logos v0.1.2 /cryptarchia/blocks does not expose per-block height, so finality
- * must follow the LIB header_id/parent_block chain directly. Do not finalize by
- * height alone: competing sibling blocks can share the same height.
- */
-export async function markBlocksFinalized(headerId: string, _upToHeight?: number): Promise<number> {
+export async function getLatestSupplyCheckpoint(maxHeight?: number): Promise<SupplyCheckpointRow | null> {
+  const pool = getPool();
+  const values: unknown[] = [];
+  const where = maxHeight === undefined ? '' : 'WHERE height <= $1';
+  if (maxHeight !== undefined) values.push(maxHeight);
+
+  const { rows } = await pool.query<{
+    height: string;
+    block_hash: string;
+    block_timestamp: string;
+    cumulative_emission_atomic: string;
+    cumulative_fee_atomic: string;
+    source_method: string;
+    computed_at: Date;
+  }>(
+    `SELECT height::text, block_hash, block_timestamp::text, cumulative_emission_atomic,
+            cumulative_fee_atomic, source_method, computed_at
+       FROM monero_supply_checkpoints
+       ${where}
+      ORDER BY height DESC
+      LIMIT 1`,
+    values,
+  );
+
+  if (rows.length === 0) return null;
+  return {
+    height: Number(rows[0].height),
+    block_hash: rows[0].block_hash,
+    block_timestamp: Number(rows[0].block_timestamp),
+    cumulative_emission_atomic: rows[0].cumulative_emission_atomic,
+    cumulative_fee_atomic: rows[0].cumulative_fee_atomic,
+    source_method: rows[0].source_method,
+    computed_at: rows[0].computed_at,
+  };
+}
+
+export async function deleteSupplyCheckpointsAbove(height: number): Promise<number> {
   const start = process.hrtime.bigint();
   const result = await getPool().query(
-    `WITH RECURSIVE finalized_chain AS (
-       SELECT id, parent_block
-       FROM logos_blocks
-       WHERE id = $1
-       UNION ALL
-       SELECT parent.id, parent.parent_block
-       FROM logos_blocks parent
-       JOIN finalized_chain child ON parent.id = child.parent_block
-       WHERE NOT parent.finalized
-     ),
-     marked_by_header AS (
-       UPDATE logos_blocks b
-       SET finalized = true
-       FROM finalized_chain c
-       WHERE b.id = c.id AND NOT b.finalized
-       RETURNING b.id
-      )
-      SELECT COUNT(*)::integer AS count
-      FROM marked_by_header`,
-    [headerId],
+    'DELETE FROM monero_supply_checkpoints WHERE height > $1',
+    [height],
   );
-  const count = Number(result.rows[0]?.count ?? 0);
-  observeFlush('finality', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
-    logos_blocks: count,
+  observeFlush('supply', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
+    monero_supply_checkpoints: result.rowCount ?? 0,
   });
-  return count;
+  return result.rowCount ?? 0;
+}
+
+export async function upsertSupplyCheckpoint(checkpoint: Omit<SupplyCheckpointRow, 'computed_at'>): Promise<void> {
+  const start = process.hrtime.bigint();
+  await getPool().query(
+    `INSERT INTO monero_supply_checkpoints
+       (height, block_hash, block_timestamp, cumulative_emission_atomic, cumulative_fee_atomic, source_method, computed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     ON CONFLICT (height) DO UPDATE
+       SET block_hash = EXCLUDED.block_hash,
+           block_timestamp = EXCLUDED.block_timestamp,
+           cumulative_emission_atomic = EXCLUDED.cumulative_emission_atomic,
+           cumulative_fee_atomic = EXCLUDED.cumulative_fee_atomic,
+           source_method = EXCLUDED.source_method,
+           computed_at = now()`,
+    [
+      checkpoint.height,
+      checkpoint.block_hash,
+      checkpoint.block_timestamp,
+      checkpoint.cumulative_emission_atomic,
+      checkpoint.cumulative_fee_atomic,
+      checkpoint.source_method,
+    ],
+  );
+  observeFlush('supply', Number(process.hrtime.bigint() - start) / 1_000_000_000, {
+    monero_supply_checkpoints: 1,
+  });
+  setSupplyCheckpointHeight(checkpoint.height);
 }

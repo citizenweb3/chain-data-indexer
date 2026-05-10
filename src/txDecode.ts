@@ -1,186 +1,111 @@
-import type { LogosTransaction, MantleTxOp } from './types.js';
+import JSONbigFactory from 'json-bigint';
+import type { MoneroTxJson } from './types.js';
 
-const OPCODE_NAMES: Record<number, string> = {
-  0x00: 'Transfer',
-  0x10: 'ChannelSetKeys',
-  0x11: 'ChannelInscribe',
-  0x12: 'ChannelDeposit',
-  0x13: 'ChannelWithdraw',
-  0x20: 'SDPDeclare',
-  0x21: 'SDPWithdraw',
-  0x22: 'SDPActive',
-  0x30: 'LeaderClaim',
-};
+const JSONbig = JSONbigFactory({ storeAsString: true });
 
-const KNOWN_PROOF_TYPES = [
-  'Ed25519Sig',
-  'ZkSig',
-  'ZkAndEd25519Sigs',
-  'PoC',
-  'ChannelWithdrawProof',
-] as const;
-
-const HEX_PREVIEW_BYTES = 32;
-const ASCII_FRAGMENT_MIN = 6;
-const ASCII_FRAGMENT_LIMIT = 3;
-
-type Primitive = string | number | boolean | null;
-
-export interface BytePreview {
-  format: 'bytes';
-  length: number;
-  hex_preview: string;
-  truncated: boolean;
-  ascii_fragments?: string[];
-}
-
-export type DecodedValue = Primitive | BytePreview | DecodedValue[] | { [key: string]: DecodedValue };
-
-export interface DecodedTxOp {
-  index: number;
-  opcode: number;
-  opcode_name: string;
-  proof_type: string | null;
-  payload: DecodedValue;
-}
-
-export interface DecodedTransaction {
-  format: 'safe-explorer-v1';
-  op_count: number;
-  proof_count: number;
-  op_types: string[];
-  proof_types: string[];
-  ops: DecodedTxOp[];
+export interface DecodedMoneroTransaction {
+  format: 'safe-monero-explorer-v1';
+  version: number | null;
+  unlock_time: number | null;
+  is_coinbase: boolean;
+  inputs_count: number;
+  outputs_count: number;
+  extra_length: number;
+  fee_atomic: string | null;
 }
 
 export interface TransactionShape {
   hash: string | null;
-  opCount: number;
-  opTypes: string[];
-  proofTypes: string[];
-  storageGasPrice: number | null;
-  executionGasPrice: number | null;
-  decoded: DecodedTransaction | null;
+  version: number | null;
+  unlockTime: number | null;
+  isCoinbase: boolean;
+  inputsCount: number;
+  outputsCount: number;
+  extraLength: number;
+  feeAtomic: string | null;
+  sizeBytes: number | null;
+  decoded: DecodedMoneroTransaction | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isByteArray(value: unknown): value is number[] {
-  return Array.isArray(value)
-    && value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255);
+function parseTxJson(raw: unknown): MoneroTxJson | null {
+  if (!isRecord(raw)) return null;
+  if ('parsed_json' in raw && isRecord(raw.parsed_json)) {
+    return raw.parsed_json as MoneroTxJson;
+  }
+  if (typeof raw.as_json !== 'string' || raw.as_json.length === 0) return null;
+  try {
+    return JSONbig.parse(raw.as_json) as MoneroTxJson;
+  } catch {
+    return null;
+  }
 }
 
-function previewHex(bytes: number[]): string {
-  return Buffer.from(bytes.slice(0, HEX_PREVIEW_BYTES)).toString('hex');
+function coerceInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^-?\d+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
-function extractAsciiFragments(bytes: number[]): string[] {
-  const fragments: string[] = [];
-  let current: number[] = [];
-
-  const flush = () => {
-    if (current.length >= ASCII_FRAGMENT_MIN && fragments.length < ASCII_FRAGMENT_LIMIT) {
-      fragments.push(Buffer.from(current).toString('utf8'));
-    }
-    current = [];
-  };
-
-  for (const byte of bytes) {
-    if (byte >= 32 && byte <= 126) {
-      current.push(byte);
-      continue;
-    }
-    flush();
-    if (fragments.length >= ASCII_FRAGMENT_LIMIT) break;
-  }
-
-  if (fragments.length < ASCII_FRAGMENT_LIMIT) {
-    flush();
-  }
-
-  return fragments;
+function coerceAtomicString(value: unknown): string | null {
+  if (typeof value === 'string' && /^-?\d+$/.test(value)) return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
+  return null;
 }
 
-function normalizeValue(value: unknown): DecodedValue {
-  if (value === null) return null;
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return value;
-  }
-  if (isByteArray(value)) {
-    const asciiFragments = extractAsciiFragments(value);
-    const preview: BytePreview = {
-      format: 'bytes',
-      length: value.length,
-      hex_preview: previewHex(value),
-      truncated: value.length > HEX_PREVIEW_BYTES,
-    };
-    if (asciiFragments.length > 0) {
-      preview.ascii_fragments = asciiFragments;
-    }
-    return preview;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => normalizeValue(item));
-  }
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, normalizeValue(entry)]),
-    );
-  }
-  return String(value);
+function isCoinbaseTx(parsed: MoneroTxJson | null): boolean {
+  const firstInput = Array.isArray(parsed?.vin) ? parsed.vin[0] : null;
+  return isRecord(firstInput) && isRecord(firstInput.gen);
 }
 
-function opcodeName(opcode: number): string {
-  return OPCODE_NAMES[opcode] ?? `Unknown(0x${opcode.toString(16).padStart(2, '0')})`;
-}
-
-function proofType(proof: unknown): string | null {
-  if (!isRecord(proof)) return null;
-  for (const knownType of KNOWN_PROOF_TYPES) {
-    if (knownType in proof) return knownType;
+function txFeeAtomic(parsed: MoneroTxJson | null): string | null {
+  if (!parsed) return null;
+  const directFee = coerceAtomicString(parsed.fee);
+  if (directFee) return directFee;
+  if (isRecord(parsed.rct_signatures)) {
+    return coerceAtomicString(parsed.rct_signatures.txnFee);
   }
-  const keys = Object.keys(proof);
-  return keys.length === 1 ? keys[0] : null;
-}
-
-function decodeOp(op: MantleTxOp, index: number, proof: unknown): DecodedTxOp {
-  return {
-    index,
-    opcode: op.opcode,
-    opcode_name: opcodeName(op.opcode),
-    proof_type: proofType(proof),
-    payload: normalizeValue(op.payload),
-  };
+  return null;
 }
 
 export function getTransactionShape(raw: unknown): TransactionShape {
-  const tx = isRecord(raw) ? raw as LogosTransaction : null;
-  const mantleTx = tx?.mantle_tx;
-  const ops = Array.isArray(mantleTx?.ops) ? mantleTx.ops : [];
-  const proofs = Array.isArray(tx?.ops_proofs) ? tx.ops_proofs : [];
-  const decodedOps = ops.map((op, index) => decodeOp(op, index, proofs[index]));
-  const opTypes = decodedOps.map((op) => op.opcode_name);
-  const proofTypes = decodedOps
-    .map((op) => op.proof_type)
-    .filter((kind): kind is string => typeof kind === 'string');
+  const record = isRecord(raw) ? raw : null;
+  const parsed = parseTxJson(raw);
+  const version = coerceInteger(parsed?.version);
+  const unlockTime = coerceInteger(parsed?.unlock_time);
+  const inputsCount = Array.isArray(parsed?.vin) ? parsed.vin.length : 0;
+  const outputsCount = Array.isArray(parsed?.vout) ? parsed.vout.length : 0;
+  const extraLength = Array.isArray(parsed?.extra) ? parsed.extra.length : 0;
+  const feeAtomic = txFeeAtomic(parsed);
+  const isCoinbase = isCoinbaseTx(parsed);
+  const asHex = typeof record?.as_hex === 'string' ? record.as_hex : null;
 
   return {
-    hash: typeof mantleTx?.hash === 'string' ? mantleTx.hash : null,
-    opCount: ops.length,
-    opTypes,
-    proofTypes,
-    storageGasPrice: typeof mantleTx?.storage_gas_price === 'number' ? mantleTx.storage_gas_price : null,
-    executionGasPrice: typeof mantleTx?.execution_gas_price === 'number' ? mantleTx.execution_gas_price : null,
-    decoded: decodedOps.length > 0
+    hash: typeof record?.tx_hash === 'string' ? record.tx_hash : null,
+    version,
+    unlockTime,
+    isCoinbase,
+    inputsCount,
+    outputsCount,
+    extraLength,
+    feeAtomic,
+    sizeBytes: asHex ? Math.floor(asHex.length / 2) : null,
+    decoded: parsed
       ? {
-          format: 'safe-explorer-v1',
-          op_count: ops.length,
-          proof_count: proofs.length,
-          op_types: opTypes,
-          proof_types: proofTypes,
-          ops: decodedOps,
+          format: 'safe-monero-explorer-v1',
+          version,
+          unlock_time: unlockTime,
+          is_coinbase: isCoinbase,
+          inputs_count: inputsCount,
+          outputs_count: outputsCount,
+          extra_length: extraLength,
+          fee_atomic: feeAtomic,
         }
       : null,
   };

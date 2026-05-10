@@ -1,133 +1,219 @@
-// Logos Blockchain API types — v0.1.2 (testnet)
-// Source: https://github.com/logos-blockchain/logos-blockchain
+export type MoneroRpcError = {
+  code: number;
+  message: string;
+};
 
-// ─── Consensus / network ──────────────────────────────────────────────────────
+export interface MoneroJsonRpcEnvelope<T> {
+  id: string;
+  jsonrpc: '2.0';
+  result?: T;
+  error?: MoneroRpcError;
+}
 
-export interface CryptarchiaInfo {
-  lib: string;        // last irreversible block hash
-  lib_slot: number;
-  tip: string;        // current chain tip hash
-  slot: number;
+export interface MoneroBlockHeader {
+  block_size: number;
+  block_weight: number;
+  cumulative_difficulty: number | string;
+  cumulative_difficulty_top64: number | string;
+  depth: number;
+  difficulty: number | string;
+  difficulty_top64: number | string;
+  hash: string;
   height: number;
-  mode: 'Online' | 'Bootstrapping';
+  long_term_weight: number;
+  major_version: number;
+  miner_tx_hash: string;
+  minor_version: number;
+  nonce: number;
+  num_txes: number;
+  orphan_status: boolean;
+  pow_hash: string;
+  prev_hash: string;
+  reward: number | string;
+  timestamp: number;
+  wide_cumulative_difficulty: string;
+  wide_difficulty: string;
 }
 
-export interface NetworkInfo {
-  listen_addresses: string[];
-  peer_id: string;
-  n_peers: number;
-  n_connections: number;
-  n_pending_connections: number;
+export interface MoneroTxJson {
+  version?: number;
+  unlock_time?: number;
+  vin?: unknown[];
+  vout?: unknown[];
+  extra?: unknown[];
+  signatures?: unknown[];
+  rct_signatures?: Record<string, unknown>;
+  fee?: number | string;
+  [key: string]: unknown;
 }
 
-// ─── Blocks ───────────────────────────────────────────────────────────────────
-
-export interface ProofOfLeadership {
-  proof: number[];              // 128-byte Groth16 proof (raw byte array)
-  entropy_contribution: string; // hex
-  leader_key: string;           // proof leader/signing key (hex), not a stable validator id in v0.1.2
-  voucher_cm: string;           // voucher commitment (hex)
+export interface MoneroBlockJson {
+  major_version: number;
+  minor_version: number;
+  timestamp: number;
+  prev_id: string;
+  nonce: number;
+  miner_tx: MoneroTxJson;
+  tx_hashes: string[];
+  [key: string]: unknown;
 }
 
-export interface BlockHeader {
-  id?: string;          // present in /cryptarchia/blocks, absent in /storage/block
-  version?: string;     // e.g. "Bedrock"
-  parent_block: string; // parent block hash (hex)
-  slot: number;
-  height?: number | null;
-  block_root: string;   // hex
-  proof_of_leadership: ProofOfLeadership;
+export interface MoneroGetInfo {
+  adjusted_time: number;
+  alt_blocks_count: number;
+  busy_syncing: boolean;
+  database_size: number | string;
+  free_space: number | string;
+  height: number;
+  incoming_connections_count: number;
+  mainnet: boolean;
+  nettype: 'mainnet' | 'testnet' | 'stagenet';
+  offline: boolean;
+  outgoing_connections_count: number;
+  restricted: boolean;
+  rpc_connections_count: number;
+  start_time: number;
+  status: string;
+  synchronized: boolean;
+  target: number;
+  target_height: number;
+  top_block_hash: string;
+  tx_count: number;
+  tx_pool_size: number;
+  untrusted: boolean;
+  version: string;
+  was_bootstrap_ever_used: boolean;
+  [key: string]: unknown;
 }
 
-export interface LogosBlock {
-  header: BlockHeader;
-  signature?: number[];     // raw byte array, present in /storage/block
-  transactions: LogosTransaction[];
+export interface MoneroBlockResponse {
+  blob: string;
+  block_header: MoneroBlockHeader;
+  credits: number;
+  json: string;
+  miner_tx_hash: string;
+  status: string;
+  top_hash: string;
+  tx_hashes?: string[];
+  untrusted: boolean;
 }
 
-export interface MantleTxOp {
-  opcode: number;
-  payload: unknown;
+export interface MoneroPruneStatus {
+  pruned: boolean;
+  pruning_seed: number;
+  status: string;
+  untrusted: boolean;
 }
 
-export interface MantleTxBody {
-  hash?: string;
-  ops?: MantleTxOp[];
-  storage_gas_price?: number;
-  execution_gas_price?: number;
+export interface MoneroCoinbaseTxSum {
+  credits: number;
+  emission_amount: number | string;
+  emission_amount_top64: number | string;
+  fee_amount: number | string;
+  fee_amount_top64: number | string;
+  status: string;
+  top_hash: string;
+  untrusted: boolean;
+  wide_emission_amount?: string;
+  wide_fee_amount?: string;
 }
 
-export interface LogosTransaction {
-  mantle_tx?: MantleTxBody;
-  ops_proofs?: Record<string, unknown>[];
+export interface MoneroAlternativeChain {
+  block_hash: string;
+  block_hashes: string[];
+  difficulty: number | string;
+  difficulty_top64: number | string;
+  height: number;
+  length: number;
+  main_chain_parent_block: string;
+  wide_difficulty: string;
 }
 
-// ─── Live block stream event (application/x-ndjson) ───────────────────────────
-
-export interface BlockStreamEvent {
-  block: LogosBlock;
-  tip: string;
-  tip_slot: number;
-  lib: string;
-  lib_slot: number;
+export interface MoneroSyncInfo {
+  height: number;
+  overview: string;
+  peers: unknown[];
+  status: string;
+  target_height?: number;
+  next_needed_pruning_seed?: number;
+  [key: string]: unknown;
 }
 
-// ─── LIB-stream event (application/x-ndjson) ─────────────────────────────────
-// Emitted by GET /cryptarchia/lib-stream each time the Last Irreversible Block advances.
-// Verified against live testnet node (v0.1.2).
-
-export interface LibStreamEvent {
-  height:    number;   // finalized block height
-  header_id: string;   // finalized block header id (hex)
+export interface MoneroRpcTransaction {
+  as_hex: string;
+  as_json: string;
+  block_height: number;
+  block_timestamp: number;
+  confirmations: number;
+  double_spend_seen: boolean;
+  in_pool: boolean;
+  output_indices: number[];
+  prunable_as_hex: string;
+  prunable_hash: string;
+  pruned_as_hex: string;
+  tx_hash: string;
 }
 
-// ─── Database row shapes (returned from queries) ──────────────────────────────
+export interface IndexedMoneroBlock {
+  block: MoneroBlockResponse;
+  parsedBlock: MoneroBlockJson;
+  transactions: MoneroRpcTransaction[];
+}
 
 export interface BlockRow {
-  id: string;
-  parent_block: string;
-  slot: number;
-  height: number | null;
-  block_root: string;
-  leader_key: string;
-  voucher_cm: string;
-  entropy: string;
-  tx_count: number;
-  raw: LogosBlock;
-  finalized: boolean;
+  hash: string;
+  prev_hash: string;
+  height: number;
+  timestamp: number;
+  major_version: number;
+  minor_version: number;
+  nonce: number;
+  block_size: number;
+  block_weight: number;
+  long_term_weight: number;
+  num_txes: number;
+  miner_tx_hash: string;
+  reward_atomic: string;
+  difficulty_hex: string;
+  cumulative_difficulty_hex: string;
+  orphan_status: boolean;
   is_canonical: boolean;
+  is_settled: boolean;
+  raw: Record<string, unknown>;
   indexed_at: Date;
 }
 
-export interface LeaderRow {
-  // Legacy DB row name. Represents proof leader-key diagnostics, not validator identity.
-  leader_key: string;
-  blocks_produced: number;
-  first_block_slot: number | null;
-  last_block_slot: number | null;
-  updated_at: Date;
+export interface TransactionRow {
+  hash: string;
+  block_hash: string;
+  block_height: number;
+  position: number;
+  version: number;
+  unlock_time: number;
+  inputs_count: number;
+  outputs_count: number;
+  fee_atomic: string | null;
+  in_pool: boolean;
+  confirmations: number | null;
+  raw: Record<string, unknown>;
+  indexed_at: Date;
+  is_canonical: boolean;
+  is_settled: boolean;
 }
 
 export interface ProgressRow {
   id: string;
-  last_slot: number;
-  last_height: number | null;
+  last_height: number;
+  last_hash: string | null;
   updated_at: Date;
 }
 
-export interface TransactionRow {
-  id: string;
-  tx_hash: string | null;
-  block_id: string;
-  position: number;
-  raw: LogosTransaction;
-  indexed_at: Date;
+export interface SupplyCheckpointRow {
+  height: number;
+  block_hash: string;
+  block_timestamp: number;
+  cumulative_emission_atomic: string;
+  cumulative_fee_atomic: string;
+  source_method: string;
+  computed_at: Date;
 }
-
-// ─── v0.2+ types (planned — richer decoding, not raw tx storage) ──────────────
-// Raw transactions are already indexed. Richer decoded UTXO/note lifecycle types
-// stay deferred until the protocol/API surface is stable.
-// Wallet balances per arbitrary address are NOT available in the public API
-// (privacy-first design: ZK-notes are only decryptable by the key holder).
-// logos_balance_snapshots / logos_watched_addresses are reserved for a future
-// version of the API that may expose aggregate/public balance data.

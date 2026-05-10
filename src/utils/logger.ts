@@ -1,7 +1,7 @@
 import winston from 'winston';
 import { config } from '../config.js';
 
-const DEFAULT_LABEL = 'logos-indexer';
+const DEFAULT_LABEL = 'monero-indexer';
 
 function serializeValue(value: unknown): unknown {
   if (value instanceof Error) {

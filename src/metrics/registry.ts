@@ -10,90 +10,108 @@ export const registry = new Registry();
 
 collectDefaultMetrics({
   register: registry,
-  prefix: 'logos_node_',
+  prefix: 'monero_node_',
 });
 
 const indexedHeightGauge = new Gauge({
-  name: 'logos_indexed_height',
-  help: 'Last indexed Logos block height with a known height value.',
+  name: 'monero_indexed_height',
+  help: 'Last indexed Monero block height committed to storage.',
   registers: [registry],
 });
 
 const chainTipHeightGauge = new Gauge({
-  name: 'logos_chain_tip_height',
-  help: 'Latest chain tip height sampled from the Logos node.',
+  name: 'monero_chain_tip_height',
+  help: 'Latest chain height sampled from monerod.',
   registers: [registry],
 });
 
 const lagBlocksGauge = new Gauge({
-  name: 'logos_lag_blocks',
-  help: 'Difference between sampled chain tip height and indexed height; 0 until tip is sampled.',
+  name: 'monero_lag_blocks',
+  help: 'Difference between sampled chain tip height and indexed height.',
+  registers: [registry],
+});
+
+const supplyCheckpointHeightGauge = new Gauge({
+  name: 'monero_supply_checkpoint_height',
+  help: 'Latest Monero supply checkpoint height written to storage.',
+  registers: [registry],
+});
+
+const supplyLagBlocksGauge = new Gauge({
+  name: 'monero_supply_lag_blocks',
+  help: 'Difference between sampled chain tip height and latest supply checkpoint height.',
+  registers: [registry],
+});
+
+const nodeSyncStateGauge = new Gauge({
+  name: 'monero_node_syncing_state',
+  help: '1 when monerod is syncing or not yet synchronized, 0 when it is fully synchronized.',
   registers: [registry],
 });
 
 const blocksProcessedTotal = new Counter({
-  name: 'logos_blocks_processed_total',
-  help: 'Total newly indexed Logos blocks committed to storage.',
+  name: 'monero_blocks_processed_total',
+  help: 'Total newly indexed Monero blocks committed to storage.',
   registers: [registry],
 });
 
 const blockProcessDurationSeconds = new Histogram({
-  name: 'logos_block_process_duration_seconds',
-  help: 'Duration of successful block processing operations in seconds.',
-  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  name: 'monero_block_process_duration_seconds',
+  help: 'Duration of successful Monero block processing operations in seconds.',
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
   registers: [registry],
 });
 
 const flushDurationSeconds = new Histogram({
-  name: 'logos_flush_duration_seconds',
+  name: 'monero_flush_duration_seconds',
   help: 'Duration of database flush operations in seconds.',
   labelNames: ['group'] as const,
-  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
   registers: [registry],
 });
 
 const flushRowsTotal = new Counter({
-  name: 'logos_flush_rows_total',
+  name: 'monero_flush_rows_total',
   help: 'Rows written by database flush operations.',
   labelNames: ['table'] as const,
   registers: [registry],
 });
 
 const rpcRequestsTotal = new Counter({
-  name: 'logos_rpc_requests_total',
-  help: 'Total Logos RPC requests by endpoint and final status.',
+  name: 'monero_rpc_requests_total',
+  help: 'Total Monero RPC requests by endpoint and final status.',
   labelNames: ['endpoint', 'status'] as const,
   registers: [registry],
 });
 
 const rpcRequestDurationSeconds = new Histogram({
-  name: 'logos_rpc_request_duration_seconds',
-  help: 'Duration of Logos RPC requests in seconds.',
+  name: 'monero_rpc_request_duration_seconds',
+  help: 'Duration of Monero RPC requests in seconds.',
   labelNames: ['endpoint'] as const,
-  buckets: [0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60],
+  buckets: [0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300],
   registers: [registry],
 });
 
 const rpcOutageState = new Gauge({
-  name: 'logos_rpc_outage_state',
-  help: 'Logos RPC outage state: 1 when the latest RPC request failed, 0 after success.',
+  name: 'monero_rpc_outage_state',
+  help: 'Monero RPC outage state: 1 when the latest RPC request failed, 0 after success.',
   registers: [registry],
 });
 
 const pgPoolActive = new Gauge({
-  name: 'logos_pg_pool_active',
+  name: 'monero_pg_pool_active',
   help: 'Active PostgreSQL pool clients.',
   registers: [registry],
 });
 
 const pgPoolIdle = new Gauge({
-  name: 'logos_pg_pool_idle',
+  name: 'monero_pg_pool_idle',
   help: 'Idle PostgreSQL pool clients.',
   registers: [registry],
 });
 
 const pgPoolWaiting = new Gauge({
-  name: 'logos_pg_pool_waiting',
+  name: 'monero_pg_pool_waiting',
   help: 'Waiting PostgreSQL pool requests.',
   registers: [registry],
 });
@@ -102,24 +120,44 @@ const PHASES = ['starting', 'backfill', 'follow', 'shutdown'] as const;
 type Phase = typeof PHASES[number];
 
 const phaseInfo = new Gauge({
-  name: 'logos_phase_info',
-  help: 'Active Logos indexer phase; value is 1 only for the active phase.',
+  name: 'monero_phase_info',
+  help: 'Active Monero indexer phase; value is 1 only for the active phase.',
   labelNames: ['phase'] as const,
   registers: [registry],
 });
 
 type RpcStatus = 'ok' | 'timeout' | 'error';
-type FlushGroup = 'core' | 'derived' | 'finality' | 'progress';
-type FlushTable = 'logos_blocks' | 'logos_leaders' | 'logos_transactions' | 'logos_indexer_progress';
+type FlushGroup = 'core' | 'derived' | 'progress' | 'supply';
+type FlushTable =
+  | 'monero_blocks'
+  | 'monero_transactions'
+  | 'monero_indexer_progress'
+  | 'monero_supply_checkpoints';
 
 type FlushRows = Partial<Record<FlushTable, number>>;
 
 let indexedHeight: number | null = null;
 let chainTipHeight: number | null = null;
+let supplyCheckpointHeight: number | null = null;
 
-const FLUSH_GROUPS: FlushGroup[] = ['core', 'derived', 'finality', 'progress'];
-const FLUSH_TABLES: FlushTable[] = ['logos_blocks', 'logos_leaders', 'logos_transactions', 'logos_indexer_progress'];
-const RPC_ENDPOINTS = ['/cryptarchia/info', '/network/info', '/cryptarchia/blocks', '/storage/block'] as const;
+const FLUSH_GROUPS: FlushGroup[] = ['core', 'derived', 'progress', 'supply'];
+const FLUSH_TABLES: FlushTable[] = [
+  'monero_blocks',
+  'monero_transactions',
+  'monero_indexer_progress',
+  'monero_supply_checkpoints',
+];
+const RPC_ENDPOINTS = [
+  'json_rpc:get_info',
+  'json_rpc:get_block_count',
+  'json_rpc:get_block',
+  'json_rpc:get_block_header_by_height',
+  'json_rpc:get_coinbase_tx_sum',
+  'json_rpc:prune_blockchain',
+  'json_rpc:get_alternate_chains',
+  'json_rpc:sync_info',
+  'path:/get_transactions',
+] as const;
 const RPC_STATUSES: RpcStatus[] = ['ok', 'timeout', 'error'];
 
 for (const group of FLUSH_GROUPS) flushDurationSeconds.labels(group);
@@ -130,7 +168,6 @@ for (const endpoint of RPC_ENDPOINTS) {
 }
 for (const phase of PHASES) phaseInfo.labels(phase).set(0);
 
-
 function isUsableNumber(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
 }
@@ -138,9 +175,15 @@ function isUsableNumber(value: number): boolean {
 function updateLag(): void {
   if (chainTipHeight === null || indexedHeight === null) {
     lagBlocksGauge.set(0);
-    return;
+  } else {
+    lagBlocksGauge.set(Math.max(0, chainTipHeight - indexedHeight));
   }
-  lagBlocksGauge.set(Math.max(0, chainTipHeight - indexedHeight));
+
+  if (chainTipHeight === null || supplyCheckpointHeight === null) {
+    supplyLagBlocksGauge.set(0);
+  } else {
+    supplyLagBlocksGauge.set(Math.max(0, chainTipHeight - supplyCheckpointHeight));
+  }
 }
 
 export function setIndexedHeight(height: number | null | undefined): void {
@@ -155,6 +198,17 @@ export function setChainTipHeight(height: number | null | undefined): void {
   chainTipHeight = height;
   chainTipHeightGauge.set(height);
   updateLag();
+}
+
+export function setSupplyCheckpointHeight(height: number | null | undefined): void {
+  if (height == null || !isUsableNumber(height)) return;
+  supplyCheckpointHeight = height;
+  supplyCheckpointHeightGauge.set(height);
+  updateLag();
+}
+
+export function setNodeSyncState(syncing: boolean): void {
+  nodeSyncStateGauge.set(syncing ? 1 : 0);
 }
 
 export function observeBlock(durationSeconds: number, count = 1): void {
