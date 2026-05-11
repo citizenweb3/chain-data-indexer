@@ -4,6 +4,35 @@
 
 Live RPC target: `127.0.0.1:57291` using the public gRPC proto snapshot in `proto/`. The indexer follows a Miden node, stores explorer-visible chain data in Postgres, and serves a read-only HTTP API for explorer clients.
 
+**Branch status:** Development
+
+## CDI repository context
+
+This branch is part of the [`citizenweb3/chain-data-indexer`](https://github.com/citizenweb3/chain-data-indexer)
+branch family. The repository map lives in
+[`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main). The Miden explorer API is built into this branch.
+
+| Related indexer | Branch | Status |
+|---|---|---|
+| Cosmos Hub | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) | Production |
+| Aztec Protocol | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | Production |
+| Logos | [`logos-indexer-v0.1.2`](https://github.com/citizenweb3/chain-data-indexer/tree/logos-indexer-v0.1.2) | Development |
+| Monero | [`monero-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/monero-indexer) | Development |
+
+## What it indexes
+
+| Data | Source | Table |
+|---|---|---|
+| Canonical block headers and raw block bytes when available | `miden-node` public gRPC API | `miden_blocks` |
+| Account-scoped transactions | transaction/account RPC data | `miden_transactions` |
+| Discovered notes | note sync / note lookup RPC data | `miden_notes` |
+| Consumed nullifiers | nullifier sync RPC data | `miden_nullifiers` |
+| Latest account commitments | account summary / account witness RPC data | `miden_accounts` |
+| Indexer resume position | internal | `miden_indexer_progress` |
+
+See [`docs/schema.md`](docs/schema.md) and [`docs/data-model.md`](docs/data-model.md) for field-level coverage,
+encoding, and deferred protocol-scope notes.
+
 ## Quickstart (dev)
 
 ```bash
