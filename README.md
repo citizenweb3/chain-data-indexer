@@ -1,12 +1,27 @@
 # monero-indexer
 
-Production Monero explorer indexer for [ValidatorInfo](https://validatorinfo.com/).
+Monero explorer indexer for [ValidatorInfo](https://validatorinfo.com/).
 
 It indexes blocks, transactions, canonical-chain state, and XMR supply checkpoints
 from a Monero daemon into PostgreSQL and exposes a read-only explorer API.
 
 **Supported:** monerod `v0.18.4.6`  
 **Recommended node mode:** full archival node (required for historical supply backfill)
+
+**Branch status:** Development
+
+## CDI repository context
+
+This branch is part of the [`citizenweb3/chain-data-indexer`](https://github.com/citizenweb3/chain-data-indexer)
+branch family. The repository map lives in
+[`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main). The Monero explorer API is built into this branch.
+
+| Related indexer | Branch | Status |
+|---|---|---|
+| Cosmos Hub | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) | Production |
+| Aztec Protocol | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | Production |
+| Logos | [`logos-indexer-v0.1.2`](https://github.com/citizenweb3/chain-data-indexer/tree/logos-indexer-v0.1.2) | Development |
+| Polygon Miden | [`miden-indexer-v0.13.4`](https://github.com/citizenweb3/chain-data-indexer/tree/miden-indexer-v0.13.4) | Development |
 
 ---
 
