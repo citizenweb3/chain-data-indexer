@@ -1,6 +1,7 @@
 // src/sink/pg/batch.ts
 import type { PoolClient } from 'pg';
 import { getLogger } from '../../utils/logger.js';
+import { sanitizePgJson, sanitizePgText } from './sanitizeJson.js';
 
 const log = getLogger('sink/pg/batch');
 
@@ -30,8 +31,9 @@ export function makeMultiInsert(
   for (const r of rows) {
     const tuple: string[] = [];
     for (const c of columns) {
-      values.push(r[c] ?? null);
-      const cast = types?.[c] ? `::${types[c]}` : '';
+      const type = types?.[c];
+      values.push(preparePgValue(r[c], type) ?? null);
+      const cast = type ? `::${type}` : '';
       tuple.push(`$${p++}${cast}`);
     }
     chunks.push(`(${tuple.join(',')})`);
@@ -39,6 +41,27 @@ export function makeMultiInsert(
 
   const text = `INSERT INTO ${table} (${columns.join(',')}) VALUES ${chunks.join(',')} ${conflictClause}`;
   return { text, values };
+}
+
+function stringifyPgJson(value: unknown): string {
+  const json = JSON.stringify(value, (_key, item) => {
+    if (typeof item === 'bigint') return Number(item);
+    if (item instanceof Uint8Array) return Buffer.from(item).toString('base64');
+    if (Buffer.isBuffer(item)) return item.toString('base64');
+    if (item instanceof Date) return item.toISOString();
+    return item;
+  });
+  return sanitizePgJson(json);
+}
+
+function preparePgValue(value: unknown, type?: string): unknown {
+  if (value === null || value === undefined) return null;
+  if (type === 'jsonb') {
+    if (typeof value === 'string') return sanitizePgJson(value);
+    return stringifyPgJson(value);
+  }
+  if (typeof value === 'string') return sanitizePgText(value);
+  return value;
 }
 
 /**
@@ -76,22 +99,7 @@ export async function execBatchedInsert(
     : rows.map((r) => {
         const x: any = { ...r };
         for (const [col, t] of Object.entries(types)) {
-          if (t === 'jsonb') {
-            const v = x[col];
-            if (v === null || v === undefined) {
-              x[col] = null;
-            } else if (typeof v === 'string') {
-              x[col] = v; // предполагаем валидный JSON
-            } else {
-              x[col] = JSON.stringify(v, (_k, val) => {
-                if (typeof val === 'bigint') return Number(val);
-                if (val instanceof Uint8Array) return Buffer.from(val).toString('base64');
-                if (Buffer.isBuffer(val)) return val.toString('base64');
-                if (val instanceof Date) return val.toISOString();
-                return val;
-              });
-            }
-          }
+          x[col] = preparePgValue(x[col], t);
         }
         return x;
       });

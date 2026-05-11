@@ -7,10 +7,11 @@ import Long from 'long';
 import { decodeTxRaw } from '@cosmjs/proto-signing';
 import { PubKey as PubKeySecp256k1 } from 'cosmjs-types/cosmos/crypto/secp256k1/keys.js';
 import { TxBody, AuthInfo, Tx } from 'cosmjs-types/cosmos/tx/v1beta1/tx.js';
-import { decodeAnyWithRoot } from '../dynamicProto.ts';
+import { decodeAnyWithRoot, resolveNestedAny } from '../dynamicProto.ts';
 import { decodeKnown } from '../../generated/knownMsgs.ts';
 import { getLogger } from '../../utils/logger.ts';
 import { getProtoRoot, isProtoReady } from './context.ts';
+import { decodeCustomMessage, normalizeDecodedMessage } from './customMessages.ts';
 
 const log = getLogger('decode/txWorker');
 
@@ -30,13 +31,27 @@ function coinsToSnake(cs?: Array<{ denom: string; amount: string }>) {
  * @returns The decoded message object.
  */
 export function decodeMessage(typeUrl: string, value: Uint8Array): any {
+  const custom = decodeCustomMessage(typeUrl, value);
+  if (custom) return custom;
+
   const fast = decodeKnown(typeUrl, value);
-  if (fast) return { '@type': typeUrl, ...fast };
+  if (fast) {
+    const obj = { '@type': typeUrl, ...fast };
+    // Resolve nested Any fields (e.g. MsgSubmitProposal.content) if proto root is available
+    if (isProtoReady()) {
+      try {
+        resolveNestedAny(obj, getProtoRoot()!);
+      } catch {
+        /* keep as-is if resolve fails */
+      }
+    }
+    return normalizeDecodedMessage(typeUrl, obj);
+  }
 
   if (isProtoReady()) {
     try {
       const root = getProtoRoot();
-      return decodeAnyWithRoot(typeUrl, value, root);
+      return normalizeDecodedMessage(typeUrl, decodeAnyWithRoot(typeUrl, value, root));
     } catch {
       /* fall back to base64 */
     }

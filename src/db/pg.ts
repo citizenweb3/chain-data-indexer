@@ -4,6 +4,9 @@
  */
 // src/db/pg.ts
 import { Pool } from 'pg';
+import { getLogger } from '../utils/logger.js';
+
+const log = getLogger('db/pg');
 
 /**
  * Holds configuration options for PostgreSQL connection pool.
@@ -60,6 +63,14 @@ export function createPgPool(cfg: PgConfig): Pool {
     application_name: cfg.applicationName ?? 'cosmos-indexer',
     max: cfg.poolSize ?? 16,
     idleTimeoutMillis: 30_000,
+  });
+  // Critical: pg Pool emits 'error' for idle clients that lose their connection
+  // (e.g. server-side query cancellation, network blip). Without a listener,
+  // node treats it as uncaughtException and kills the process — causing the
+  // indexer to crash-loop on transient PG errors. Logging keeps it alive so
+  // the next pool.connect() returns a fresh client.
+  pool.on('error', (err) => {
+    log.warn(`pg pool client error (idle): ${String(err?.message ?? err)}`);
   });
   return pool;
 }

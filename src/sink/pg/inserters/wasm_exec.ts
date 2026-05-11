@@ -17,6 +17,7 @@ export async function insertWasmExec(client: PoolClient, rows: any[]): Promise<v
     cols,
     rows,
     'ON CONFLICT (height, tx_hash, msg_index) DO NOTHING',
+    { funds: 'jsonb', msg: 'jsonb' },
   );
   await client.query(text, values);
 }

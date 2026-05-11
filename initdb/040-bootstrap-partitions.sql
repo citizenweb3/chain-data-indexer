@@ -68,42 +68,6 @@ BEGIN
 END
 $function$;
 
--- 1b) Function to ensure hash partitions exist for a table (safe if already partitioned)
-CREATE OR REPLACE FUNCTION util.ensure_hash_partitions(p_schema TEXT, p_table TEXT, p_prefix TEXT, p_modulus INT)
-    RETURNS VOID LANGUAGE plpgsql AS $function$
-DECLARE
-    i INT;
-    v_has_children BOOLEAN;
-BEGIN
-    IF p_modulus IS NULL OR p_modulus < 1 THEN
-        RAISE EXCEPTION 'Hash modulus must be >= 1 (got %)', p_modulus;
-    END IF;
-
-    -- If the parent already has any child partitions, skip creating new ones to avoid overlap
-    SELECT EXISTS (
-        SELECT 1
-          FROM pg_inherits inh
-          JOIN pg_class     child ON child.oid = inh.inhrelid
-          JOIN pg_class     parent ON parent.oid = inh.inhparent
-          JOIN pg_namespace ns ON ns.oid = parent.relnamespace
-         WHERE ns.nspname = p_schema
-           AND parent.relname = p_table
-         LIMIT 1
-    ) INTO v_has_children;
-
-    IF v_has_children THEN
-        RETURN;
-    END IF;
-
-    FOR i IN 0..(p_modulus - 1) LOOP
-        EXECUTE format(
-            'CREATE TABLE IF NOT EXISTS %I.%I_%s%s PARTITION OF %I.%I FOR VALUES WITH (MODULUS %s, REMAINDER %s);',
-            p_schema, p_table, p_prefix, lpad(i::text, 2, '0'),
-            p_schema, p_table, p_modulus, i
-        );
-    END LOOP;
-END
-$function$;
 
 -- 2) Seed partition range configuration for each partitioned table (if not already present)
 INSERT INTO util.height_part_ranges (schema_name, table_name, part_prefix, span, current_to)
@@ -117,11 +81,12 @@ VALUES
     ('bank','balance_deltas','p',1000000,1000000),
     ('stake','delegation_events','p',1000000,1000000),
     ('stake','distribution_events','p',1000000,1000000),
-    ('gov','deposits','p',1000000,1000000),
     ('gov','votes','p',1000000,1000000),
     ('ibc','packets','p',1000000,1000000),
     ('wasm','executions','p',1000000,1000000),
     ('wasm','contract_migrations','p',1000000,1000000),
+    ('core','events','p',1000000,1000000),
+    ('core','event_attrs','p',1000000,1000000),
     ('wasm','state_kv','p',1000000,1000000)
 ON CONFLICT (schema_name, table_name) DO NOTHING;
 
@@ -157,30 +122,6 @@ DO $$
             END LOOP;
     END$$;
 
--- 3b) Bootstrap hash partitions for core.events (configurable modulus and prefix)
-DO $$
-DECLARE
-    v_modulus INT := COALESCE(NULLIF(current_setting('app.events.hash_modulus', true), '')::INT, 16);
-    v_prefix  TEXT := COALESCE(NULLIF(current_setting('app.events.hash_prefix',  true), ''), 'h');
-    v_has_children BOOLEAN;
-BEGIN
-    IF v_modulus IS NULL OR v_modulus < 1 THEN
-        v_modulus := 16;
-    END IF;
-
-    SELECT EXISTS (
-        SELECT 1
-          FROM pg_inherits inh
-          JOIN pg_class     parent ON parent.oid = inh.inhparent
-          JOIN pg_namespace ns ON ns.oid = parent.relnamespace
-         WHERE ns.nspname = 'core' AND parent.relname = 'events'
-         LIMIT 1
-    ) INTO v_has_children;
-
-    IF NOT v_has_children THEN
-        PERFORM util.ensure_hash_partitions('core', 'events', v_prefix, v_modulus);
-    END IF;
-END$$;
 
 -- 4) Set autovacuum parameters for "hot" tables: apply only to leaf partitions
 DO $$

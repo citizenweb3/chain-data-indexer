@@ -1,0 +1,142 @@
+# Reference Grafana Alloy configuration for the chain-data-indexer host.
+#
+# Single Alloy instance per host replaces:
+#   - prometheus-agent / grafana-agent (metrics collection)
+#   - promtail (log shipping)
+#   - node_exporter (host-level metrics)
+#
+# Required environment variables (export before starting Alloy):
+#   PROM_REMOTE_WRITE_URL          e.g. https://prometheus.example/api/v1/write
+#   PROM_REMOTE_WRITE_USERNAME     remote_write basic-auth username
+#   PROM_REMOTE_WRITE_PASSWORD     remote_write basic-auth password
+#   LOKI_WRITE_URL                 e.g. https://loki.example/loki/api/v1/push
+#   LOKI_WRITE_USERNAME            loki basic-auth username
+#   LOKI_WRITE_PASSWORD            loki basic-auth password
+#   CDI_METRICS_TARGET             defaults to "127.0.0.1:3030" — change if HEALTH_PORT differs
+
+// ────────────────────────────────────────────────────────────────────────────
+// Logging for Alloy itself
+// ────────────────────────────────────────────────────────────────────────────
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Host-level metrics (replacement for node_exporter)
+// ────────────────────────────────────────────────────────────────────────────
+prometheus.exporter.unix "host" {
+  // Default collectors are reasonable. Disable noisy ones if needed:
+  // disable_collectors = ["mdadm", "btrfs"]
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Scrape: indexer /metrics endpoint
+// ────────────────────────────────────────────────────────────────────────────
+prometheus.scrape "indexer" {
+  targets = [{
+    __address__ = coalesce(env("CDI_METRICS_TARGET"), "127.0.0.1:3030"),
+    job         = "cdi",
+    instance    = constants.hostname,
+  }]
+  scrape_interval = "15s"
+  metrics_path    = "/metrics"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Scrape: host metrics
+// ────────────────────────────────────────────────────────────────────────────
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// remote_write to central Prometheus / Mimir / Grafana Cloud
+// ────────────────────────────────────────────────────────────────────────────
+prometheus.remote_write "central" {
+  endpoint {
+    url = env("PROM_REMOTE_WRITE_URL")
+    basic_auth {
+      username = env("PROM_REMOTE_WRITE_USERNAME")
+      password = env("PROM_REMOTE_WRITE_PASSWORD")
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Logs: discover the indexer container, parse JSON, ship to Loki
+// ────────────────────────────────────────────────────────────────────────────
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "cdi" {
+  targets = discovery.docker.containers.targets
+
+  // Keep only the indexer container.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/cosmos-indexer-app"
+    action        = "keep"
+  }
+
+  // Promote container name to a stable label.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.+)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "cdi" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.cdi.output
+  forward_to    = [loki.process.cdi.receiver]
+  relabel_rules = discovery.relabel.cdi.rules
+  labels        = { job = "cdi" }
+}
+
+// Parse JSON-formatted Winston logs (LOG_FORMAT=json in the indexer) and
+// promote level/module to labels. Keep cardinality LOW: never label by
+// height, tx_hash, validator_addr, etc.
+loki.process "cdi" {
+  forward_to = [loki.write.central.receiver]
+
+  stage.json {
+    expressions = {
+      level  = "level",
+      module = "label",
+      msg    = "message",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level  = "",
+      module = "",
+    }
+  }
+
+  // Drop the noisiest debug logs in prod. Comment out if debugging.
+  stage.match {
+    selector = "{job=\"cdi\"} |= \"\""
+    stage.drop {
+      source     = "level"
+      expression = "debug"
+      drop_counter_reason = "debug_dropped"
+    }
+  }
+}
+
+loki.write "central" {
+  endpoint {
+    url = env("LOKI_WRITE_URL")
+    basic_auth {
+      username = env("LOKI_WRITE_USERNAME")
+      password = env("LOKI_WRITE_PASSWORD")
+    }
+  }
+}

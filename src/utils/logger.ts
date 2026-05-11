@@ -57,9 +57,26 @@ let root: winston.Logger | null = null;
  * @param options.json Force JSON format.
  * @returns The root logger instance.
  */
+/**
+ * Resolves the desired log format.
+ *
+ * Priority:
+ *   1. Explicit `options.json` argument (used by tests / programmatic init).
+ *   2. `LOG_FORMAT` env var: "json" → JSON, "pretty" → human-readable.
+ *   3. Default: pretty (developer-friendly). Production deployments must set
+ *      `LOG_FORMAT=json` explicitly so log shipping (Loki/ELK) can parse fields.
+ */
+function resolveJsonFormat(explicit?: boolean): boolean {
+  if (typeof explicit === 'boolean') return explicit;
+  const v = (process.env.LOG_FORMAT ?? '').trim().toLowerCase();
+  if (v === 'json') return true;
+  if (v === 'pretty' || v === 'text') return false;
+  return false;
+}
+
 function buildRoot(options?: { level?: string; json?: boolean }) {
   const level = mapLevel(options?.level ?? process.env.LOG_LEVEL);
-  const useJson = options?.json ?? env === 'production';
+  const useJson = resolveJsonFormat(options?.json);
 
   const transports: winston.transport[] = [new winston.transports.Console({ handleExceptions: true })];
 

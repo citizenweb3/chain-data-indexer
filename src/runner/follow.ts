@@ -4,11 +4,14 @@
 
 // src/runner/follow.ts
 import { getLogger } from '../utils/logger.ts';
-import { createRpcClientFromConfig } from '../rpc/client.ts';
+import { createRpcClientFromConfig, waitForRpcStatus } from '../rpc/client.ts';
 import { createTxDecodePool } from '../decode/txPool.ts';
 import { createSink } from '../sink/index.ts';
 import { syncRange, CaseMode } from './syncRange.ts';
 import { sleep } from '../utils/sleep.ts';
+import { bulkModeOff } from '../db/bulk-mode.ts';
+import { getPgPool } from '../db/pg.ts';
+import { setBulkMode, setPhase } from '../health/state.ts';
 
 const log = getLogger('follow');
 
@@ -25,6 +28,7 @@ export interface FollowOptions {
   pollMs: number;
   concurrency: number;
   caseMode: CaseMode;
+  bulkMode?: boolean;
 }
 
 /**
@@ -45,15 +49,27 @@ export async function followLoop(
 ): Promise<void> {
   let next = opts.startNext;
   log.info(`[follow] entering live mode from height ${next}, poll=${opts.pollMs}ms`);
+
+  if (opts.bulkMode) {
+    setPhase('maintenance');
+    log.info('[follow] draining derived queue before restoring indexes...');
+    await sink.flush?.();
+    (sink as any).setBulkMode?.(false);
+    await bulkModeOff(getPgPool());
+    setBulkMode(false);
+    setPhase('follow');
+    log.info('[follow] bulk mode off, entering live mode with INSERT');
+  }
+
   for (;;) {
-    const st = await rpc.fetchStatus();
+    const st = await waitForRpcStatus(rpc, { label: 'follow' });
     const latest = Number(st['sync_info']['latest_block_height']);
     if (next <= latest) {
       const to = latest;
       const live = await syncRange(rpc, decodePool, sink, {
         from: next,
         to,
-        concurrency: Math.min(opts.concurrency, 16),
+        concurrency: latest - next > 100 ? opts.concurrency : Math.min(opts.concurrency, 16),
         progressEveryBlocks: 25,
         progressIntervalSec: 2,
         caseMode: opts.caseMode,

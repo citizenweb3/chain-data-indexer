@@ -150,11 +150,16 @@ CREATE TABLE IF NOT EXISTS core.transactions_p0 PARTITION OF core.transactions
     FOR VALUES FROM (0) TO (1000000);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_txs_height_pos ON core.transactions (height, tx_index);
-CREATE INDEX IF NOT EXISTS idx_txs_code ON core.transactions (code);
-CREATE INDEX IF NOT EXISTS idx_txs_signers_gin ON core.transactions USING GIN (signers);
-CREATE INDEX IF NOT EXISTS idx_txs_time ON core.transactions (time DESC);
-CREATE INDEX IF NOT EXISTS idx_txs_success ON core.transactions (height DESC, tx_index) WHERE code = 0;
-CREATE INDEX IF NOT EXISTS idx_txs_hash ON core.transactions (tx_hash); -- search by hash without height
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_code ON core.transactions (code)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_signers_gin ON core.transactions USING GIN (signers)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_time ON core.transactions (time DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_success ON core.transactions (height DESC, tx_index) WHERE code = 0';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_txs_hash ON core.transactions (tx_hash)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE core.transactions IS 'One row per transaction; partitioned by height.';
 COMMENT ON COLUMN core.transactions.code IS 'ABCI code: 0 = success, non-zero = failure.';
@@ -176,10 +181,15 @@ CREATE TABLE IF NOT EXISTS core.messages
 CREATE TABLE IF NOT EXISTS core.messages_p0 PARTITION OF core.messages
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_msgs_height_type ON core.messages (height DESC, type_url);
-CREATE INDEX IF NOT EXISTS idx_msgs_signer ON core.messages (signer, height DESC);
-CREATE INDEX IF NOT EXISTS idx_msgs_value_path ON core.messages USING GIN (value jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS idx_msgs_txhash_msg ON core.messages (tx_hash, msg_index);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_msgs_height_type ON core.messages (height DESC, type_url)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_msgs_signer ON core.messages (signer, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_msgs_value_path ON core.messages USING GIN (value jsonb_path_ops)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_msgs_txhash_msg ON core.messages (tx_hash, msg_index)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE core.messages IS 'Decoded Tx body messages (protobuf Any).';
 COMMENT ON COLUMN core.messages.type_url IS 'Message protobuf type URL, e.g. /cosmos.bank.v1beta1.MsgSend.';
@@ -188,15 +198,24 @@ COMMENT ON COLUMN core.messages.value IS 'Decoded message payload as JSONB.';
 -- Events (ABCI logs per message or tx-level)
 CREATE TABLE core.events
 (
-    tx_hash     TEXT  NOT NULL,
-    msg_index   INT   NOT NULL, -- -1 for tx-level events
-    event_index INT   NOT NULL,
-    event_type  TEXT  NOT NULL, -- e.g. "transfer", "wasm", "delegate"
-    attributes  JSONB NOT NULL, -- [{key,value}, ...] or map
-    PRIMARY KEY (tx_hash, msg_index, event_index)
-) PARTITION BY HASH (tx_hash);
+    tx_hash     TEXT   NOT NULL,
+    msg_index   INT    NOT NULL, -- -1 for tx-level events
+    event_index INT    NOT NULL,
+    event_type  TEXT   NOT NULL, -- e.g. "transfer", "wasm", "delegate"
+    attributes  JSONB  NOT NULL, -- [{key,value}, ...] or map
+    height      BIGINT NOT NULL,
+    PRIMARY KEY (height, tx_hash, msg_index, event_index)
+) PARTITION BY RANGE (height);
 
-CREATE INDEX IF NOT EXISTS idx_events_type ON core.events (event_type);
+CREATE TABLE IF NOT EXISTS core.events_p0 PARTITION OF core.events
+    FOR VALUES FROM (0) TO (1000000);
+
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_events_type ON core.events (event_type)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE core.events IS 'ABCI events grouped per (tx_hash, msg_index, ordinal).';
 COMMENT ON COLUMN core.events.msg_index IS 'Message index; -1 for transaction-scoped events.';
@@ -205,17 +224,24 @@ COMMENT ON COLUMN core.events.attributes IS 'Array of key/value pairs (or map) a
 -- Attribute fan-out (fast WHERE key/value filters)
 CREATE TABLE core.event_attrs
 (
+    height      BIGINT NOT NULL,
     tx_hash     TEXT NOT NULL,
     msg_index   INT  NOT NULL,
     event_index INT  NOT NULL,
     key         TEXT NOT NULL,
     value       TEXT NULL,
-    PRIMARY KEY (tx_hash, msg_index, event_index, key)
-);
+    PRIMARY KEY (height, tx_hash, msg_index, event_index, key)
+) PARTITION BY RANGE (height);
 
-CREATE INDEX IF NOT EXISTS idx_event_attrs_key ON core.event_attrs (key);
-CREATE INDEX IF NOT EXISTS idx_event_attrs_key_value_md5 ON core.event_attrs (key, md5(COALESCE(value, '')));
-CREATE INDEX IF NOT EXISTS idx_event_attrs_value_trgm ON core.event_attrs USING GIN (value gin_trgm_ops);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_event_attrs_key ON core.event_attrs (key)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_event_attrs_key_value_md5 ON core.event_attrs (key, md5(COALESCE(value, '''')))';
+    END IF;
+END $$;
+-- [DISABLED FOR PERFORMANCE] A GIN trigram index causes 10-second insert pauses for bulk backfilling.
+-- CREATE INDEX IF NOT EXISTS idx_event_attrs_value_trgm ON core.event_attrs USING GIN (value gin_trgm_ops);
 
 COMMENT ON TABLE core.event_attrs IS 'Flattened ABCI event attributes for direct key/value lookups.';
 
@@ -238,10 +264,15 @@ CREATE TABLE IF NOT EXISTS bank.transfers
 CREATE TABLE IF NOT EXISTS bank.transfers_p0 PARTITION OF bank.transfers
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_transfers_from ON bank.transfers (from_addr, height DESC);
-CREATE INDEX IF NOT EXISTS idx_transfers_to ON bank.transfers (to_addr, height DESC);
-CREATE INDEX IF NOT EXISTS idx_transfers_denom ON bank.transfers (denom);
-CREATE INDEX IF NOT EXISTS idx_transfers_brin_height ON bank.transfers USING BRIN (height);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_transfers_from ON bank.transfers (from_addr, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_transfers_to ON bank.transfers (to_addr, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_transfers_denom ON bank.transfers (denom)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_transfers_brin_height ON bank.transfers USING BRIN (height)';
+    END IF;
+END $$;
 
 ALTER TABLE bank.transfers
     ADD CONSTRAINT chk_transfer_addr_len
@@ -299,9 +330,14 @@ CREATE TABLE stake.delegation_events
 CREATE TABLE IF NOT EXISTS stake.delegation_events_p0 PARTITION OF stake.delegation_events
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_del_ev_delegator ON stake.delegation_events (delegator_address, height DESC);
-CREATE INDEX IF NOT EXISTS idx_del_ev_valdst ON stake.delegation_events (validator_dst, height DESC);
-CREATE INDEX IF NOT EXISTS idx_del_ev_valsrc ON stake.delegation_events (validator_src, height DESC);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_del_ev_delegator ON stake.delegation_events (delegator_address, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_del_ev_valdst ON stake.delegation_events (validator_dst, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_del_ev_valsrc ON stake.delegation_events (validator_src, height DESC)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE stake.delegation_events IS 'Staking delegation lifecycle events.';
 
@@ -335,8 +371,13 @@ CREATE TABLE stake.distribution_events
 CREATE TABLE IF NOT EXISTS stake.distribution_events_p0 PARTITION OF stake.distribution_events
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_dist_ev_validator ON stake.distribution_events (validator_address, height DESC);
-CREATE INDEX IF NOT EXISTS idx_dist_ev_delegator ON stake.distribution_events (delegator_address, height DESC);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_dist_ev_validator ON stake.distribution_events (validator_address, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_dist_ev_delegator ON stake.distribution_events (delegator_address, height DESC)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE stake.distribution_events IS 'Distribution-related events: rewards, commission, address changes.';
 
@@ -347,7 +388,7 @@ CREATE TABLE gov.proposals
 (
     proposal_id   BIGINT PRIMARY KEY,
     submitter     TEXT            NULL,
-    title         TEXT            NOT NULL,
+    title         TEXT            NULL,
     summary       TEXT            NULL,
     proposal_type TEXT            NULL, -- text/type_url
     status        proposal_status NOT NULL,
@@ -359,7 +400,12 @@ CREATE TABLE gov.proposals
     submit_time   TIMESTAMPTZ     NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_gov_status ON gov.proposals (status);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_gov_status ON gov.proposals (status)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE gov.proposals IS 'Governance proposals catalog with lifecycle timestamps.';
 
@@ -377,7 +423,12 @@ CREATE TABLE gov.deposits
 CREATE TABLE IF NOT EXISTS gov.deposits_p0 PARTITION OF gov.deposits
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_gov_dep_depositor ON gov.deposits (depositor, height DESC);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_gov_dep_depositor ON gov.deposits (depositor, height DESC)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE gov.deposits IS 'Proposal deposits history by depositor/denom.';
 
@@ -386,17 +437,22 @@ CREATE TABLE gov.votes
     proposal_id BIGINT          NOT NULL,
     voter       TEXT            NOT NULL,
     option      TEXT            NOT NULL, -- Yes/No/NoWithVeto/Abstain (+ weighted)
-    weight      NUMERIC(20, 18) NULL,     -- for weighted
+    weight      NUMERIC(20, 18) NULL,     -- decimal weight (e.g. 1.000000000000000000)
     height      BIGINT          NOT NULL,
     tx_hash     TEXT            NOT NULL,
-    PRIMARY KEY (proposal_id, voter, height, tx_hash)
+    PRIMARY KEY (proposal_id, voter, option, height, tx_hash)
 ) PARTITION BY RANGE (height);
 
 CREATE TABLE IF NOT EXISTS gov.votes_p0 PARTITION OF gov.votes
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_gov_votes_voter ON gov.votes (voter, height DESC);
-CREATE INDEX IF NOT EXISTS idx_gov_votes_prop ON gov.votes (proposal_id, option);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_gov_votes_voter ON gov.votes (voter, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_gov_votes_prop ON gov.votes (proposal_id, option)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE gov.votes IS 'Governance votes (includes weighted options when applicable).';
 
@@ -525,10 +581,15 @@ CREATE TABLE IF NOT EXISTS wasm.executions
 CREATE TABLE IF NOT EXISTS wasm.executions_p0 PARTITION OF wasm.executions
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_wasm_exec_contract ON wasm.executions (contract, height DESC);
-CREATE INDEX IF NOT EXISTS idx_wasm_exec_msg_gin ON wasm.executions USING GIN (msg jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS idx_wasm_exec_success ON wasm.executions (success);
-CREATE INDEX IF NOT EXISTS idx_wasm_exec_tx_msg ON wasm.executions (tx_hash, msg_index);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_contract ON wasm.executions (contract, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_msg_gin ON wasm.executions USING GIN (msg jsonb_path_ops)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_success ON wasm.executions (success)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_wasm_exec_tx_msg ON wasm.executions (tx_hash, msg_index)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE wasm.executions IS 'Execute invocations with decoded message and result status.';
 
@@ -547,9 +608,14 @@ CREATE TABLE IF NOT EXISTS wasm.events
 CREATE TABLE IF NOT EXISTS wasm.events_p0 PARTITION OF wasm.events
     FOR VALUES FROM (0) TO (1000000);
 
-CREATE INDEX IF NOT EXISTS idx_wasm_events_contract ON wasm.events (contract, height DESC);
-CREATE INDEX IF NOT EXISTS idx_wasm_events_type ON wasm.events (event_type);
-CREATE INDEX IF NOT EXISTS idx_wasm_events_tx_msg ON wasm.events (tx_hash, msg_index);
+DO $$
+BEGIN
+    IF COALESCE(current_setting('app.defer_heavy_indexes', true), 'off') NOT IN ('1', 'true', 'on') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_wasm_events_contract ON wasm.events (contract, height DESC)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_wasm_events_type ON wasm.events (event_type)';
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_wasm_events_tx_msg ON wasm.events (tx_hash, msg_index)';
+    END IF;
+END $$;
 
 COMMENT ON TABLE wasm.events IS 'Denormalized wasm-specific events for faster contract-centric queries.';
 

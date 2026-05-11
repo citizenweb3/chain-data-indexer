@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import protobuf from 'protobufjs';
 import { getLogger } from '../utils/logger.ts';
+import { decodeCustomMessage, normalizeDecodedMessage } from './decoders/customMessages.ts';
 
 const log = getLogger('decode/dynamicProto');
 
@@ -88,13 +89,74 @@ export function typeUrlToFullName(typeUrl: string): string {
 }
 
 /**
+ * Returns true if the value looks like an unresolved `google.protobuf.Any`
+ * ({type_url: string, value: string|Uint8Array} with exactly 2 keys).
+ */
+function isUnresolvedAny(val: any): boolean {
+  if (!val || typeof val !== 'object' || Array.isArray(val)) return false;
+  const keys = Object.keys(val);
+  if (keys.length !== 2) return false;
+  // protobufjs uses snake_case (type_url), cosmjs-types uses camelCase (typeUrl)
+  const tu = val.type_url ?? val.typeUrl;
+  return typeof tu === 'string' && tu.length > 0 && val.value != null;
+}
+
+/**
+ * Walks a decoded protobuf object in-place and recursively decodes
+ * any unresolved `google.protobuf.Any` fields ({type_url, value}).
+ * Depth-limited to 5 to prevent infinite recursion.
+ */
+export function resolveNestedAny(obj: any, root: protobuf.Root, depth = 0): void {
+  if (depth > 5 || !obj || typeof obj !== 'object') return;
+
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+
+    if (isUnresolvedAny(val)) {
+      try {
+        const tu = val.type_url ?? val.typeUrl;
+        const bytes = typeof val.value === 'string' ? Buffer.from(val.value, 'base64') : val.value;
+        obj[key] = decodeAnyWithRoot(tu, bytes, root, depth + 1);
+      } catch {
+        /* keep original if type not found or decode fails */
+      }
+    } else if (Array.isArray(val)) {
+      for (let i = 0; i < val.length; i++) {
+        if (isUnresolvedAny(val[i])) {
+          try {
+            const tu = val[i].type_url ?? val[i].typeUrl;
+            const bytes = typeof val[i].value === 'string' ? Buffer.from(val[i].value, 'base64') : val[i].value;
+            val[i] = decodeAnyWithRoot(tu, bytes, root, depth + 1);
+          } catch {
+            /* keep original */
+          }
+        } else if (val[i] && typeof val[i] === 'object') {
+          resolveNestedAny(val[i], root, depth + 1);
+        }
+      }
+    } else if (typeof val === 'object') {
+      resolveNestedAny(val, root, depth + 1);
+    }
+  }
+}
+
+/**
  * Decodes a protobuf `Any` message using the provided protobuf root.
+ * Recursively resolves nested Any fields after decoding.
  * @param typeUrl - The type URL of the message to decode.
  * @param value - The binary message data (as Uint8Array).
  * @param root - The protobuf.Root containing loaded types.
  * @returns The decoded message as a plain object, including an `@type` property.
  */
-export function decodeAnyWithRoot(typeUrl: string, value: Uint8Array, root: protobuf.Root): Record<string, unknown> {
+export function decodeAnyWithRoot(
+  typeUrl: string,
+  value: Uint8Array,
+  root: protobuf.Root,
+  _depth = 0,
+): Record<string, unknown> {
+  const custom = decodeCustomMessage(typeUrl, value);
+  if (custom) return custom;
+
   const fullName = typeUrlToFullName(typeUrl);
   const Type = root.lookupType(fullName);
   if (!Type) throw new Error(`Type not found in proto root: ${fullName}`);
@@ -108,6 +170,7 @@ export function decodeAnyWithRoot(typeUrl: string, value: Uint8Array, root: prot
     objects: true,
     oneofs: true,
   }) as Record<string, unknown>;
+  resolveNestedAny(obj, root, _depth);
   obj['@type'] = typeUrl;
-  return obj;
+  return normalizeDecodedMessage(typeUrl, obj);
 }

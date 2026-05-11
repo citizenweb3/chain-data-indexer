@@ -24,6 +24,7 @@ export async function insertWasmEvents(client: PoolClient, rows: any[]): Promise
     cols,
     rows,
     'ON CONFLICT (height, tx_hash, msg_index, event_type) DO NOTHING',
+    { attributes: 'jsonb' },
   );
   await client.query(text, values);
 }

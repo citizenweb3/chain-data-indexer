@@ -20,6 +20,8 @@ export type Config = {
   shardId: number;
   /** Max number of concurrent network requests. */
   concurrency: number;
+  /** Number of worker threads for transaction decoding. Defaults to min(concurrency, cpuCount). */
+  decodeWorkers?: number;
   /** HTTP request timeout in milliseconds. */
   timeoutMs: number;
   /** Target requests-per-second throttle per process. */
@@ -82,6 +84,26 @@ export type Config = {
     batchEvents?: number;
     /** Batch size for event attributes buffer. */
     batchAttrs?: number;
+    /** Batch size for bank transfer buffer. */
+    batchTransfers?: number;
+    /** Batch size for staking delegation buffer. */
+    batchStakeDeleg?: number;
+    /** Batch size for staking distribution buffer. */
+    batchStakeDistr?: number;
+    /** Batch size for wasm execution buffer. */
+    batchWasmExec?: number;
+    /** Batch size for wasm event buffer. */
+    batchWasmEvents?: number;
+    /** Batch size for governance deposits buffer. */
+    batchGovDeposits?: number;
+    /** Batch size for governance votes buffer. */
+    batchGovVotes?: number;
+    /** Batch size for governance proposals buffer. */
+    batchGovProposals?: number;
+    /** Use COPY for append-only hot tables during batch flushes. */
+    copyAppendOnlyTables?: boolean;
+    /** Enable bulk ingest mode: DROP secondary indexes, use COPY FROM, disable autovacuum. */
+    bulkMode?: boolean;
     /** Maximum number of pooled connections for pg. */
     poolSize?: number;
     /** Custom identifier for tracking progress in the database, used when resuming indexing. */

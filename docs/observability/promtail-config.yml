@@ -1,0 +1,62 @@
+# Reference Promtail configuration for chain-data-indexer logs.
+#
+# Use this only if you cannot run Grafana Alloy. Promtail is in
+# maintenance mode upstream — for new deployments prefer
+# docs/observability/alloy.river which handles both metrics and logs.
+#
+# This config tails the Docker JSON-file logs of the cosmos-indexer-app
+# container and ships them to Loki. The indexer must be started with
+# LOG_FORMAT=json so the JSON parsing stage extracts useful fields.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: ${LOKI_WRITE_URL}      # e.g. https://loki.example/loki/api/v1/push
+    basic_auth:
+      username: ${LOKI_WRITE_USERNAME}
+      password: ${LOKI_WRITE_PASSWORD}
+
+scrape_configs:
+  - job_name: cdi-docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 30s
+        filters:
+          - name: name
+            values: [cosmos-indexer-app]
+
+    relabel_configs:
+      - source_labels: [__meta_docker_container_name]
+        regex: '/(.*)'
+        target_label: container
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream
+      - target_label: job
+        replacement: cdi
+
+    pipeline_stages:
+      # Docker writes one log line per JSON object; the actual app payload
+      # is the inner "log" field. Strip it first.
+      - docker: {}
+      # Now parse the indexer's own JSON (LOG_FORMAT=json).
+      - json:
+          expressions:
+            level: level
+            module: label
+            msg: message
+      - labels:
+          # Keep cardinality LOW — never add height/tx_hash/validator_addr.
+          level:
+          module:
+      # Optional: drop debug noise in prod
+      - match:
+          selector: '{job="cdi"} |= ""'
+          stages:
+            - drop:
+                source: level
+                expression: debug

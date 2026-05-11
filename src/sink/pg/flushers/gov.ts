@@ -1,6 +1,43 @@
 // src/sink/pg/flushers/gov.ts
 import { PoolClient } from 'pg';
 import { execBatchedInsert } from '../batch.js';
+import { dedupeCopyRows, execCopyFrom } from '../copy.js';
+
+export type GovProposalUpsertRow = {
+  proposal_id: bigint;
+  submitter: string | null;
+  title: string | null;
+  summary: string | null;
+  proposal_type: string | null;
+  status: string | null;
+  submit_time: Date | null;
+};
+
+export function dedupeGovProposalRows(rows: GovProposalUpsertRow[]): GovProposalUpsertRow[] {
+  const byProposalId = new Map<string, GovProposalUpsertRow>();
+
+  for (const row of rows) {
+    const key = row.proposal_id.toString();
+    const existing = byProposalId.get(key);
+
+    if (!existing) {
+      byProposalId.set(key, { ...row });
+      continue;
+    }
+
+    existing.submitter ??= row.submitter;
+    existing.title ??= row.title;
+    existing.summary ??= row.summary;
+    existing.proposal_type ??= row.proposal_type;
+    existing.status ??= row.status;
+
+    if (!existing.submit_time || (row.submit_time && row.submit_time < existing.submit_time)) {
+      existing.submit_time = row.submit_time;
+    }
+  }
+
+  return [...byProposalId.values()];
+}
 
 /**
  * Insert governance deposits in batches.
@@ -18,8 +55,30 @@ export async function flushGovDeposits(
     height: number;
     tx_hash: string;
   }>,
+  opts?: { useCopy?: boolean },
 ) {
   if (!rows.length) return;
+  if (opts?.useCopy) {
+    const dedupedRows = dedupeCopyRows(
+      rows,
+      (row) => `${row.proposal_id}\x1f${row.depositor}\x1f${row.denom}\x1f${row.height}\x1f${row.tx_hash}`,
+    );
+    await execCopyFrom(
+      client,
+      'gov.deposits',
+      [
+        { name: 'proposal_id', value: (r) => r.proposal_id.toString() },
+        { name: 'depositor', value: (r) => r.depositor },
+        { name: 'denom', value: (r) => r.denom },
+        { name: 'amount', value: (r) => r.amount },
+        { name: 'height', value: (r) => r.height },
+        { name: 'tx_hash', value: (r) => r.tx_hash },
+      ],
+      dedupedRows,
+      { maxRows: 5000 },
+    );
+    return;
+  }
 
   const columns = ['proposal_id', 'depositor', 'denom', 'amount', 'height', 'tx_hash'] as const;
 
@@ -53,8 +112,30 @@ export async function flushGovVotes(
     height: number;
     tx_hash: string;
   }>,
+  opts?: { useCopy?: boolean },
 ) {
   if (!rows.length) return;
+  if (opts?.useCopy) {
+    const dedupedRows = dedupeCopyRows(
+      rows,
+      (row) => `${row.proposal_id}\x1f${row.voter}\x1f${row.option}\x1f${row.height}\x1f${row.tx_hash}`,
+    );
+    await execCopyFrom(
+      client,
+      'gov.votes',
+      [
+        { name: 'proposal_id', value: (r) => r.proposal_id.toString() },
+        { name: 'voter', value: (r) => r.voter },
+        { name: 'option', value: (r) => r.option },
+        { name: 'weight', value: (r) => r.weight },
+        { name: 'height', value: (r) => r.height },
+        { name: 'tx_hash', value: (r) => r.tx_hash },
+      ],
+      dedupedRows,
+      { maxRows: 5000 },
+    );
+    return;
+  }
 
   const columns = ['proposal_id', 'voter', 'option', 'weight', 'height', 'tx_hash'] as const;
 
@@ -82,21 +163,13 @@ export async function flushGovVotes(
  */
 export async function upsertGovProposals(
   client: PoolClient,
-  rows: Array<{
-    proposal_id: bigint;
-    submitter: string | null;
-    title: string | null;
-    summary: string | null;
-    proposal_type: string | null;
-    status: string | null;
-    submit_time: Date | null;
-  }>,
+  rows: GovProposalUpsertRow[],
 ) {
   if (!rows.length) return;
 
   const columns = ['proposal_id', 'submitter', 'title', 'summary', 'proposal_type', 'status', 'submit_time'] as const;
 
-  const shaped = rows.map((r) => ({
+  const shaped = dedupeGovProposalRows(rows).map((r) => ({
     proposal_id: r.proposal_id.toString(),
     submitter: r.submitter,
     title: r.title,

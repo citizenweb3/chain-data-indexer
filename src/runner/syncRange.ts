@@ -8,9 +8,11 @@
 import { assembleBlockJsonFromParts } from '../assemble/blockJson.ts';
 import { formatDuration } from '../utils/time.ts';
 import { getLogger } from '../utils/logger.ts';
-import { createRpcClientFromConfig } from '../rpc/client.ts';
+import { createRpcClientFromConfig, isRetryableRpcError, waitForRpcStatus } from '../rpc/client.ts';
 import { createTxDecodePool } from '../decode/txPool.ts';
 import { createSink } from '../sink/index.ts';
+import { setLastIndexedHeight } from '../health/state.ts';
+import { observeBlock } from '../metrics/registry.ts';
 
 const log = getLogger('runner/syncRange');
 
@@ -102,6 +104,62 @@ export async function syncRange(
   let processed = 0;
   const t0 = Date.now();
   let lastLogAt = t0;
+  let rpcRecovery: Promise<void> | null = null;
+
+  // ── Timing instrumentation ──
+  const timingAcc = {
+    n: 0,
+    fetchBlockMs: 0,
+    fetchResultsMs: 0,
+    decodeMs: 0,
+    assembleMs: 0,
+    flushMs: 0,
+    txCount: 0,
+    evCount: 0,
+  };
+
+  function countEvents(br: any): number {
+    let n = 0;
+    if (Array.isArray(br?.txs_results)) {
+      for (const tr of br.txs_results) {
+        if (Array.isArray(tr?.events)) n += tr.events.length;
+      }
+    }
+    if (Array.isArray(br?.begin_block_events)) n += br.begin_block_events.length;
+    if (Array.isArray(br?.end_block_events)) n += br.end_block_events.length;
+    return n;
+  }
+
+  function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
+
+  function waitForRpcRecovery(e: unknown): Promise<void> {
+    if (!rpcRecovery) {
+      log.warn(`[syncRange] transient RPC failure, pausing backfill until RPC recovers: ${errorMessage(e)}`);
+      rpcRecovery = waitForRpcStatus(rpc, { label: 'backfill' })
+        .then(() => undefined)
+        .finally(() => {
+          rpcRecovery = null;
+        });
+    }
+    return rpcRecovery;
+  }
+
+  function drainTimings(): string {
+    if (timingAcc.n === 0) return '';
+    const avg = (v: number) => (v / timingAcc.n).toFixed(0);
+    const msg = `[timings avg/${timingAcc.n}blk] fetchBlock=${avg(timingAcc.fetchBlockMs)}ms fetchResults=${avg(timingAcc.fetchResultsMs)}ms decode=${avg(timingAcc.decodeMs)}ms assemble=${avg(timingAcc.assembleMs)}ms flush=${avg(timingAcc.flushMs)}ms | txs/blk=${(timingAcc.txCount / timingAcc.n).toFixed(1)} ev/blk=${(timingAcc.evCount / timingAcc.n).toFixed(1)}`;
+    timingAcc.n = 0;
+    timingAcc.fetchBlockMs = 0;
+    timingAcc.fetchResultsMs = 0;
+    timingAcc.decodeMs = 0;
+    timingAcc.assembleMs = 0;
+    timingAcc.flushMs = 0;
+    timingAcc.txCount = 0;
+    timingAcc.evCount = 0;
+    return msg;
+  }
 
   /**
    * Emits a progress log line either on schedule (by block count or time) or when forced.
@@ -130,6 +188,8 @@ export async function syncRange(
       }
       msg += ` | inFlight=${inFlight} retryQ=${retryQ} next=${nextH}`;
       log.info(msg);
+      const timingMsg = drainTimings();
+      if (timingMsg) log.info(timingMsg);
       lastLogAt = now;
     }
   }
@@ -164,7 +224,10 @@ export async function syncRange(
       flushed++;
       processed++;
     }
-    if (flushed > 0) maybeReportProgress(false, h, inFlight, retryQueue.length, nextHeight);
+    if (flushed > 0) {
+      setLastIndexedHeight(nextToFlush - 1);
+      maybeReportProgress(false, h, inFlight, retryQueue.length, nextHeight);
+    }
   }
 
   const attempts = new Map<number, number>();
@@ -178,22 +241,57 @@ export async function syncRange(
    * @returns {Promise<void>}
    */
   async function processHeight(h: number) {
+    const startedAt = Date.now();
+    let tFetchBlock = 0;
+    let tFetchResults = 0;
+    let tDecode = 0;
+    let tAssemble = 0;
+    let txCount = 0;
+    let evCount = 0;
+    let ok = false;
+
     try {
       const [b, br] = await Promise.all([
-        withTimeout(rpc.fetchBlock(h), blockTimeoutMs, `fetchBlock@${h}`),
-        withTimeout(rpc.fetchBlockResults(h), blockTimeoutMs, `fetchBlockResults@${h}`),
+        (async () => {
+          const s = Date.now();
+          const r = await withTimeout(rpc.fetchBlock(h), blockTimeoutMs, `fetchBlock@${h}`);
+          tFetchBlock = Date.now() - s;
+          return r;
+        })(),
+        (async () => {
+          const s = Date.now();
+          const r = await withTimeout(rpc.fetchBlockResults(h), blockTimeoutMs, `fetchBlockResults@${h}`);
+          tFetchResults = Date.now() - s;
+          return r;
+        })(),
       ]);
+
       const txsB64: string[] = b?.block?.data?.txs ?? [];
-      const decoded = await Promise.all(
-        txsB64.map((x, i) => withTimeout(pool.submit(x), blockTimeoutMs, `decode#${i}@${h}`)),
-      );
+      txCount = txsB64.length;
+      evCount = countEvents(br);
+
+      const s1 = Date.now();
+      const decoded = await Promise.all(txsB64.map((x) => pool.submit(x, blockTimeoutMs)));
+      tDecode = Date.now() - s1;
+
+      const s2 = Date.now();
       const assembled = await withTimeout(
         assembleBlockJsonFromParts(rpc, b, br, decoded, caseMode),
         blockTimeoutMs,
         `assemble@${h}`,
       );
+      tAssemble = Date.now() - s2;
+
       ready.set(h, assembled);
+      ok = true;
     } catch (e: any) {
+      if (isRetryableRpcError(e)) {
+        retryQueue.push(h);
+        log.warn(`retry after RPC recovery for height ${h}: ${String(e?.message ?? e)}`);
+        await waitForRpcRecovery(e);
+        return;
+      }
+
       const n = (attempts.get(h) ?? 0) + 1;
       attempts.set(h, n);
       if (n <= maxBlockRetries) {
@@ -204,7 +302,21 @@ export async function syncRange(
         log.error(`giving up height ${h}: ${String(e?.message ?? e)}`);
       }
     } finally {
+      const sf = Date.now();
       await tryFlush(h);
+      const tFlush = Date.now() - sf;
+
+      if (ok) {
+        timingAcc.n++;
+        timingAcc.fetchBlockMs += tFetchBlock;
+        timingAcc.fetchResultsMs += tFetchResults;
+        timingAcc.decodeMs += tDecode;
+        timingAcc.assembleMs += tAssemble;
+        timingAcc.flushMs += tFlush;
+        timingAcc.txCount += txCount;
+        timingAcc.evCount += evCount;
+        observeBlock((Date.now() - startedAt) / 1000);
+      }
     }
   }
 
@@ -214,7 +326,17 @@ export async function syncRange(
   await new Promise<void>((resolve) => {
     const maybeSpawn = () => {
       while (inFlight < concurrency && (nextHeight <= to || retryQueue.length > 0)) {
-        const h = retryQueue.length > 0 ? (retryQueue.shift() as number) : nextHeight++;
+        // Retries must always be allowed through — their heights are already counted in
+        // the gap (nextHeight was incremented when first spawned), so processing them
+        // never increases the gap. Blocking retries causes a deadlock: nextToFlush stalls
+        // waiting for the retry height, flush never advances, queue stays "full" forever.
+        const isRetry = retryQueue.length > 0;
+        if (!isRetry && nextHeight - nextToFlush > concurrency * 2) {
+          log.warn(`[syncRange] queue full, pausing fetch (head=${nextHeight}, tail=${nextToFlush})`);
+          break;
+        }
+
+        const h = isRetry ? (retryQueue.shift() as number) : nextHeight++;
         inFlight++;
         processHeight(h).finally(() => {
           inFlight--;

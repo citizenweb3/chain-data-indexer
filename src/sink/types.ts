@@ -99,6 +99,10 @@ export interface SinkConfig {
      * Insert mode for PostgreSQL.
      */
     mode?: 'block-atomic' | 'batch-insert';
+    /**
+     * Use COPY for append-only hot tables during batch flushes.
+     */
+    copyAppendOnlyTables?: boolean;
   };
 }
 

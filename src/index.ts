@@ -6,18 +6,52 @@
  */
 // src/index.ts
 import { EventEmitter } from 'node:events';
+import { cpus } from 'node:os';
 import { getConfig, printConfig } from './config.ts';
-import { createRpcClientFromConfig } from './rpc/client.ts';
-import { createTxDecodePool } from './decode/txPool.ts';
+import { createRpcClientFromConfig, waitForRpcStatus } from './rpc/client.ts';
+import { createTxDecodePool, TxDecodePool } from './decode/txPool.ts';
 import { createSink } from './sink/index.ts';
-import { closePgPool, createPgPool } from './db/pg.ts';
+import { Sink } from './sink/types.ts';
+import { closePgPool, createPgPool, getPgPool } from './db/pg.ts';
+import { bulkModeOn, bulkModeOff, recoverDerived } from './db/bulk-mode.ts';
 import { getProgress } from './db/progress.ts';
 import { getLogger } from './utils/logger.ts';
 import { syncRange } from './runner/syncRange.ts';
 import { followLoop } from './runner/follow.ts';
+import { startHealthServer, stopHealthServer } from './health/server.ts';
+import { setPhase, setBulkMode } from './health/state.ts';
+import { startMetricsSampler, type SamplerHandle } from './metrics/sampler.ts';
+import type { Server } from 'node:http';
 
 EventEmitter.defaultMaxListeners = 0;
 const log = getLogger('index');
+
+let activeSink: Sink | null = null;
+let activePool: TxDecodePool | null = null;
+let activeHealthServer: Server | null = null;
+let activeSampler: SamplerHandle | null = null;
+let shuttingDown = false;
+
+async function gracefulShutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  setPhase('shutdown');
+  log.warn(`${signal} received, flushing buffers…`);
+  try {
+    activeSampler?.stop();
+    await activeSink?.flush?.();
+    await activeSink?.close();
+    await activePool?.close();
+    await stopHealthServer(activeHealthServer);
+    log.info('graceful shutdown complete');
+  } catch (e) {
+    log.error(`shutdown error: ${e}`);
+  }
+  process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 /**
  * Main function that runs the indexing process.
@@ -31,8 +65,32 @@ async function main() {
   const cfg = getConfig();
   printConfig(cfg);
 
+  // Start health server first so /health is reachable even while RPC/DB are still
+  // coming up. Returns 503 with details until everything is wired.
+  const healthEnabled = (process.env.HEALTH_ENABLED ?? 'true').toLowerCase() !== 'false';
+  const metricsEnabled = (process.env.METRICS_ENABLED ?? 'true').toLowerCase() !== 'false';
+  if (healthEnabled) {
+    const port = Number(process.env.HEALTH_PORT ?? 3000);
+    const staleSeconds = Number(process.env.HEALTH_STALE_SECONDS ?? 180);
+    const startupGraceSeconds = Number(process.env.HEALTH_STARTUP_GRACE_SECONDS ?? 300);
+    activeHealthServer = startHealthServer({
+      port,
+      staleSeconds,
+      startupGraceSeconds,
+      progressId: cfg.pg?.progressId ?? 'default',
+      metricsEnabled,
+      getDbPool: () => {
+        try {
+          return getPgPool();
+        } catch {
+          return null;
+        }
+      },
+    });
+  }
+
   const rpc = createRpcClientFromConfig(cfg);
-  const status = await rpc.fetchStatus();
+  const status = await waitForRpcStatus(rpc, { label: 'startup' });
 
   let startFrom = cfg.from as number | undefined;
   const wantResume =
@@ -67,7 +125,7 @@ async function main() {
   const protoDir = process.env.PROTO_DIR || defaultProtoDir;
   log.info(`[proto] dir = ${protoDir}`);
 
-  const poolSize = Math.max(1, Math.min(cfg.concurrency ?? 8, 8));
+  const poolSize = cfg.decodeWorkers ?? Math.max(1, Math.min(cfg.concurrency, cpus().length));
   const decodePool = createTxDecodePool(poolSize, { protoDir });
 
   const sink = createSink({
@@ -81,10 +139,45 @@ async function main() {
       msgs: cfg.pg?.batchMsgs,
       events: cfg.pg?.batchEvents,
       attrs: cfg.pg?.batchAttrs,
+      transfers: cfg.pg?.batchTransfers,
+      stakeDeleg: cfg.pg?.batchStakeDeleg,
+      stakeDistr: cfg.pg?.batchStakeDistr,
+      wasmExec: cfg.pg?.batchWasmExec,
+      wasmEvents: cfg.pg?.batchWasmEvents,
+      govDeposits: cfg.pg?.batchGovDeposits,
+      govVotes: cfg.pg?.batchGovVotes,
+      govProposals: cfg.pg?.batchGovProposals,
     },
   });
   await sink.init();
 
+  if (cfg.pg?.bulkMode && cfg.sinkKind === 'postgres') {
+    const pool = getPgPool();
+    await recoverDerived(pool);
+    await bulkModeOn(pool);
+    setBulkMode(true);
+  }
+
+  activeSink = sink;
+  activePool = decodePool;
+
+  if (metricsEnabled) {
+    const samplerIntervalMs = Number(process.env.METRICS_SAMPLE_INTERVAL_MS ?? 5_000);
+    activeSampler = startMetricsSampler({
+      intervalMs: samplerIntervalMs,
+      rpc,
+      decodePool,
+      getDbPool: () => {
+        try {
+          return getPgPool();
+        } catch {
+          return null;
+        }
+      },
+    });
+  }
+
+  setPhase('backfill');
   const backfill = await syncRange(rpc, decodePool, sink, {
     from: startFrom,
     to: endHeight,
@@ -102,33 +195,29 @@ async function main() {
 
   if (cfg.follow !== false) {
     const pollMs = cfg.followIntervalMs ?? 1500;
+    setPhase('follow');
     await followLoop(rpc, decodePool, sink, {
       startNext: endHeight + 1,
       pollMs,
       concurrency: cfg.concurrency,
       caseMode: cfg.caseMode,
+      bulkMode: cfg.pg?.bulkMode,
     });
+  } else if (cfg.pg?.bulkMode && cfg.sinkKind === 'postgres') {
+    // FOLLOW=false: restore indexes before exit, otherwise DB is left without them
+    setPhase('maintenance');
+    await sink.flush?.();
+    (sink as any).setBulkMode?.(false);
+    await bulkModeOff(getPgPool());
+    setBulkMode(false);
   }
 
   await decodePool.close();
   await sink.flush?.();
   await sink.close();
+  activeSampler?.stop();
+  await stopHealthServer(activeHealthServer);
 }
-
-/**
- * Handle SIGINT signal to gracefully shut down the indexer.
- */
-process.on('SIGINT', async () => {
-  log.warn('SIGINT received, shutting down…');
-  process.exit(0);
-});
-/**
- * Handle SIGTERM signal to gracefully shut down the indexer.
- */
-process.on('SIGTERM', async () => {
-  log.warn('SIGTERM received, shutting down…');
-  process.exit(0);
-});
 
 main().catch((e) => {
   const msg = e instanceof Error ? e.stack || e.message : String(e);

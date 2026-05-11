@@ -3,37 +3,123 @@ services:
     image: postgres:${PG_VERSION:-16}
     container_name: cosmosindexer
     restart: unless-stopped
+    command:
+      - 'postgres'
+      # Networking
+      - '-c'
+      - 'listen_addresses=*'
+      - '-c'
+      - 'max_connections=500'
+      # Memory (tuned for 314 GB RAM server)
+      - '-c'
+      - 'shared_buffers=64GB'
+      - '-c'
+      - 'effective_cache_size=200GB'
+      - '-c'
+      - 'work_mem=256MB'
+      - '-c'
+      - 'maintenance_work_mem=4GB'
+      - '-c'
+      - 'huge_pages=try'
+      # WAL tuning for batch inserts
+      - '-c'
+      - 'wal_buffers=64MB'
+      - '-c'
+      - 'max_wal_size=16GB'
+      - '-c'
+      - 'min_wal_size=4GB'
+      - '-c'
+      - 'checkpoint_completion_target=0.9'
+      - '-c'
+      - 'checkpoint_timeout=15min'
+      - '-c'
+      - 'synchronous_commit=off'
+      - '-c'
+      - 'fsync=on'
+      - '-c'
+      - 'full_page_writes=on'
+      # GIN pending list — larger = fewer flushes during bulk insert
+      - '-c'
+      - 'gin_pending_list_limit=65536'
+      # Parallelism
+      - '-c'
+      - 'max_worker_processes=40'
+      - '-c'
+      - 'max_parallel_workers_per_gather=8'
+      - '-c'
+      - 'max_parallel_workers=20'
+      - '-c'
+      - 'max_parallel_maintenance_workers=8'
+      # Storage (SSD/NVMe)
+      - '-c'
+      - 'random_page_cost=1.1'
+      - '-c'
+      - 'effective_io_concurrency=200'
+      # Autovacuum
+      - '-c'
+      - 'autovacuum=on'
+      # Connection keepalives (for external ValidatorInfo connections)
+      - '-c'
+      - 'tcp_keepalives_idle=60'
+      - '-c'
+      - 'tcp_keepalives_interval=10'
+      - '-c'
+      - 'tcp_keepalives_count=6'
+      # Logging (only slow queries and checkpoint events)
+      - '-c'
+      - 'log_statement=none'
+      - '-c'
+      - 'log_min_duration_statement=1000'
+      - '-c'
+      - 'log_checkpoints=on'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
       interval: 10s
       timeout: 5s
       retries: 10
     environment:
       # Official postgres envs used by the image during init:
       # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD are REQUIRED to create the DB and user.
-      # POSTGRES_INITDB_ARGS is optional (e.g. "--locale=C --encoding=UTF8").
       POSTGRES_DB: ${PG_DB}
       POSTGRES_USER: ${PG_USER}
       POSTGRES_PASSWORD: ${PG_PASSWORD}
       POSTGRES_INITDB_ARGS: ${PG_INITDB_ARGS}
+    # Bind to all interfaces so ValidatorInfo can connect from external IP.
+    # IMPORTANT: Secure with firewall rules (allow only validatorinfo server IP):
+    #   sudo ufw allow from <VALIDATORINFO_IP> to any port ${PG_PORT:-2432}
     ports:
-      - "${PG_PORT:-5432}:5432"
+      - '${PG_EXTERNAL_HOST:-0.0.0.0}:${PG_PORT:-2432}:5432'
+    networks:
+      - default
+      - cosmos-indexer-net
     volumes:
       - pgdata_cosmosindexer:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    deploy:
+      resources:
+        limits:
+          memory: 200G
+        reservations:
+          memory: 64G
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '500m'
+        max-file: '10'
 
   indexer:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: cosmos-indexer-app
-    restart: unless-stopped
+    restart: ${INDEXER_RESTART_POLICY:-unless-stopped}
     depends_on:
       db:
         condition: service_healthy
     environment:
       # Ensure the indexer writes to Postgres and will try to resume from progress
       SINK: postgres
-      RESUME: 'true'
+      RESUME: ${RESUME:-true}
       PG_HOST: ${PG_HOST:-db}
       # use container internal Postgres port (5432) for inter-container networking
       PG_PORT: 5432
@@ -41,38 +127,89 @@ services:
       PG_PASSWORD: ${PG_PASSWORD}
       PG_DB: ${PG_DB}
       # Optional: override RPC_URL if you want the indexer to target a remote node
-      RPC_URL: ${RPC_URL}
+      RPC_URL: http://192.168.5.217:14457
       # Node memory default (can be overridden at compose run time)
       NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=24576}
       # Performance tuning (from .env)
       CONCURRENCY: ${CONCURRENCY:-48}
+      DECODE_WORKERS: ${DECODE_WORKERS:-}
       RPS: ${RPS:-500}
       TIMEOUT_MS: ${TIMEOUT_MS:-5000}
       RETRIES: ${RETRIES:-3}
       BACKOFF_MS: ${BACKOFF_MS:-250}
       BACKOFF_JITTER: ${BACKOFF_JITTER:-0.3}
+      # Sharding
+      SHARDS: ${SHARDS:-1}
+      SHARD_ID: ${SHARD_ID:-0}
       # Indexing range
+      FROM: ${FROM:-}
+      TO: ${TO:-}
       FIRST_BLOCK: ${FIRST_BLOCK:-1}
       FOLLOW: ${FOLLOW:-true}
       FOLLOW_INTERVAL_MS: ${FOLLOW_INTERVAL_MS:-5000}
-      # Logging
+      # Logging & formatting
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      CASE: ${CASE:-snake}
+      PROGRESS_EVERY_BLOCKS: ${PROGRESS_EVERY_BLOCKS:-1000}
+      PROGRESS_INTERVAL_SEC: ${PROGRESS_INTERVAL_SEC:-15}
+      # Postgres settings
+      PG_MODE: ${PG_MODE:-batch-insert}
+      PG_BULK_MODE: ${PG_BULK_MODE:-false}
+      PG_COPY_APPEND_ONLY_TABLES: ${PG_COPY_APPEND_ONLY_TABLES:-off}
+      PG_POOL_SIZE: ${PG_POOL_SIZE:-16}
+      PG_PROGRESS_ID: ${PG_PROGRESS_ID:-default}
       # Postgres batch sizes
       PG_BATCH_BLOCKS: ${PG_BATCH_BLOCKS:-1000}
       PG_BATCH_TXS: ${PG_BATCH_TXS:-2000}
       PG_BATCH_MSGS: ${PG_BATCH_MSGS:-5000}
       PG_BATCH_EVENTS: ${PG_BATCH_EVENTS:-10000}
       PG_BATCH_ATTRS: ${PG_BATCH_ATTRS:-30000}
-      PG_POOL_SIZE: ${PG_POOL_SIZE:-16}
-      PG_MODE: ${PG_MODE:-batch-insert}
-      PG_PROGRESS_ID: ${PG_PROGRESS_ID:-default}
-    # In production, do not bind-mount the host project directory — that can overwrite
-    # container-installed node_modules (causing esbuild platform mismatch). The image
-    # already contains the app and dependencies.
-    # For development you can create a separate docker-compose.override.dev.yml that
-    # mounts the source and sets up an anonymous volume for /usr/src/app/node_modules.
+      PG_BATCH_TRANSFERS: ${PG_BATCH_TRANSFERS:-5000}
+      PG_BATCH_STAKE_DELEG: ${PG_BATCH_STAKE_DELEG:-5000}
+      PG_BATCH_STAKE_DISTR: ${PG_BATCH_STAKE_DISTR:-5000}
+      PG_BATCH_WASM_EXEC: ${PG_BATCH_WASM_EXEC:-5000}
+      PG_BATCH_WASM_EVENTS: ${PG_BATCH_WASM_EVENTS:-5000}
+      PG_BATCH_GOV_DEPOSITS: ${PG_BATCH_GOV_DEPOSITS:-5000}
+      PG_BATCH_GOV_VOTES: ${PG_BATCH_GOV_VOTES:-5000}
+      PG_BATCH_GOV_PROPOSALS: ${PG_BATCH_GOV_PROPOSALS:-1000}
+      # Health endpoint
+      HEALTH_PORT: ${HEALTH_PORT:-3000}
+      HEALTH_STALE_SECONDS: ${HEALTH_STALE_SECONDS:-180}
+      HEALTH_STARTUP_GRACE_SECONDS: ${HEALTH_STARTUP_GRACE_SECONDS:-300}
+      HEALTH_ENABLED: ${HEALTH_ENABLED:-true}
+      # Prometheus /metrics on the same port
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_SAMPLE_INTERVAL_MS: ${METRICS_SAMPLE_INTERVAL_MS:-5000}
+    ports:
+      - '${HEALTH_EXTERNAL_HOST:-127.0.0.1}:${HEALTH_PORT:-3000}:${HEALTH_PORT:-3000}'
+    healthcheck:
+      test:
+        - 'CMD-SHELL'
+        - 'wget -qO- --tries=1 --timeout=5 http://127.0.0.1:${HEALTH_PORT:-3000}/health > /dev/null || exit 1'
+      interval: 30s
+      timeout: 10s
+      start_period: 5m
+      retries: 3
+    # The image contains the app and dependencies. Avoid bind-mounting the repo into
+    # the container unless you add a dedicated dev override with an anonymous
+    # node_modules volume to prevent native binary mismatches.
     working_dir: /usr/src/app
-
+    deploy:
+      resources:
+        limits:
+          memory: 100G
+        reservations:
+          memory: 32G
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '500m'
+        max-file: '20'
 
 volumes:
   pgdata_cosmosindexer:
+
+networks:
+  cosmos-indexer-net:
+    external: true

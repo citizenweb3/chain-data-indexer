@@ -43,9 +43,9 @@ It extracts, processes, and stores blockchain data from various networks into a 
 
 CDI supports multiple blockchain networks. Each network has its own dedicated branch with specialized implementation:
 
-| Network | Branch | Status | Description |
-|---------|--------|--------|-------------|
-| **Cosmos Hub** | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) | ✅ Production | Full indexer for cosmoshub-4 with Protobuf decoding, transaction parsing, and PostgreSQL storage |
+| Network            | Branch                                                                  | Status         | Description                                                                                                    |
+| ------------------ | ----------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Cosmos Hub**     | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main)   | ✅ Production  | Full indexer for cosmoshub-4 with Protobuf decoding, transaction parsing, and PostgreSQL storage               |
 | **Aztec Protocol** | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | 🚧 Development | High-performance L2 indexer with REST API, Kafka streaming, and parallel block processing (270-280 blocks/sec) |
 
 ### Switching Networks
@@ -117,12 +117,14 @@ yarn install --frozen-lockfile
 ### Using Docker (Recommended)
 
 1. Copy and configure your environment:
+
    ```bash
    cp .env.example .env
    # Edit .env as needed
    ```
 
 2. Build and start all services:
+
    ```bash
    docker compose --env-file .env up --build -d
    ```
@@ -135,9 +137,11 @@ yarn install --frozen-lockfile
 > By default, the indexer will resume from the last processed block (`RESUME=true`) and use Postgres as the sink.
 
 #### To reset Postgres and re-initialize the database:
+
 ```bash
 docker compose down -v
 ```
+
 ```bash
 docker compose --env-file .env up -d db
 ```
@@ -149,49 +153,86 @@ docker compose --env-file .env up -d db
 All configuration is managed through environment variables.  
 See `.env.example` for a complete list.
 
-| Variable     | Description                        | Example                  |
-| ------------ | ---------------------------------- | ------------------------ |
-| PG_HOST      | PostgreSQL host                    | `localhost`              |
-| PG_PORT      | PostgreSQL port                    | `5432`                   |
-| PG_USER      | PostgreSQL user                    | `blockchain`             |
-| PG_PASSWORD  | PostgreSQL password                | `password`               |
-| PG_DATABASE  | PostgreSQL database name           | `indexerdb`              |
-| RPC_URL      | Blockchain RPC endpoint            | `https://rpc.cosmoshub-4-archive.citizenweb3.com` |
-| SINK         | Data sink type                     | `postgres`               |
-| RESUME       | Resume from last indexed block     | `true`                   |
-| NODE_OPTIONS | Node.js runtime options            | `--max-old-space-size=24576` |
+| Variable                   | Description                                                                    | Example                                           |
+| -------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------- |
+| PG_HOST                    | PostgreSQL host                                                                | `localhost`                                       |
+| PG_PORT                    | PostgreSQL port                                                                | `5432`                                            |
+| PG_USER                    | PostgreSQL user                                                                | `blockchain`                                      |
+| PG_PASSWORD                | PostgreSQL password                                                            | `password`                                        |
+| PG_DATABASE                | PostgreSQL database name                                                       | `indexerdb`                                       |
+| RPC_URL                    | Blockchain RPC endpoint                                                        | `https://rpc.cosmoshub-4-archive.citizenweb3.com` |
+| SINK                       | Data sink type                                                                 | `postgres`                                        |
+| RESUME                     | Resume from last indexed block                                                 | `true`                                            |
+| PG_BULK_MODE               | Drop indexes + UNLOGGED partitions for fast backfill (auto-restored on follow) | `true`                                            |
+| HEALTH_PORT                | TCP port for `/health` and `/metrics` endpoints                                | `3000`                                            |
+| HEALTH_STALE_SECONDS       | Block-progress freshness threshold                                             | `180`                                             |
+| METRICS_ENABLED            | Expose Prometheus `/metrics` on `HEALTH_PORT`                                  | `true`                                            |
+| METRICS_SAMPLE_INTERVAL_MS | Sampler refresh interval (pg pool, decode pool, chain tip)                     | `5000`                                            |
+| LOG_FORMAT                 | `pretty` (default, human-readable) or `json` (Loki/ELK)                        | `pretty`                                          |
+| NODE_OPTIONS               | Node.js runtime options                                                        | `--max-old-space-size=24576`                      |
 
 ---
 
 ## Usage
 
+### Bulk Backfill Mode
+
+For fresh bulk backfills on a new PostgreSQL volume, you can skip the heaviest
+secondary indexes during init and rebuild them after the range finishes.
+
+Start a fixed backfill window with deferred heavy indexes:
+
+```bash
+INDEXER_RESTART_POLICY=no \
+PG_DEFER_HEAVY_INDEXES=on \
+RESUME=false \
+FROM=9000000 \
+TO=9002499 \
+docker compose --env-file .env.production up --build -d
+```
+
+After the range finishes, stop the indexer, bring the database back up if needed,
+and rebuild the skipped indexes:
+
+```bash
+docker compose --env-file .env.production up -d db
+make rebuild-heavy-indexes
+```
+
+This mode does not change indexed row content. It only removes selected heavy
+secondary indexes from the write path during the backfill.
+
 ### Running Locally (Without Docker)
 
 1. Install dependencies:
-    ```bash
-    yarn install --frozen-lockfile
-    ```
+
+   ```bash
+   yarn install --frozen-lockfile
+   ```
 
 2. Create a `.env` file:
-    ```bash
-    cp .env.example .env
-    # Edit as necessary
-    ```
+
+   ```bash
+   cp .env.example .env
+   # Edit as necessary
+   ```
 
 3. Generate runtime artifacts:
-    ```bash
-    npx tsx scripts/gen-known-msgs.ts
-    ```
+
+   ```bash
+   npx tsx scripts/gen-known-msgs.ts
+   ```
 
 4. Run Postgres (via Docker):
-    ```bash
-    make up
-    ```
+
+   ```bash
+   make up
+   ```
 
 5. Start the indexer:
-    ```bash
-    npm run start
-    ```
+   ```bash
+   npm run start
+   ```
 
 > Need more memory?  
 > `export NODE_OPTIONS=--max-old-space-size=24576`
@@ -206,6 +247,7 @@ See `.env.example` for a complete list.
 - `make logs` — Show DB logs (`docker compose --env-file .env logs -f db`)
 - `make psql` — Exec `psql` inside the Postgres container
 - `make psql-file FILE=path/to/script.sql` — Copy and run a SQL file inside the DB container
+- `make rebuild-heavy-indexes` — Recreate heavy secondary indexes skipped by bulk backfill mode
 
 ---
 
@@ -214,6 +256,16 @@ See `.env.example` for a complete list.
 - Indexer fails due to memory? Increase `NODE_OPTIONS`.
 - Check your `.env` for correct DB and RPC settings.
 - Use `make reset` to reinitialize your database if needed.
+- Container keeps exiting? Check `curl http://127.0.0.1:${HEALTH_PORT:-3000}/health`
+  and `docker inspect cosmos-indexer-app --format '{{.State.Health.Status}}'`.
+  See the **Monitoring & Maintenance** section in [DEPLOYMENT.md](DEPLOYMENT.md).
+- Need Prometheus metrics or log shipping? `curl http://127.0.0.1:${HEALTH_PORT:-3000}/metrics`
+  for the `cdi_*` series, set `LOG_FORMAT=json` for structured logs, and use
+  the reference collector configs in [`docs/observability/`](docs/observability/)
+  (Grafana Alloy or classic Prometheus + Promtail).
+- RPC archive node temporarily unavailable? The indexer now waits and resumes
+  automatically (no crash loop) — see logs for `[rpc] startup: RPC unavailable`
+  / `RPC is available again`.
 
 ---
 
