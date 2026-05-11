@@ -7,6 +7,21 @@ Designed for integration with the [validatorinfo](https://validatorinfo.com) exp
 
 **Supported:** Logos testnet v0.1.2+
 
+**Branch status:** Development
+
+## CDI repository context
+
+This branch is part of the [`citizenweb3/chain-data-indexer`](https://github.com/citizenweb3/chain-data-indexer)
+branch family. The repository map lives in
+[`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main). The Logos explorer API is built into this branch.
+
+| Related indexer | Branch | Status |
+|---|---|---|
+| Cosmos Hub | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) | Production |
+| Aztec Protocol | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | Production |
+| Monero | [`monero-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/monero-indexer) | Development |
+| Polygon Miden | [`miden-indexer-v0.13.4`](https://github.com/citizenweb3/chain-data-indexer/tree/miden-indexer-v0.13.4) | Development |
+
 ---
 
 ## What it indexes
