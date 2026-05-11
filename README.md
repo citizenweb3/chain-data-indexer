@@ -2,17 +2,36 @@
 
 > built by [Citizen Web3](https://www.citizenweb3.com/) for [ValidatorInfo](https://validatorinfo.com/)
 
-## Chains
+## Repository Map
 
-- [Cosmos Hub](https://github.com/citizenweb3/chain-data-indexer/tree/main) - Development 🚧
-- [Aztec Protocol](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) - Production ✅
+CDI is organized as a branch-based monorepo: each network indexer lives in its own branch, while
+companion services, such as API wrappers, live in dedicated branches next to the indexers.
+
+### Indexers
+
+| Network            | Branch                                                                                      | Status         | Purpose                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| **Cosmos Hub**     | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main)                       | ✅ Production  | Cosmos Hub indexer with Protobuf decoding, transaction parsing, PostgreSQL storage, and metrics |
+| **Aztec Protocol** | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec)                     | ✅ Production  | Aztec indexer stack for explorer and analytics workloads                                        |
+| **Logos**          | [`logos-indexer-v0.1.2`](https://github.com/citizenweb3/chain-data-indexer/tree/logos-indexer-v0.1.2) | 🚧 Development | Logos testnet indexer with canonical-chain, finality, transaction, and explorer API data        |
+| **Monero**         | [`monero-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/monero-indexer)   | 🚧 Development | Monero indexer for blocks, transactions, supply checkpoints, health, metrics, and explorer APIs |
+| **Polygon Miden**  | [`miden-indexer-v0.13.4`](https://github.com/citizenweb3/chain-data-indexer/tree/miden-indexer-v0.13.4) | 🚧 Development | Polygon Miden indexer with HTTP API, observability, and PostgreSQL storage                      |
+
+### Companion Components
+
+| Component            | Branch                                                                                              | Status      | Purpose                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------- |
+| **Cosmos Indexer API** | [`cosmos-indexer-api`](https://github.com/citizenweb3/chain-data-indexer/tree/cosmos-indexer-api) | API wrapper | Read-only Next.js API over the Cosmos Hub indexer PostgreSQL database |
+
+> Each branch contains network-specific configuration, schemas, and documentation. The instructions below are for the
+> **Cosmos Hub indexer** in `main`.
 
 ---
 
 ## 📚 Table of Contents
 
-- [Overview](#overview)
-- [Supported Networks](#supported-networks)
+- [Repository Map](#repository-map)
+- [Cosmos Hub Indexer](#cosmos-hub-indexer)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
@@ -28,39 +47,15 @@
 
 ---
 
-## Overview
+## Cosmos Hub Indexer
 
-**Chain Data Indexer (CDI)** is a high-performance, modular blockchain data indexer designed for powering block explorers, analytics platforms, DeFi dashboards, compliance tools, and research projects.  
-It extracts, processes, and stores blockchain data from various networks into a PostgreSQL database, enabling fast and flexible querying.
+The `main` branch contains the production **Cosmos Hub** implementation of Chain Data Indexer (CDI).
+It extracts, processes, and stores Cosmos Hub blockchain data in PostgreSQL for block explorers, analytics platforms,
+DeFi dashboards, compliance tools, and research projects.
 
 - 🧭 **Primary Use Case:** Powering block explorers with rich, searchable blockchain data.
 - 🌌 **Extensible:** Suitable for analytics, compliance, DeFi, R&D, and more.
-- 🌐 **Multi-Network:** This is a monorepo with indexers for multiple blockchain networks.
-
----
-
-## Supported Networks
-
-CDI supports multiple blockchain networks. Each network has its own dedicated branch with specialized implementation:
-
-| Network            | Branch                                                                  | Status         | Description                                                                                                    |
-| ------------------ | ----------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Cosmos Hub**     | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main)   | ✅ Production  | Full indexer for cosmoshub-4 with Protobuf decoding, transaction parsing, and PostgreSQL storage               |
-| **Aztec Protocol** | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | 🚧 Development | High-performance L2 indexer with REST API, Kafka streaming, and parallel block processing (270-280 blocks/sec) |
-
-### Switching Networks
-
-To work with a specific network indexer, switch to the corresponding branch:
-
-```bash
-# For Cosmos Hub indexer (this branch)
-git checkout main
-
-# For Aztec Protocol indexer
-git checkout aztec
-```
-
-> 💡 **Note:** Each branch contains network-specific configuration, schemas, and documentation. Make sure to read the branch-specific README for detailed setup instructions.
+- 🌐 **Multi-Network:** CDI also includes separate branches for Aztec, Logos, Monero, and Polygon Miden indexers.
 
 ---
 
@@ -231,7 +226,7 @@ secondary indexes from the write path during the backfill.
 
 5. Start the indexer:
    ```bash
-   npm run start
+   yarn start
    ```
 
 > Need more memory?  
