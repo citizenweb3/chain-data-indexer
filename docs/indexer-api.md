@@ -6,7 +6,7 @@ Base URL: `http://<host>:<INDEXER_HTTP_PORT>`. All explorer endpoints are read-o
 
 - `BYTEA` database columns are returned as lower-case hex strings with no `0x` prefix.
 - Hex path/query parameters must contain only hex characters and have the exact expected byte length. Invalid values return `400 { "error": "invalid hex", "code": "INVALID_HEX" }`.
-- `BIGINT` columns are returned as JSON strings to avoid JavaScript 53-bit precision loss. Counts and pagination totals are JSON numbers at current data volume.
+- Most `BIGINT` columns are returned as JSON strings to avoid JavaScript 53-bit precision loss. Block lineage fields backed by Miden `fixed32`/bounded block numbers (`block_num`, `last_block`, `expiration_block_num`, `last_block_num`, `chain_length`) are returned as JSON numbers so explorer consumers can sort them numerically without client-side coercion.
 - Timestamps are JSON strings produced from PostgreSQL `TIMESTAMPTZ` values.
 - List endpoints use `limit`/`offset` pagination and return `{ data, total, limit, offset }`. `limit` defaults to `20` and is clamped to `1..100`; `offset` defaults to `0`, must be non-negative, and is capped at `100000` (a `400 OFFSET_TOO_LARGE` is returned above the cap — narrow the filter or page from the other end). `total` is computed via `COUNT(*)` and cached for ~5 s per (table, filter) combination.
 - Errors never include stack traces. Stable error bodies are `{ error: string, code: string }`.
@@ -17,10 +17,11 @@ Base URL: `http://<host>:<INDEXER_HTTP_PORT>`. All explorer endpoints are read-o
 type Page<T> = { data: T[]; total: number; limit: number; offset: number };
 type Hex = string;
 type BigIntString = string;
+type BlockNumber = number;
 type Timestamp = string;
 
 type BlockSummary = {
-  block_num: BigIntString;
+  block_num: BlockNumber;
   block_hash: Hex;
   prev_block_commitment: Hex;
   chain_commitment: Hex;
@@ -37,20 +38,20 @@ type BlockSummary = {
   note_count: number;
   nullifier_count: number;
   version: number | null;
-  chain_length: BigIntString | null;
+  chain_length: BlockNumber | null;
   inserted_at: Timestamp;
 };
 type Block = BlockSummary & { raw_block_bytes: Hex | null };
 
 type Transaction = {
   tx_id: Hex;
-  block_num: BigIntString;
+  block_num: BlockNumber;
   account_id: Hex;
   init_account_state: Hex | null;
   final_account_state: Hex | null;
   input_notes_commitment: Hex | null;
   output_notes_commitment: Hex | null;
-  expiration_block_num: BigIntString | null;
+  expiration_block_num: BlockNumber | null;
   input_nullifiers: Hex[] | null;
   output_note_ids: Hex[] | null;
   inserted_at: Timestamp;
@@ -58,7 +59,7 @@ type Transaction = {
 
 type Note = {
   note_id: Hex;
-  block_num: BigIntString;
+  block_num: BlockNumber;
   note_index: number;
   is_public: boolean;
   metadata: Hex;
@@ -79,7 +80,7 @@ type Note = {
 
 type Nullifier = {
   nullifier: Hex;
-  block_num: BigIntString;
+  block_num: BlockNumber;
   consumed_note_id: Hex | null;
   inserted_at: Timestamp;
 };
@@ -87,7 +88,7 @@ type Nullifier = {
 type Account = {
   account_id: Hex;
   is_public: boolean;
-  last_block_num: BigIntString;
+  last_block_num: BlockNumber;
   account_commitment: Hex;
   nonce: BigIntString | null;
   code_commitment: Hex | null;
@@ -108,7 +109,7 @@ Returns API/database health. The server returns `200` when PostgreSQL responds t
 Response:
 
 ```ts
-{ ok: true; lag_blocks: number | null; last_block: BigIntString | null; uptime_s: number; version: string }
+{ ok: true; lag_blocks: number | null; last_block: BlockNumber | null; uptime_s: number; version: string }
 ```
 
 Status codes: `200`, `503`.
@@ -144,7 +145,7 @@ Response:
 
 ```ts
 {
-  last_block: BigIntString;
+  last_block: BlockNumber;
   total_blocks: number;
   total_transactions: number;
   total_notes: number;

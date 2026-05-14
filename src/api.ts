@@ -267,6 +267,67 @@ function addCondition(parts: QueryParts, sql: string, value: unknown): void {
     : `WHERE ${sql.replace('?', `$${parts.values.length}`)}`;
 }
 
+function parseSafeApiInteger(value: string, field: string): number {
+  let parsed: bigint;
+  try {
+    parsed = BigInt(value);
+  } catch {
+    throw new Error(`invalid integer value for ${field}: ${value}`);
+  }
+  if (parsed < 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`integer value for ${field} is out of safe JSON range: ${value}`);
+  }
+  return Number(parsed);
+}
+
+function parseOptionalSafeApiInteger(value: string | null, field: string): number | null {
+  return value === null ? null : parseSafeApiInteger(value, field);
+}
+
+function blockSummaryResponse(row: BlockSummaryRow): Record<string, unknown> {
+  return {
+    ...row,
+    block_num: parseSafeApiInteger(row.block_num, 'block_num'),
+    chain_length: parseOptionalSafeApiInteger(row.chain_length, 'chain_length'),
+  };
+}
+
+function blockDetailResponse(row: BlockDetailRow): Record<string, unknown> {
+  return {
+    ...blockSummaryResponse(row),
+    raw_block_bytes: row.raw_block_bytes,
+  };
+}
+
+function transactionResponse(row: TransactionRow): Record<string, unknown> {
+  return {
+    ...row,
+    block_num: parseSafeApiInteger(row.block_num, 'block_num'),
+    expiration_block_num: parseOptionalSafeApiInteger(row.expiration_block_num, 'expiration_block_num'),
+  };
+}
+
+function noteResponse(row: NoteRow): Record<string, unknown> {
+  return {
+    ...row,
+    block_num: parseSafeApiInteger(row.block_num, 'block_num'),
+  };
+}
+
+function nullifierResponse(row: NullifierRow): Record<string, unknown> {
+  return {
+    ...row,
+    block_num: parseSafeApiInteger(row.block_num, 'block_num'),
+  };
+}
+
+function accountResponse(row: AccountRow): Record<string, unknown> {
+  return {
+    ...row,
+    last_block_num: parseSafeApiInteger(row.last_block_num, 'last_block_num'),
+  };
+}
+
 function paginated<T>(rows: T[], total: string, page: PageParams): Record<string, unknown> {
   return {
     data: rows,
@@ -372,7 +433,7 @@ async function handleHealth(res: http.ServerResponse, getChainTip?: ChainTipGett
   sendJson(res, 200, {
     ok: true,
     lag_blocks: lagBlocks,
-    last_block: lastBlock,
+    last_block: parseOptionalSafeApiInteger(lastBlock, 'last_block'),
     uptime_s: Math.floor((Date.now() - startedAt) / 1_000),
     version: API_VERSION,
   });
@@ -397,7 +458,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
   );
   const stats = rows[0];
   const payload = {
-    last_block: stats.last_block,
+    last_block: parseSafeApiInteger(stats.last_block, 'last_block'),
     total_blocks: Number(stats.total_blocks),
     total_transactions: Number(stats.total_transactions),
     total_notes: Number(stats.total_notes),
@@ -416,13 +477,13 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
     getPool().query<BlockSummaryRow>(
       `SELECT ${blockSummaryColumns}
        FROM miden_blocks
-       ORDER BY block_num ${page.order === 'asc' ? 'ASC' : 'DESC'}
-       LIMIT $1 OFFSET $2`,
+        ORDER BY block_num ${page.order === 'asc' ? 'ASC' : 'DESC'}
+        LIMIT $1 OFFSET $2`,
       values,
     ),
     cachedCount('miden_blocks', '', []),
   ]);
-  sendJson(res, 200, paginated(blocks.rows, total, page));
+  sendJson(res, 200, paginated(blocks.rows.map(blockSummaryResponse), total, page));
 }
 
 async function handleBlockByNumber(blockNum: string, url: URL, res: http.ServerResponse): Promise<void> {
@@ -439,7 +500,7 @@ async function handleBlockByNumber(blockNum: string, url: URL, res: http.ServerR
     [parsed],
   );
   if (rows.length === 0) throw new HttpError(404, 'not found', 'NOT_FOUND');
-  sendJson(res, 200, rows[0]);
+  sendJson(res, 200, blockDetailResponse(rows[0]));
 }
 
 async function handleBlockByHash(hex: string, url: URL, res: http.ServerResponse): Promise<void> {
@@ -455,7 +516,7 @@ async function handleBlockByHash(hex: string, url: URL, res: http.ServerResponse
     [hash],
   );
   if (rows.length === 0) throw new HttpError(404, 'not found', 'NOT_FOUND');
-  sendJson(res, 200, rows[0]);
+  sendJson(res, 200, blockDetailResponse(rows[0]));
 }
 
 function transactionFilters(url: URL): QueryParts {
@@ -479,22 +540,22 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
        FROM miden_transactions
        ${filters.where}
        ORDER BY block_num DESC, tx_id ASC
-       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
     cachedCount('miden_transactions', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, total, page));
+  sendJson(res, 200, paginated(items.rows.map(transactionResponse), total, page));
 }
 
 async function handleTransaction(hex: string, res: http.ServerResponse): Promise<void> {
   const txId = parseHexParam(hex, 32);
   const { rows } = await getPool().query<TransactionRow>(
-    `SELECT ${transactionColumns} FROM miden_transactions WHERE tx_id = $1`,
-    [txId],
-  );
+     `SELECT ${transactionColumns} FROM miden_transactions WHERE tx_id = $1`,
+     [txId],
+   );
   if (rows.length === 0) throw new HttpError(404, 'not found', 'NOT_FOUND');
-  sendJson(res, 200, rows[0]);
+  sendJson(res, 200, transactionResponse(rows[0]));
 }
 
 function noteFilters(url: URL): QueryParts {
@@ -522,22 +583,22 @@ async function handleNotes(url: URL, res: http.ServerResponse): Promise<void> {
        FROM miden_notes
        ${filters.where}
        ORDER BY block_num DESC, note_index ASC, note_id ASC
-       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
     cachedCount('miden_notes', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, total, page));
+  sendJson(res, 200, paginated(items.rows.map(noteResponse), total, page));
 }
 
 async function handleNote(hex: string, res: http.ServerResponse): Promise<void> {
   const noteId = parseHexParam(hex, 32);
   const { rows } = await getPool().query<NoteRow>(
-    `SELECT ${noteColumns} FROM miden_notes WHERE note_id = $1`,
-    [noteId],
-  );
+     `SELECT ${noteColumns} FROM miden_notes WHERE note_id = $1`,
+     [noteId],
+   );
   if (rows.length === 0) throw new HttpError(404, 'not found', 'NOT_FOUND');
-  sendJson(res, 200, rows[0]);
+  sendJson(res, 200, noteResponse(rows[0]));
 }
 
 function nullifierFilters(url: URL): QueryParts {
@@ -559,22 +620,22 @@ async function handleNullifiers(url: URL, res: http.ServerResponse): Promise<voi
        FROM miden_nullifiers
        ${filters.where}
        ORDER BY block_num DESC, nullifier ASC
-       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
     cachedCount('miden_nullifiers', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, total, page));
+  sendJson(res, 200, paginated(items.rows.map(nullifierResponse), total, page));
 }
 
 async function handleNullifier(hex: string, res: http.ServerResponse): Promise<void> {
   const nullifier = parseHexParam(hex, 32);
   const { rows } = await getPool().query<NullifierRow>(
-    `SELECT ${nullifierColumns} FROM miden_nullifiers WHERE nullifier = $1`,
-    [nullifier],
-  );
+     `SELECT ${nullifierColumns} FROM miden_nullifiers WHERE nullifier = $1`,
+     [nullifier],
+   );
   if (rows.length === 0) throw new HttpError(404, 'not found', 'NOT_FOUND');
-  sendJson(res, 200, rows[0]);
+  sendJson(res, 200, nullifierResponse(rows[0]));
 }
 
 function accountFilters(url: URL): QueryParts {
@@ -596,22 +657,22 @@ async function handleAccounts(url: URL, res: http.ServerResponse): Promise<void>
        FROM miden_accounts
        ${filters.where}
        ORDER BY last_block_num DESC, account_id ASC
-       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
     cachedCount('miden_accounts', filters.where, filters.values),
   ]);
-  sendJson(res, 200, paginated(items.rows, total, page));
+  sendJson(res, 200, paginated(items.rows.map(accountResponse), total, page));
 }
 
 async function handleAccount(hex: string, res: http.ServerResponse): Promise<void> {
   const accountId = parseHexParam(hex, 15);
   const { rows } = await getPool().query<AccountRow>(
-    `SELECT ${accountColumns} FROM miden_accounts WHERE account_id = $1`,
-    [accountId],
-  );
+     `SELECT ${accountColumns} FROM miden_accounts WHERE account_id = $1`,
+     [accountId],
+   );
   if (rows.length === 0) throw new HttpError(404, 'not found', 'NOT_FOUND');
-  sendJson(res, 200, rows[0]);
+  sendJson(res, 200, accountResponse(rows[0]));
 }
 
 async function route(req: http.IncomingMessage, res: http.ServerResponse, options: ApiServerOptions): Promise<void> {
