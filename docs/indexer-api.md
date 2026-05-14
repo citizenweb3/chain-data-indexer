@@ -23,6 +23,7 @@ type Timestamp = string;
 type BlockSummary = {
   block_num: BlockNumber;
   block_hash: Hex;
+  block_commitment: Hex | null;
   prev_block_commitment: Hex;
   chain_commitment: Hex;
   account_root: Hex;
@@ -31,6 +32,7 @@ type BlockSummary = {
   tx_commitment: Hex;
   validator_key: Hex;
   tx_kernel_commitment: Hex;
+  proof_commitment: Hex;
   native_asset_id: Hex;
   verification_base_fee: BigIntString;
   timestamp: Timestamp;
@@ -168,6 +170,10 @@ curl http://127.0.0.1:3001/api/v1/stats
 ### `GET /api/v1/blocks?limit=&offset=&order=desc|asc`
 
 Lists block summaries. `order` defaults to `desc` and sorts by `block_num`.
+For blocks that already have a successor row, `block_commitment` is derived from
+the successor header's `prev_block_commitment`, which is the public protocol
+commitment of the listed block. The current tip may return `block_commitment:
+null` until the next block is indexed.
 
 Response: `Page<BlockSummary>`.
 
@@ -182,6 +188,10 @@ curl 'http://127.0.0.1:3001/api/v1/blocks?limit=20&offset=0&order=desc'
 ### `GET /api/v1/blocks/:n[?include_raw=true]`
 
 Returns one block summary by numeric `block_num`. The `raw_block_bytes` hex column is omitted by default to keep responses bounded; pass `?include_raw=true` to receive it. Block bytes can reach 64 MiB raw / ~128 MiB hex, so callers that need the blob should also size their HTTP buffers accordingly.
+
+`block_hash` is the branch-local indexer identifier documented in
+`docs/schema.md`. `block_commitment`, when non-null, is the Miden protocol block
+commitment observed from the successor header.
 
 Response: `Block` (with `raw_block_bytes` only when requested).
 

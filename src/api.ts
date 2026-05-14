@@ -89,6 +89,7 @@ interface StatsRow {
 interface BlockSummaryRow {
   block_num: string;
   block_hash: string;
+  block_commitment: string | null;
   prev_block_commitment: string;
   chain_commitment: string;
   account_root: string;
@@ -289,6 +290,7 @@ function blockSummaryResponse(row: BlockSummaryRow): Record<string, unknown> {
     ...row,
     block_num: parseSafeApiInteger(row.block_num, 'block_num'),
     chain_length: parseOptionalSafeApiInteger(row.chain_length, 'chain_length'),
+    proof_commitment: row.tx_kernel_commitment,
   };
 }
 
@@ -338,8 +340,13 @@ function paginated<T>(rows: T[], total: string, page: PageParams): Record<string
 }
 
 const blockSummaryColumns = `
-  block_num::text,
+  miden_blocks.block_num::text,
   encode(block_hash, 'hex') AS block_hash,
+  (
+    SELECT encode(successor.prev_block_commitment, 'hex')
+    FROM miden_blocks successor
+    WHERE successor.block_num = miden_blocks.block_num + 1
+  ) AS block_commitment,
   encode(prev_block_commitment, 'hex') AS prev_block_commitment,
   encode(chain_commitment, 'hex') AS chain_commitment,
   encode(account_root, 'hex') AS account_root,
