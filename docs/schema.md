@@ -27,7 +27,7 @@ Purpose: one row per canonical block header. MVP stores structured `BlockHeader`
 | name | type | nullable | meaning | proto source | scope |
 |---|---|---:|---|---|---|
 | `block_num` | `BIGINT` | no | Sequential block number. | `blockchain.BlockHeader.block_num` (`fixed32`) | MVP |
-| `block_hash` | `BYTEA` | no | Derived canonical block hash used as explorer hash. | Not a direct v0.13.4 field; computed by indexer as `SHA-256(GetBlockByNumber.block)` over the raw block bytes (see derivation note below). | MVP |
+| `block_hash` | `BYTEA` | no | Derived explorer block identifier. | Not a direct v0.13.4 field; computed by indexer as `SHA-256(raw block bytes)` when `GetBlockByNumber.block` is non-empty, otherwise `SHA-256` over a fixed fallback encoding of structured header fields (see derivation note below). | MVP |
 | `prev_block_commitment` | `BYTEA` | no | Commitment of the previous block header. | `blockchain.BlockHeader.prev_block_commitment` | MVP |
 | `chain_commitment` | `BYTEA` | no | MMR commitment for the chain. | `blockchain.BlockHeader.chain_commitment` | MVP |
 | `account_root` | `BYTEA` | no | Account database root. | `blockchain.BlockHeader.account_root` | MVP |
@@ -43,7 +43,7 @@ Purpose: one row per canonical block header. MVP stores structured `BlockHeader`
 | `note_count` | `INT` | no | Observed note count for this block. | Indexer-derived. | MVP |
 | `nullifier_count` | `INT` | no | Observed nullifier count for this block. | Indexer-derived. | MVP |
 | `version` | `INT` | yes | Protocol version. | `blockchain.BlockHeader.version` | Full |
-| `raw_block_bytes` | `BYTEA` | yes | Optional raw serialized block bytes. | `blockchain.MaybeBlock.block` | Full |
+| `raw_block_bytes` | `BYTEA` | yes | Optional raw serialized block bytes. | `blockchain.MaybeBlock.block`; zero-length payloads are normalized to `NULL` by the sink because they are not useful archival bytes. | Full |
 | `chain_length` | `BIGINT` | yes | Optional MMR chain length returned with header proof requests. | `rpc.BlockHeaderByNumberResponse.chain_length` | Full |
 | `inserted_at` | `TIMESTAMPTZ` | no | Database ingestion time. | Not proto. | MVP |
 
@@ -182,4 +182,31 @@ Schema files are versioned by filename: `001-schema.sql`, then future changes as
 
 ## `block_hash` derivation
 
-`miden-node v0.13.4` does not expose a current-block hash field in `BlockHeader`. The sink derives `miden_blocks.block_hash` as `SHA-256(GetBlockByNumber.block)` over the raw serialized block bytes. This uses the canonical bytes returned by the node, avoids inventing a header-root concatenation format, and gives explorer queries a stable collision-resistant identifier.
+`miden-node v0.13.4` does not expose a current-block hash field in `BlockHeader`. The sink therefore derives the explorer-facing `miden_blocks.block_hash` with a two-path rule:
+
+1. **Non-empty raw bytes:** when `GetBlockByNumber.block` is present and `octet_length(raw_block_bytes) > 0`, `block_hash = SHA-256(raw_block_bytes)`.
+2. **Missing or zero-length raw bytes:** when the node returns no bytes or an empty `bytes` payload, `block_hash = SHA-256(fallback_encoding)` where `fallback_encoding` is the exact concatenation below:
+
+   - UTF-8 domain separator: `miden-block-hash-fallback-v1\0`
+   - `version` as big-endian `uint32`
+   - `block_num` as big-endian `uint32`
+   - `prev_block_commitment` raw 32 bytes
+   - `chain_commitment` raw 32 bytes
+   - `account_root` raw 32 bytes
+   - `nullifier_root` raw 32 bytes
+   - `note_root` raw 32 bytes
+   - `tx_commitment` raw 32 bytes
+   - `tx_kernel_commitment` raw 32 bytes
+   - `validator_key.validator_key` as `uint32 byte_length || bytes`
+   - `fee_parameters.native_asset_id.id` as `uint32 byte_length || bytes`
+   - `fee_parameters.verification_base_fee` as big-endian `uint32`
+   - `timestamp` as big-endian `uint32`
+
+This fallback is branch-local and deterministic. It intentionally includes `block_num`, which is unique by protocol invariant, so different blocks cannot collide just because the node returned empty block bytes.
+
+### Caveats
+
+- `block_hash` is an **explorer identifier**, not the native Miden protocol `BlockHeader.commitment()` / RPX hash.
+- The two derivation paths are semantically different: non-empty rows hash the raw serialized block, fallback rows hash only structured header fields.
+- `GetBlockByNumber.block` can be present but zero-length on v0.13.4. In JavaScript, `Buffer.alloc(0)` is truthy, so callers must check `.length > 0`, not just truthiness.
+- `raw_block_bytes` is normalized to `NULL` when the node returns no payload or a zero-length payload.

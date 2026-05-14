@@ -26,12 +26,55 @@ interface BlockInsertRow {
   noteCount: number;
   nullifierCount: number;
   version: number | null;
-  rawBlockBytes: Buffer;
+  rawBlockBytes: Buffer | null;
   chainLength: number | null;
 }
 
 function sha256(bytes: Buffer): Buffer {
   return createHash('sha256').update(bytes).digest();
+}
+
+function encodeUInt32BE(value: number, field: string): Buffer {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {
+    throw new RangeError(`block ${field} is out of uint32 range: ${value}`);
+  }
+  const buf = Buffer.allocUnsafe(4);
+  buf.writeUInt32BE(value, 0);
+  return buf;
+}
+
+function encodeLengthPrefixed(bytes: Buffer): Buffer {
+  return Buffer.concat([encodeUInt32BE(bytes.length, 'length'), bytes]);
+}
+
+export function deriveBlockHash(header: BlockBundle['header'], blockBytes: Buffer): Buffer {
+  if (blockBytes.length > 0) {
+    return sha256(blockBytes);
+  }
+
+  if (!header.validatorKey) {
+    throw new Error(`block ${header.blockNum} is missing validator_key`);
+  }
+  if (!header.feeParameters) {
+    throw new Error(`block ${header.blockNum} is missing fee_parameters`);
+  }
+
+  return sha256(Buffer.concat([
+    Buffer.from('miden-block-hash-fallback-v1\0', 'utf8'),
+    encodeUInt32BE(header.version, 'version'),
+    encodeUInt32BE(header.blockNum, 'blockNum'),
+    header.prevBlockCommitment,
+    header.chainCommitment,
+    header.accountRoot,
+    header.nullifierRoot,
+    header.noteRoot,
+    header.txCommitment,
+    header.txKernelCommitment,
+    encodeLengthPrefixed(header.validatorKey.validatorKey),
+    encodeLengthPrefixed(header.feeParameters.nativeAssetId),
+    encodeUInt32BE(header.feeParameters.verificationBaseFee, 'verificationBaseFee'),
+    encodeUInt32BE(header.timestamp, 'timestamp'),
+  ]));
 }
 
 function toBlockRow(bundle: BlockBundle): BlockInsertRow {
@@ -44,7 +87,7 @@ function toBlockRow(bundle: BlockBundle): BlockInsertRow {
   }
   return {
     blockNum: header.blockNum,
-    blockHash: sha256(bundle.blockBytes),
+    blockHash: deriveBlockHash(header, bundle.blockBytes),
     prevBlockCommitment: header.prevBlockCommitment,
     chainCommitment: header.chainCommitment,
     accountRoot: header.accountRoot,
@@ -60,7 +103,7 @@ function toBlockRow(bundle: BlockBundle): BlockInsertRow {
     noteCount: bundle.noteCount,
     nullifierCount: bundle.nullifierCount,
     version: header.version,
-    rawBlockBytes: bundle.blockBytes,
+    rawBlockBytes: bundle.blockBytes.length > 0 ? bundle.blockBytes : null,
     chainLength: null,
   };
 }

@@ -33,10 +33,16 @@ async function buildBlockBundle(rpc: MidenRpcClient, blockNum: number): Promise<
     rpc.getBlockByNumber(blockNum),
   ]);
   if (!headerResponse.blockHeader) throw new Error(`missing header for block ${blockNum}`);
-  if (!blockResponse.block) throw new Error(`missing raw block bytes for block ${blockNum}`);
+  const blockBytes = blockResponse.block ?? Buffer.alloc(0);
+  if (blockBytes.length === 0) {
+    logger.warn('Raw block bytes unavailable; using header-derived block hash fallback', {
+      block_num: blockNum,
+      raw_block_present: blockResponse.block !== undefined,
+    });
+  }
   return {
     header: headerResponse.blockHeader,
-    blockBytes: blockResponse.block,
+    blockBytes,
     ...fallbackCounts(headerResponse.blockHeader),
   };
 }

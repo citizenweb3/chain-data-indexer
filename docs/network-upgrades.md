@@ -25,7 +25,8 @@ This document describes how to handle a `miden-node` version bump for the Miden 
 - Digests are felt 4-tuples `{d0..d3}`, not hex strings, on the public protobuf API.
 - `SyncState` v0.13.4 ignores nullifier prefixes; the local client logs and drops requested prefixes because the proto has no field for them.
 - `GetBlockByNumber` returns opaque `block` bytes; transaction, note, and nullifier counts must be derived outside the proto surface.
-- `block_hash` is not in the proto; this branch uses the `SHA-256(block_bytes)` convention documented in `docs/schema.md` and implemented in `src/sink/postgres.ts`.
+- `GetBlockByNumber.block` can be present but zero-length on v0.13.4. In JavaScript, `Buffer.alloc(0)` is truthy, so `if (!blockResponse.block)` does **not** catch this case.
+- `block_hash` is not in the proto; this branch uses `SHA-256(block_bytes)` when bytes are non-empty and a fixed header-derived SHA-256 fallback when block bytes are missing/empty. The exact branch contract is documented in `docs/schema.md` and implemented in `src/sink/postgres.ts`.
 
 ## Upgrade notes for future agents
 

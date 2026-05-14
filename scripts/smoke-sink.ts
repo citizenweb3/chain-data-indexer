@@ -1,8 +1,7 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import { MidenRpcClient } from '../src/rpc/client.js';
-import { processBatch, processBlock } from '../src/sink/postgres.js';
+import { deriveBlockHash, processBatch, processBlock } from '../src/sink/postgres.js';
 import type { BlockBundle, BlockHeader } from '../src/types.js';
 
 // Usage: DATABASE_URL=postgres://user:pass@host:port/db npx tsx scripts/smoke-sink.ts
@@ -72,10 +71,10 @@ async function bundleBlock(client: MidenRpcClient, blockNum: number): Promise<Bl
     client.getBlockByNumber(blockNum),
   ]);
   if (!headerResponse.blockHeader) throw new Error(`missing header for block ${blockNum}`);
-  if (!blockResponse.block) throw new Error(`missing raw block bytes for block ${blockNum}`);
+  const blockBytes = blockResponse.block ?? Buffer.alloc(0);
   return {
     header: headerResponse.blockHeader,
-    blockBytes: blockResponse.block,
+    blockBytes,
     ...fallbackCounts(headerResponse.blockHeader),
   };
 }
@@ -125,14 +124,16 @@ async function sampleBlock(pool: pg.Pool, blockNum: number): Promise<Record<stri
 }
 
 async function verifyBytea(pool: pg.Pool, bundle: BlockBundle): Promise<{ rawBlockBytesEqual: boolean; blockHashEqual: boolean }> {
-  const { rows } = await pool.query<{ raw_block_bytes: Buffer; block_hash: Buffer }>(
+  const { rows } = await pool.query<{ raw_block_bytes: Buffer | null; block_hash: Buffer }>(
     'SELECT raw_block_bytes, block_hash FROM miden_blocks WHERE block_num = $1',
     [bundle.header.blockNum],
   );
   if (!rows[0]) throw new Error(`no BYTEA row for block ${bundle.header.blockNum}`);
-  const expectedHash = createHash('sha256').update(bundle.blockBytes).digest();
+  const expectedHash = deriveBlockHash(bundle.header, bundle.blockBytes);
   return {
-    rawBlockBytesEqual: rows[0].raw_block_bytes.equals(bundle.blockBytes),
+    rawBlockBytesEqual: bundle.blockBytes.length > 0
+      ? rows[0].raw_block_bytes?.equals(bundle.blockBytes) === true
+      : rows[0].raw_block_bytes === null,
     blockHashEqual: rows[0].block_hash.equals(expectedHash),
   };
 }

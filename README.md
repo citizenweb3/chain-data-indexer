@@ -109,7 +109,7 @@ miden-node
 Run these with a live node at `NODE_URL` and a reachable Postgres database where required:
 
 - `scripts/smoke-rpc.ts` — calls read-only public gRPC wrappers and verifies digest round-trip conversion.
-- `scripts/smoke-sink.ts` — resets a smoke database, indexes recent blocks, checks `SHA-256(raw_block_bytes)` and duplicate-run idempotency.
+- `scripts/smoke-sink.ts` — resets a smoke database, indexes recent blocks, checks the branch `block_hash` derivation contract (raw-byte SHA-256 or header-derived fallback when bytes are empty) and duplicate-run idempotency.
 - `scripts/smoke-runner.ts` — starts the runner against a smoke database and checks it reaches tip without gaps.
 - `scripts/smoke-api.ts` — starts the HTTP API on an ephemeral port and checks documented endpoints and validation errors.
 
