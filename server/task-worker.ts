@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { parentPort, workerData } from 'worker_threads';
 
 import logger from './logger';
+import { runGetPriceHistory } from './jobs/get-price-history';
+import { runGetPrices } from './jobs/get-prices';
 import { runRecomputeDailyStats } from './jobs/recompute-daily-stats';
 import { runSyncIbcTransfers } from './jobs/sync-ibc-transfers';
 
@@ -9,10 +11,6 @@ type TaskName = 'sync-ibc-transfers' | 'recompute-daily-stats' | 'prices' | 'pri
 
 const { taskName } = workerData as { taskName: TaskName };
 const log = logger(taskName);
-
-const stub = async (name: string): Promise<void> => {
-  log.logWarn(`task ${name} not implemented yet`);
-};
 
 const runTask = async (): Promise<void> => {
   log.logInfo(`running task ${taskName}`);
@@ -25,10 +23,10 @@ const runTask = async (): Promise<void> => {
         await runRecomputeDailyStats();
         break;
       case 'prices':
-        await stub('prices');
+        await runGetPrices();
         break;
       case 'price-history':
-        await stub('price-history');
+        await runGetPriceHistory();
         break;
       default:
         throw new Error(`unknown task: ${taskName as string}`);
