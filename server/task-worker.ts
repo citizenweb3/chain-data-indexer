@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { parentPort, workerData } from 'worker_threads';
 
 import logger from './logger';
+import { runSyncIbcTransfers } from './jobs/sync-ibc-transfers';
 
 type TaskName = 'sync-ibc-transfers' | 'recompute-daily-stats' | 'prices' | 'price-history';
 
@@ -17,7 +18,7 @@ const runTask = async (): Promise<void> => {
   try {
     switch (taskName) {
       case 'sync-ibc-transfers':
-        await stub('sync-ibc-transfers');
+        await runSyncIbcTransfers();
         break;
       case 'recompute-daily-stats':
         await stub('recompute-daily-stats');
