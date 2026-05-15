@@ -1,0 +1,28 @@
+node_modules
+.next
+out
+build
+.git
+*.log
+
+# env (real values come from compose env_file)
+.env
+.env.local
+.env.*.local
+
+# dev/IDE/agent state
+.claude
+.idea
+.gitnexus
+.vscode
+
+# prisma local sqlite (none in this project, defensive)
+prisma/dev.db*
+
+# untracked plan/design docs
+docs/plans/*-design.md
+docs/plans/*-tasks.md
+
+# next standalone artifacts are produced inside the image
+.next/standalone
+.next/cache

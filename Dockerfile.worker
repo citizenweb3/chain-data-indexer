@@ -1,0 +1,19 @@
+FROM node:20-alpine
+
+WORKDIR /app
+RUN apk add --no-cache libc6-compat
+
+ENV NODE_ENV=production
+
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
+
+# Prisma client must be generated before the worker can boot.
+COPY prisma ./prisma
+RUN yarn db:generate
+
+COPY tsconfig.json ./
+COPY server ./server
+COPY src ./src
+
+CMD ["yarn", "worker"]
