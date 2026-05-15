@@ -17,7 +17,7 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
         (p.event_time AT TIME ZONE 'UTC')::date AS date,
         p.channel_id_src,
         p.direction,
-        p.denom,
+        COALESCE(p.denom, '__unknown__') AS denom,
         p.amount
       FROM ibc_packets p
       WHERE p.event_time IS NOT NULL
