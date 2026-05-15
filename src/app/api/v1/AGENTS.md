@@ -14,6 +14,8 @@ Next.js App Router Route Handlers. Each `route.ts` exports `GET` (no other verbs
 | `GET /api/v1/txs/{hash}` | `txs/[hash]/route.ts` | yes | param: `HashParamSchema` |
 | `GET /api/v1/txs/{hash}/raw` | `txs/[hash]/raw/route.ts` | yes | param: `HashParamSchema` |
 | `GET /api/v1/txs/stats` | `txs/stats/route.ts` | yes | — |
+| `GET /api/v1/ibc/transfers` | `ibc/transfers/route.ts` | yes | query: `IbcTransfersQuerySchema` |
+| `GET /api/v1/ibc/transfers/{port}/{channel}/{sequence}` | `ibc/transfers/[port]/[channel]/[sequence]/route.ts` | yes | param: `IbcTransferParamSchema` |
 
 ## Standard handler shape
 

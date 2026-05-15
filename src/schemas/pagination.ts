@@ -1,32 +1,24 @@
 import { z } from 'zod';
 
+export const BigIntStringSchema = z
+  .string()
+  .max(20)
+  .regex(/^\d+$/)
+  .transform((s) => BigInt(s));
+
 export const BlocksQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  before_height: z
-    .string()
-    .max(20)
-    .regex(/^\d+$/)
-    .transform((s) => BigInt(s))
-    .optional(),
+  before_height: BigIntStringSchema.optional(),
 });
 
 export const TxsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  before_height: z
-    .string()
-    .max(20)
-    .regex(/^\d+$/)
-    .transform((s) => BigInt(s))
-    .optional(),
+  before_height: BigIntStringSchema.optional(),
   before_index: z.coerce.number().int().min(0).optional(),
 });
 
 export const HeightParamSchema = z.object({
-  h: z
-    .string()
-    .max(20)
-    .regex(/^\d+$/)
-    .transform((s) => BigInt(s)),
+  h: BigIntStringSchema,
 });
 
 export const HashParamSchema = z.object({
