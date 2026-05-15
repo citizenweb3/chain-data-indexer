@@ -43,6 +43,8 @@ import { flushStakeDistr } from './pg/flushers/stake_distr.ts';
 import { flushWasmExec } from './pg/flushers/wasm_exec.ts';
 import { flushWasmEvents } from './pg/flushers/wasm_events.ts';
 import { flushGovDeposits, flushGovVotes, upsertGovProposals } from './pg/flushers/gov.ts';
+import { flushIbcPackets } from './pg/flushers/ibc_packets.ts';
+import { extractIbcPacketRow, type IbcPacketUpsertRow } from './pg/ibcPackets.ts';
 
 import { insertBlocks } from './pg/inserters/blocks.ts';
 import { insertTxs } from './pg/inserters/txs.ts';
@@ -109,6 +111,7 @@ export interface PostgresSinkConfig extends SinkConfig {
     govDeposits?: number;
     govVotes?: number;
     govProposals?: number;
+    ibcPackets?: number;
   };
 }
 
@@ -123,6 +126,7 @@ interface DerivedBatch {
   govDeposits: any[];
   govVotes: any[];
   govProposals: any[];
+  ibcPackets: IbcPacketUpsertRow[];
 }
 
 type BlockLine = any;
@@ -308,6 +312,7 @@ export class PostgresSink implements Sink {
     const govDepositsRows: any[] = [];
     const govVotesRows: any[] = [];
     const govProposalsRows: any[] = [];
+    const ibcPacketsRows: IbcPacketUpsertRow[] = [];
 
     const txs = Array.isArray(blockLine?.txs) ? blockLine.txs : [];
     for (const tx of txs) {
@@ -378,7 +383,11 @@ export class PostgresSink implements Sink {
 
         if (t === '/cosmos.gov.v1beta1.MsgDeposit' || t === '/cosmos.gov.v1.MsgDeposit') {
           let pid: bigint;
-          try { pid = BigInt(m?.proposal_id ?? 0); } catch { pid = 0n; }
+          try {
+            pid = BigInt(m?.proposal_id ?? 0);
+          } catch {
+            pid = 0n;
+          }
           const depositor = m?.depositor ?? null;
           const coins: Array<{ denom: string; amount: string }> = Array.isArray(m?.amount) ? m.amount : [];
           if (pid > 0n && depositor) {
@@ -396,11 +405,17 @@ export class PostgresSink implements Sink {
         }
 
         if (
-          t === '/cosmos.gov.v1beta1.MsgVote' || t === '/cosmos.gov.v1.MsgVote' ||
-          t === '/cosmos.gov.v1beta1.MsgVoteWeighted' || t === '/cosmos.gov.v1.MsgVoteWeighted'
+          t === '/cosmos.gov.v1beta1.MsgVote' ||
+          t === '/cosmos.gov.v1.MsgVote' ||
+          t === '/cosmos.gov.v1beta1.MsgVoteWeighted' ||
+          t === '/cosmos.gov.v1.MsgVoteWeighted'
         ) {
           let pid: bigint;
-          try { pid = BigInt(m?.proposal_id ?? 0); } catch { pid = 0n; }
+          try {
+            pid = BigInt(m?.proposal_id ?? 0);
+          } catch {
+            pid = 0n;
+          }
           const voter = m?.voter ?? null;
           const weighted: Array<{ option: string; weight: string }> | undefined = m?.options;
           if (pid > 0n && voter) {
@@ -454,6 +469,16 @@ export class PostgresSink implements Sink {
             attributes: attrsPairs,
             height,
           });
+
+          if (tx_hash) {
+            const ibcPacketRow = extractIbcPacketRow(attrsPairs, {
+              eventType: event_type,
+              height,
+              txHash: tx_hash,
+              relayer: firstSigner ?? null,
+            });
+            if (ibcPacketRow) ibcPacketsRows.push(ibcPacketRow);
+          }
 
           if (event_type === 'transfer') {
             const sender = findAttr(attrsPairs, 'sender');
@@ -583,7 +608,11 @@ export class PostgresSink implements Sink {
             const pidAttr = findAttr(attrsPairs, 'proposal_id');
             if (pidAttr) {
               let pid: bigint;
-              try { pid = BigInt(pidAttr); } catch { pid = 0n; }
+              try {
+                pid = BigInt(pidAttr);
+              } catch {
+                pid = 0n;
+              }
               if (pid > 0n) {
                 // msg_index from log may be -1 for flat tx-level events; fallback to event attribute
                 const effectiveMsgIdx = msg_index >= 0 ? msg_index : Number(findAttr(attrsPairs, 'msg_index') ?? -1);
@@ -621,7 +650,11 @@ export class PostgresSink implements Sink {
               const amountStr = findAttr(attrsPairs, 'amount');
               if (pidAttr && depositor && amountStr) {
                 let pid: bigint;
-                try { pid = BigInt(pidAttr); } catch { pid = 0n; }
+                try {
+                  pid = BigInt(pidAttr);
+                } catch {
+                  pid = 0n;
+                }
                 const coinStrs = amountStr.split(',').filter(Boolean);
                 for (const cs of coinStrs) {
                   const coin = parseCoin(cs.trim());
@@ -639,7 +672,6 @@ export class PostgresSink implements Sink {
               }
             }
           }
-
         }
       }
     }
@@ -657,6 +689,7 @@ export class PostgresSink implements Sink {
       govDepositsRows,
       govVotesRows,
       govProposalsRows,
+      ibcPacketsRows,
       height,
     };
   }
@@ -683,6 +716,7 @@ export class PostgresSink implements Sink {
       stakeDistrRows,
       wasmExecRows,
       wasmEventsRows,
+      ibcPacketsRows,
       height,
     } = this.extractRows(blockLine);
 
@@ -699,6 +733,7 @@ export class PostgresSink implements Sink {
       if (stakeDistrRows.length) await insertStakeDistr(client, stakeDistrRows);
       if (wasmExecRows.length) await insertWasmExec(client, wasmExecRows);
       if (wasmEventsRows.length) await insertWasmEvents(client, wasmEventsRows);
+      if (ibcPacketsRows.length) await flushIbcPackets(client, ibcPacketsRows);
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK');
@@ -740,6 +775,7 @@ export class PostgresSink implements Sink {
       govDepositsRows,
       govVotesRows,
       govProposalsRows,
+      ibcPacketsRows,
     } = this.extractRows(blockLine);
 
     // Buffer core rows
@@ -768,7 +804,8 @@ export class PostgresSink implements Sink {
       wasmEventsRows.length ||
       govDepositsRows.length ||
       govVotesRows.length ||
-      govProposalsRows.length
+      govProposalsRows.length ||
+      ibcPacketsRows.length
     ) {
       const heights = [
         ...transfersRows.map((r: any) => r.height),
@@ -779,6 +816,7 @@ export class PostgresSink implements Sink {
         ...govDepositsRows.map((r: any) => r.height),
         ...govVotesRows.map((r: any) => r.height),
         ...govProposalsRows.map((r: any) => r.height),
+        ...ibcPacketsRows.flatMap((r) => [r.height_send, r.height_recv, r.height_ack]),
       ].filter((h): h is number => Number.isFinite(h));
 
       if (heights.length > 0) {
@@ -800,6 +838,7 @@ export class PostgresSink implements Sink {
           govDeposits: govDepositsRows,
           govVotes: govVotesRows,
           govProposals: govProposalsRows,
+          ibcPackets: ibcPacketsRows,
         });
       }
     }
@@ -929,6 +968,7 @@ export class PostgresSink implements Sink {
       await flushGovDeposits(client, batch.govDeposits);
       await flushGovVotes(client, batch.govVotes);
       await upsertGovProposals(client, batch.govProposals);
+      await flushIbcPackets(client, batch.ibcPackets);
 
       await client.query('COMMIT');
       const tookMs = Date.now() - t0;
@@ -941,6 +981,7 @@ export class PostgresSink implements Sink {
         gov_deposits: batch.govDeposits.length,
         gov_votes: batch.govVotes.length,
         gov_proposals: batch.govProposals.length,
+        ibc_packets: batch.ibcPackets.length,
       });
       log.debug('flushed derived', {
         span: `[${batch.minH}, ${batch.maxH}]`,

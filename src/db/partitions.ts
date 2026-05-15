@@ -7,6 +7,7 @@
 import type { PoolClient } from 'pg';
 
 const STEP = 1_000_000;
+const IBC_PACKET_STEP = 1_000_000n;
 
 const RANGE_TABLES: Array<{ schema: string; table: string }> = [
   { schema: 'core', table: 'blocks' },
@@ -96,6 +97,39 @@ export async function ensureCorePartitions(client: PoolClient, minH: number, max
 }
 
 /**
+ * Ensures sequence-range partitions exist for `ibc.packets`.
+ *
+ * Unlike most CDI tables, `ibc.packets` is partitioned by packet sequence rather
+ * than block height, so it cannot reuse the height-based partition helper.
+ */
+export async function ensureIbcPacketPartitions(client: PoolClient, sequences: Array<bigint | number | string>) {
+  const bases = new Set<bigint>();
+
+  for (const sequence of sequences) {
+    const value = typeof sequence === 'bigint' ? sequence : BigInt(sequence);
+    if (value < 0n) continue;
+    bases.add((value / IBC_PACKET_STEP) * IBC_PACKET_STEP);
+  }
+
+  if (bases.size === 0) return;
+
+  await client.query(`SELECT pg_advisory_lock($1)`, [0x69626370]);
+  try {
+    for (const base of [...bases].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+      const to = base + IBC_PACKET_STEP;
+      const child = `"ibc"."packets_p${base.toString()}"`;
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${child}
+        PARTITION OF "ibc"."packets"
+        FOR VALUES FROM (${base.toString()}) TO (${to.toString()});
+      `);
+    }
+  } finally {
+    await client.query(`SELECT pg_advisory_unlock($1)`, [0x69626370]);
+  }
+}
+
+/**
  * Creates a single range partition for a given schema and table covering the specified range.
  *
  * @param client - The PostgreSQL client to execute queries with.
@@ -125,4 +159,3 @@ async function createRangePartition(
   `;
   await client.query(sql);
 }
-

@@ -26,6 +26,8 @@
 
 \set ON_ERROR_STOP on
 
+\if :{?api_ro_password}
+
 -- The password arrives as psql variable :api_ro_password. Promote it to a
 -- session-scoped GUC so plpgsql DO blocks can read it via current_setting().
 -- (PostgreSQL 14+ accepts any namespaced custom GUC without prior declaration.)
@@ -66,8 +68,12 @@ ALTER ROLE cosmos_api_ro SET idle_in_transaction_session_timeout = '60s';
 -- 500-slot max_connections pool and lock the indexer out of new connections.
 ALTER ROLE cosmos_api_ro CONNECTION LIMIT 30;
 
--- Allow the role to attach to the database.
-GRANT CONNECT ON DATABASE cosmos_indexer_db TO cosmos_api_ro;
+-- Allow the role to attach to the current database. This keeps the script safe
+-- for isolated test databases while preserving the same effect in production.
+DO $$
+BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO cosmos_api_ro', current_database());
+END $$;
 
 -- Grant SELECT on every domain schema and ensure future tables/partitions
 -- inherit the same privilege automatically. The indexer creates new range
@@ -92,5 +98,12 @@ BEGIN
   END LOOP;
 END $$;
 
+\else
+\echo 'api_ro_password not set; skipping cosmos_api_ro bootstrap'
+\endif
+
 -- Tighten public schema usage; PUBLIC must not be allowed to create objects.
-REVOKE CREATE ON DATABASE cosmos_indexer_db FROM PUBLIC;
+DO $$
+BEGIN
+  EXECUTE format('REVOKE CREATE ON DATABASE %I FROM PUBLIC', current_database());
+END $$;
