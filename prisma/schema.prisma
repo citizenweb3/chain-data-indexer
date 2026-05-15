@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model IbcPacket {
+  channelIdSrc  String  @map("channel_id_src")
+  portIdSrc     String  @map("port_id_src")
+  sequence      BigInt
+
+  portIdDst     String?   @map("port_id_dst")
+  channelIdDst  String?   @map("channel_id_dst")
+  status        String
+  direction     String
+  eventHeight   BigInt?   @map("event_height")
+  eventTime     DateTime? @map("event_time")
+  txHashSend    String?   @map("tx_hash_send")
+  heightSend    BigInt?   @map("height_send")
+  txHashRecv    String?   @map("tx_hash_recv")
+  heightRecv    BigInt?   @map("height_recv")
+  txHashAck     String?   @map("tx_hash_ack")
+  heightAck     BigInt?   @map("height_ack")
+  denom         String?
+  amount        Decimal?  @db.Decimal(80, 0)
+  memo          String?
+  relayer       String?
+  timeoutHeight String?   @map("timeout_height")
+  timeoutTs     BigInt?   @map("timeout_ts")
+
+  syncedAt DateTime @default(now()) @map("synced_at")
+
+  @@id([channelIdSrc, portIdSrc, sequence])
+  @@index([eventTime(sort: Desc)])
+  @@index([channelIdSrc, direction, eventTime(sort: Desc)])
+  @@index([denom, eventTime(sort: Desc)])
+  @@map("ibc_packets")
+}
+
+model Asset {
+  id          Int    @id @default(autoincrement())
+  symbol      String @unique
+  coingeckoId String @map("coingecko_id")
+  decimals    Int
+  nativeDenom String @unique @map("native_denom")
+
+  prices  Price[]
+  history PriceHistory[]
+
+  @@map("assets")
+}
+
+model Price {
+  id        Int      @id @default(autoincrement())
+  assetId   Int      @map("asset_id")
+  asset     Asset    @relation(fields: [assetId], references: [id])
+  usd       Decimal  @db.Decimal(20, 8)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([assetId, createdAt(sort: Desc)])
+  @@map("prices")
+}
+
+model PriceHistory {
+  assetId Int      @map("asset_id")
+  asset   Asset    @relation(fields: [assetId], references: [id])
+  date    DateTime @db.Date
+  usd     Decimal  @db.Decimal(20, 8)
+
+  @@id([assetId, date])
+  @@map("price_history")
+}
+
+model IbcDailyStats {
+  id Int @id @default(autoincrement())
+
+  date         DateTime @db.Date
+  channelIdSrc String?  @map("channel_id_src")
+  direction    String
+  denom        String?
+
+  transfersCount BigInt   @map("transfers_count")
+  amountNative   Decimal? @db.Decimal(80, 0) @map("amount_native")
+  amountUsd      Decimal? @db.Decimal(30, 8) @map("amount_usd")
+
+  recomputedAt DateTime @updatedAt @map("recomputed_at")
+
+  @@unique([date, channelIdSrc, direction, denom], map: "ibc_daily_stats_dim_uniq")
+  @@index([date])
+  @@map("ibc_daily_stats")
+}
+
+model SyncCursor {
+  key             String   @id
+  lastEventHeight BigInt?  @map("last_event_height")
+  lastSequence    BigInt?  @map("last_sequence")
+  lastChannel     String?  @map("last_channel")
+  lastPort        String?  @map("last_port")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("sync_cursors")
+}
