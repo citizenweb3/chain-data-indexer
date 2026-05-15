@@ -104,9 +104,43 @@ const ErrorResponse = registry.register(
   }),
 );
 
-const ListMeta = registry.register(
-  'ListMeta',
-  z.object({ has_more: z.boolean(), total: z.string() }),
+const IbcTransfer = registry.register(
+  'IbcTransfer',
+  z.object({
+    port_id_src: z.string(),
+    channel_id_src: z.string(),
+    sequence: z.string().describe('IBC packet sequence (uint64 as decimal string)'),
+    port_id_dst: z.string().nullable(),
+    channel_id_dst: z.string().nullable(),
+    status: z.enum(['sent', 'received', 'acknowledged', 'timeout', 'failed']),
+    direction: z.enum(['outgoing', 'incoming']),
+    event_height: z.string().nullable().describe('COALESCE(height_send, height_recv) as decimal string'),
+    event_time: z.string().datetime().nullable(),
+    tx_hash_send: z.string().nullable(),
+    height_send: z.string().nullable(),
+    tx_hash_recv: z.string().nullable(),
+    height_recv: z.string().nullable(),
+    tx_hash_ack: z.string().nullable(),
+    height_ack: z.string().nullable(),
+    denom: z.string().nullable(),
+    amount: z.string().nullable().describe('Token amount (numeric(80,0) as decimal string)'),
+    memo: z.string().nullable(),
+    relayer: z.string().nullable(),
+    timeout_height: z.string().nullable(),
+    timeout_ts: z.string().nullable().describe('Unix nanoseconds (uint64 as decimal string)'),
+  }),
+);
+
+const IbcTransfersCursor = registry.register(
+  'IbcTransfersCursor',
+  z
+    .object({
+      next_before_height: z.string(),
+      next_before_sequence: z.string(),
+      next_before_channel: z.string(),
+      next_before_port: z.string(),
+    })
+    .nullable(),
 );
 
 registry.registerPath({
@@ -287,8 +321,65 @@ registry.registerPath({
   security: [{ apiKey: [] }],
 });
 
-// suppress unused-variable warning — used for OpenAPI output shape documentation
-void ListMeta;
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/ibc/transfers',
+  summary: 'List IBC transfers (newest first, keyset cursor)',
+  tags: ['ibc'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    query: z.object({
+      limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
+      before_height: z.string().max(20).optional(),
+      before_sequence: z.string().max(20).optional(),
+      before_channel: z.string().max(64).optional(),
+      before_port: z.string().max(128).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'Paginated IBC transfers list',
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.array(IbcTransfer),
+            cursor: IbcTransfersCursor,
+            has_more: z.boolean(),
+            total: z.string(),
+          }),
+        },
+      },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/ibc/transfers/{port}/{channel}/{sequence}',
+  summary: 'Get IBC transfer by canonical packet key',
+  tags: ['ibc'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    params: z.object({
+      port: z.string(),
+      channel: z.string(),
+      sequence: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'IBC transfer detail',
+      content: { 'application/json': { schema: z.object({ data: IbcTransfer }) } },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
 
 export function generateOpenApiDocument() {
   const generator = new OpenApiGeneratorV31(registry.definitions);
