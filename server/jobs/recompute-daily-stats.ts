@@ -25,10 +25,13 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
         WHERE p.event_time IS NOT NULL
           AND p.event_time >= (date_trunc('day', NOW() AT TIME ZONE 'UTC') - make_interval(days => ${RECOMPUTE_DAYS - 1}))
       ),
-      latest_prices AS (
-        SELECT DISTINCT ON (asset_id) asset_id, usd
+      daily_spot_prices AS (
+        SELECT DISTINCT ON (asset_id, date)
+          asset_id,
+          (created_at AT TIME ZONE 'UTC')::date AS date,
+          usd
         FROM prices
-        ORDER BY asset_id, created_at DESC
+        ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
       ),
       agg AS (
         SELECT
@@ -40,15 +43,13 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
           CASE WHEN GROUPING(b.denom) = 0 THEN SUM(b.amount) ELSE NULL END AS amount_native,
           CASE
             WHEN GROUPING(b.denom) = 0 THEN
-              SUM(b.amount / POWER(10::numeric, a.decimals) * COALESCE(ph.usd, lp.usd))
+              SUM(b.amount / POWER(10::numeric, a.decimals) * COALESCE(ph.usd, dsp.usd))
             ELSE NULL
           END AS amount_usd
         FROM base b
         LEFT JOIN assets a ON a.native_denom = b.denom
         LEFT JOIN price_history ph ON ph.asset_id = a.id AND ph.date = b.date
-        LEFT JOIN latest_prices lp
-          ON lp.asset_id = a.id
-          AND b.date = (NOW() AT TIME ZONE 'UTC')::date
+        LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id AND dsp.date = b.date
         GROUP BY GROUPING SETS (
           (b.date, b.channel_id_src, b.direction, b.denom),
           (b.date, b.channel_id_src, b.direction),
