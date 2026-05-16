@@ -38,21 +38,33 @@ const queryPacketsWindow = async (
   fromTime: Date,
 ): Promise<PacketWindowRow> => {
   const rows = await db.$queryRaw<PacketWindowRow[]>(Prisma.sql`
+    WITH daily_spot_prices AS (
+      SELECT DISTINCT ON (asset_id, date)
+        asset_id,
+        (created_at AT TIME ZONE 'UTC')::date AS date,
+        usd
+      FROM prices
+      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+    )
     SELECT
       COUNT(*)::bigint AS transfers_count,
-      COALESCE(SUM(CASE WHEN p.denom = ${ATOM_DENOM} THEN p.amount END), 0) AS amount_native,
-      COALESCE(
-        SUM(
-          CASE WHEN p.denom = ${ATOM_DENOM} AND ph.usd IS NOT NULL
-            THEN (p.amount / POWER(10::numeric, ${ATOM_DECIMALS})) * ph.usd
-          END
-        ),
-        0
-      ) AS amount_usd
+      COALESCE(SUM(
+        CASE WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM} THEN p.amount END
+      ), 0) AS amount_native,
+      COALESCE(SUM(
+        CASE
+          WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM}
+            AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
+          THEN (p.amount / POWER(10::numeric, ${ATOM_DECIMALS}))
+            * COALESCE(ph.usd, dsp.usd)
+        END
+      ), 0) AS amount_usd
     FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = p.denom
+    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
     LEFT JOIN price_history ph ON ph.asset_id = a.id
       AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
+    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
+      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${fromTime}
       AND ${directionFilter(direction)}
