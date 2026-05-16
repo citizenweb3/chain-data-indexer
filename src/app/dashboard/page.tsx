@@ -84,8 +84,8 @@ export default async function DashboardPage({
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
-        <h1 className="font-handjet text-4xl tracking-wide text-highlight">
-          Crosschain IBC Indexer
+        <h1 className="font-handjet text-3xl tracking-wide text-highlight">
+          Dashboard
         </h1>
         <p className="font-sfpro text-sm text-white/70">
           ATOM IBC transfers · stats and per-channel breakdown.
