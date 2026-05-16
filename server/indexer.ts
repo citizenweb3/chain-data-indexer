@@ -21,7 +21,7 @@ const tasks: ScheduledTask[] = [
 const tasksRunning: Record<string, boolean> = {};
 
 const TASK_TIMEOUT_MS: Record<ScheduledTask['name'], number> = {
-  'sync-ibc-transfers': 4 * 60 * 1000,
+  'sync-ibc-transfers': 30 * 60 * 1000,
   'recompute-daily-stats': 4 * 60 * 1000,
   prices: 4 * 60 * 1000,
   'price-history': 30 * 60 * 1000,

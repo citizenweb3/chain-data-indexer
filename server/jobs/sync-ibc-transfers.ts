@@ -8,21 +8,19 @@ import type {
 
 const log = logger('sync-ibc-transfers');
 
-const SYNC_KEY = 'ibc-transfers';
 const PAGE_SIZE = 100;
-const MAX_PAGES = 500;
 const BACKFILL_DAYS = 30;
 
-type Watermark = {
+type PacketCursor = {
   eventHeight: bigint;
   sequence: bigint;
   channel: string;
   port: string;
 };
 
-const compareWatermark = (
-  candidate: { eventHeight: bigint; sequence: bigint; channel: string; port: string },
-  baseline: Watermark,
+const compareCursor = (
+  candidate: PacketCursor,
+  baseline: PacketCursor,
 ): number => {
   if (candidate.eventHeight !== baseline.eventHeight) {
     return candidate.eventHeight < baseline.eventHeight ? -1 : 1;
@@ -39,42 +37,38 @@ const compareWatermark = (
   return 0;
 };
 
-const readWatermark = async (): Promise<Watermark | null> => {
-  const row = await db.syncCursor.findUnique({ where: { key: SYNC_KEY } });
-  if (
-    !row ||
-    row.lastEventHeight === null ||
-    row.lastSequence === null ||
-    row.lastChannel === null ||
-    row.lastPort === null
-  ) {
-    return null;
-  }
+const readLatestPacket = async (): Promise<PacketCursor | null> => {
+  const row = await db.ibcPacket.findFirst({
+    where: { eventHeight: { not: null } },
+    orderBy: [
+      { eventHeight: 'desc' },
+      { sequence: 'desc' },
+      { channelIdSrc: 'desc' },
+      { portIdSrc: 'desc' },
+    ],
+    select: {
+      eventHeight: true,
+      sequence: true,
+      channelIdSrc: true,
+      portIdSrc: true,
+    },
+  });
+  if (!row || row.eventHeight === null) return null;
   return {
-    eventHeight: row.lastEventHeight,
-    sequence: row.lastSequence,
-    channel: row.lastChannel,
-    port: row.lastPort,
+    eventHeight: row.eventHeight,
+    sequence: row.sequence,
+    channel: row.channelIdSrc,
+    port: row.portIdSrc,
   };
 };
 
-const writeWatermark = async (wm: Watermark): Promise<void> => {
-  await db.syncCursor.upsert({
-    where: { key: SYNC_KEY },
-    update: {
-      lastEventHeight: wm.eventHeight,
-      lastSequence: wm.sequence,
-      lastChannel: wm.channel,
-      lastPort: wm.port,
-    },
-    create: {
-      key: SYNC_KEY,
-      lastEventHeight: wm.eventHeight,
-      lastSequence: wm.sequence,
-      lastChannel: wm.channel,
-      lastPort: wm.port,
-    },
+const readEarliestEventTime = async (): Promise<Date | null> => {
+  const row = await db.ibcPacket.findFirst({
+    where: { eventTime: { not: null } },
+    orderBy: [{ eventTime: 'asc' }],
+    select: { eventTime: true },
   });
+  return row?.eventTime ?? null;
 };
 
 const parseAmount = (value: string | null): string | null => {
@@ -154,10 +148,20 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
   const startedAt = Date.now();
   log.logInfo('sync-ibc-transfers started');
 
-  const watermark = await readWatermark();
   const backfillCutoff = new Date(Date.now() - BACKFILL_DAYS * 24 * 60 * 60 * 1000);
+  const latest = await readLatestPacket();
+  const earliestEventTime = await readEarliestEventTime();
+  const windowComplete =
+    earliestEventTime !== null && earliestEventTime <= backfillCutoff;
 
-  let nextWatermark: Watermark | null = null;
+  log.logInfo('sync-ibc-transfers: state', {
+    hasLatest: latest !== null,
+    earliestEventTime: earliestEventTime?.toISOString() ?? null,
+    backfillCutoff: backfillCutoff.toISOString(),
+    windowComplete,
+    mode: windowComplete ? 'delta' : 'backfill',
+  });
+
   let beforeHeight: string | undefined;
   let beforeSequence: string | undefined;
   let beforeChannel: string | undefined;
@@ -169,7 +173,7 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
   let skippedCount = 0;
   let stopped = false;
 
-  for (let page = 0; page < MAX_PAGES; page++) {
+  while (true) {
     const params: Record<string, string | number | undefined> = {
       limit: PAGE_SIZE,
       before_height: beforeHeight,
@@ -183,20 +187,8 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
 
     const items = response.data;
     if (items.length === 0) {
-      log.logInfo('upstream returned empty page', { page });
+      log.logInfo('upstream returned empty page', { pagesFetched });
       break;
-    }
-
-    if (nextWatermark === null) {
-      const newest = items.find((p) => p.event_height !== null);
-      if (newest && newest.event_height !== null) {
-        nextWatermark = {
-          eventHeight: BigInt(newest.event_height),
-          sequence: BigInt(newest.sequence),
-          channel: newest.channel_id_src,
-          port: newest.port_id_src,
-        };
-      }
     }
 
     for (const dto of items) {
@@ -205,24 +197,24 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
         continue;
       }
 
-      const candidate = {
+      const candidate: PacketCursor = {
         eventHeight: BigInt(dto.event_height),
         sequence: BigInt(dto.sequence),
         channel: dto.channel_id_src,
         port: dto.port_id_src,
       };
 
-      if (watermark && compareWatermark(candidate, watermark) <= 0) {
-        stopped = true;
-        break;
-      }
-
-      if (!watermark && dto.event_time !== null) {
+      if (dto.event_time !== null) {
         const eventTime = new Date(dto.event_time);
         if (eventTime < backfillCutoff) {
           stopped = true;
           break;
         }
+      }
+
+      if (windowComplete && latest && compareCursor(candidate, latest) <= 0) {
+        stopped = true;
+        break;
       }
 
       const inserted = await upsertPacket(dto);
@@ -239,14 +231,6 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
     beforePort = response.cursor.next_before_port;
   }
 
-  if (nextWatermark) {
-    await writeWatermark(nextWatermark);
-  } else if (pagesFetched > 0) {
-    log.logWarn('sync-ibc-transfers: no item with event_height across all pages, watermark not advanced', {
-      pagesFetched,
-    });
-  }
-
   const elapsedMs = Date.now() - startedAt;
   log.logInfo('sync-ibc-transfers finished', {
     new: newCount,
@@ -254,6 +238,6 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
     skipped: skippedCount,
     pagesFetched,
     elapsedMs,
-    watermarkUpdated: nextWatermark !== null,
+    mode: windowComplete ? 'delta' : 'backfill',
   });
 };

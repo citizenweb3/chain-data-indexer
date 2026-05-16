@@ -8,9 +8,64 @@ const log = logger('recompute-daily-stats');
 const RECOMPUTE_DAYS = 3;
 const HEARTBEAT_KEY = 'recompute-daily-stats';
 
+const todayUtcMidnight = (): Date => {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+};
+
+const readEarliestPacketDate = async (): Promise<Date | null> => {
+  const rows = await db.$queryRaw<{ d: Date | null }[]>(Prisma.sql`
+    SELECT MIN((event_time AT TIME ZONE 'UTC')::date) AS d
+    FROM ibc_packets
+    WHERE event_time IS NOT NULL
+  `);
+  return rows[0]?.d ?? null;
+};
+
+const readEarliestDailyDate = async (): Promise<Date | null> => {
+  const rows = await db.$queryRaw<{ d: Date | null }[]>(Prisma.sql`
+    SELECT MIN(date) AS d FROM ibc_daily_stats
+  `);
+  return rows[0]?.d ?? null;
+};
+
+const resolveRecomputeFromDate = async (): Promise<{
+  fromDate: Date | null;
+  mode: 'bootstrap' | 'incremental' | 'noop';
+}> => {
+  const today = todayUtcMidnight();
+  const incrementalFrom = new Date(today);
+  incrementalFrom.setUTCDate(incrementalFrom.getUTCDate() - (RECOMPUTE_DAYS - 1));
+
+  const earliestPacket = await readEarliestPacketDate();
+  if (earliestPacket === null) {
+    return { fromDate: null, mode: 'noop' };
+  }
+
+  const earliestDaily = await readEarliestDailyDate();
+  const dailyCoversPacketSpan =
+    earliestDaily !== null && earliestDaily.getTime() <= earliestPacket.getTime();
+
+  if (!dailyCoversPacketSpan) {
+    return { fromDate: earliestPacket, mode: 'bootstrap' };
+  }
+  return { fromDate: incrementalFrom, mode: 'incremental' };
+};
+
 export const runRecomputeDailyStats = async (): Promise<void> => {
   const startedAt = Date.now();
-  log.logInfo('recompute-daily-stats started', { days: RECOMPUTE_DAYS });
+
+  const { fromDate, mode } = await resolveRecomputeFromDate();
+  log.logInfo('recompute-daily-stats started', {
+    mode,
+    fromDate: fromDate?.toISOString() ?? null,
+  });
+
+  if (fromDate === null) {
+    log.logInfo('recompute-daily-stats noop: no packets to aggregate');
+    return;
+  }
 
   try {
     const rowsAffected = await db.$executeRaw(Prisma.sql`
@@ -23,7 +78,7 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
           p.amount
         FROM ibc_packets p
         WHERE p.event_time IS NOT NULL
-          AND p.event_time >= (date_trunc('day', NOW() AT TIME ZONE 'UTC') - make_interval(days => ${RECOMPUTE_DAYS - 1}))
+          AND p.event_time >= ${fromDate}
       ),
       daily_spot_prices AS (
         SELECT DISTINCT ON (asset_id, date)
@@ -80,7 +135,7 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
     });
 
     const elapsedMs = Date.now() - startedAt;
-    log.logInfo('recompute-daily-stats finished', { rowsAffected, elapsedMs });
+    log.logInfo('recompute-daily-stats finished', { mode, rowsAffected, elapsedMs });
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
     log.logError('recompute-daily-stats failed', e);
