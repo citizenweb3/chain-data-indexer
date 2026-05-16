@@ -36,6 +36,7 @@ const TableSortItems: FC<TableSortItemsProps> = ({
       (currentSort === field && currentOrder === "asc") ||
       (!currentSort && defaultSelected);
     next.set("order", flipDesc ? "desc" : "asc");
+    next.delete("p");
     router.push(`${pathname}?${next.toString()}`, { scroll: false });
   };
 

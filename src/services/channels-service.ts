@@ -191,14 +191,14 @@ const formatAtom = (value: Prisma.Decimal): string =>
 
 const formatUsd = (value: Prisma.Decimal): string => value.toFixed(2);
 
-const compareDto = (sort: ChannelsSort, order: SortOrder) => {
+const compareDto = (sort: ChannelsSort, order: SortOrder, period: ChannelsPeriod) => {
   const dir = order === 'asc' ? 1 : -1;
   return (a: ChannelDto, b: ChannelDto): number => {
     if (sort === 'transfers') {
-      return (a.transfers['30d'] - b.transfers['30d']) * dir;
+      return (a.transfers[period] - b.transfers[period]) * dir;
     }
     if (sort === 'volume_atom') {
-      const cmp = Number(a.volume_atom['30d']) - Number(b.volume_atom['30d']);
+      const cmp = Number(a.volume_atom[period]) - Number(b.volume_atom[period]);
       return cmp * dir;
     }
     const aT = a.last_activity ? new Date(a.last_activity).getTime() : 0;
@@ -209,6 +209,7 @@ const compareDto = (sort: ChannelsSort, order: SortOrder) => {
 
 export const listChannels = async (params: {
   direction: ChannelsDirection;
+  period: ChannelsPeriod;
   sort: ChannelsSort;
   order: SortOrder;
   limit: number;
@@ -323,7 +324,7 @@ export const listChannels = async (params: {
     };
   });
 
-  dtos.sort(compareDto(params.sort, params.order));
+  dtos.sort(compareDto(params.sort, params.order, params.period));
   const total = dtos.length;
   const sliced = dtos.slice(params.offset, params.offset + params.limit);
 

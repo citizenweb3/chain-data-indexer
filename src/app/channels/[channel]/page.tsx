@@ -61,6 +61,7 @@ export default async function ChannelDetailPage({
     await Promise.all([
       listChannels({
         direction,
+        period,
         sort: "transfers",
         order: "desc",
         limit: 1000,

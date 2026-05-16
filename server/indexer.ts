@@ -20,6 +20,13 @@ const tasks: ScheduledTask[] = [
 
 const tasksRunning: Record<string, boolean> = {};
 
+const TASK_TIMEOUT_MS: Record<ScheduledTask['name'], number> = {
+  'sync-ibc-transfers': 4 * 60 * 1000,
+  'recompute-daily-stats': 4 * 60 * 1000,
+  prices: 4 * 60 * 1000,
+  'price-history': 30 * 60 * 1000,
+};
+
 const spawnTask = (taskName: ScheduledTask['name']): Promise<void> => {
   if (tasksRunning[taskName]) {
     log.logInfo(`${taskName} already running, skipping`);
@@ -34,15 +41,25 @@ const spawnTask = (taskName: ScheduledTask['name']): Promise<void> => {
       execArgv: ['--import', 'tsx'],
     });
 
+    const timeoutMs = TASK_TIMEOUT_MS[taskName];
+    const watchdog = setTimeout(() => {
+      log.logError(`${taskName} watchdog fired after ${timeoutMs}ms, terminating worker`);
+      worker.terminate().catch((err) => {
+        log.logError(`${taskName} terminate failed`, err);
+      });
+    }, timeoutMs);
+
     worker.on('message', (msg) => {
       log.logInfo(`${taskName} message: ${msg}`);
     });
     worker.on('error', (err) => {
+      clearTimeout(watchdog);
       tasksRunning[taskName] = false;
       log.logError(`${taskName} error`, err);
       reject(err);
     });
     worker.on('exit', (code) => {
+      clearTimeout(watchdog);
       tasksRunning[taskName] = false;
       if (code !== 0) {
         log.logError(`${taskName} exited with code ${code}`);

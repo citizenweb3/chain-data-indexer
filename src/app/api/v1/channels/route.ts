@@ -14,6 +14,7 @@ export const GET = async (request: Request): Promise<Response> => {
   try {
     const result = await listChannels({
       direction: parsed.data.direction,
+      period: parsed.data.period,
       sort: parsed.data.sort,
       order: parsed.data.order,
       limit: parsed.data.limit,

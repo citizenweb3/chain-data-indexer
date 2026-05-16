@@ -187,7 +187,7 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
       break;
     }
 
-    if (page === 0) {
+    if (nextWatermark === null) {
       const newest = items.find((p) => p.event_height !== null);
       if (newest && newest.event_height !== null) {
         nextWatermark = {
@@ -241,6 +241,10 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
 
   if (nextWatermark) {
     await writeWatermark(nextWatermark);
+  } else if (pagesFetched > 0) {
+    log.logWarn('sync-ibc-transfers: no item with event_height across all pages, watermark not advanced', {
+      pagesFetched,
+    });
   }
 
   const elapsedMs = Date.now() - startedAt;

@@ -84,7 +84,7 @@ const toDto = (row: PacketRow): IbcTransferDto => ({
 });
 
 const buildFilterConditions = (params: ListTransfersParams): Prisma.Sql[] => {
-  const conditions: Prisma.Sql[] = [];
+  const conditions: Prisma.Sql[] = [Prisma.sql`event_height IS NOT NULL`];
 
   if (params.channelIdSrc !== undefined) {
     conditions.push(Prisma.sql`channel_id_src = ${params.channelIdSrc}`);
@@ -112,19 +112,16 @@ const buildListWhere = (params: ListTransfersParams): Prisma.Sql => {
     params.beforePort !== undefined;
 
   if (cursorActive) {
-    conditions.push(Prisma.sql`event_height IS NOT NULL`);
     conditions.push(
       Prisma.sql`(event_height, sequence, channel_id_src, port_id_src) < (${params.beforeHeight}, ${params.beforeSequence}, ${params.beforeChannel}, ${params.beforePort})`,
     );
   }
 
-  if (conditions.length === 0) return Prisma.empty;
   return Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
 };
 
 const buildTotalWhere = (params: ListTransfersParams): Prisma.Sql => {
   const conditions = buildFilterConditions(params);
-  if (conditions.length === 0) return Prisma.empty;
   return Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
 };
 
@@ -160,7 +157,7 @@ export const listTransfers = async (
         timeout_ts
       FROM ibc_packets
       ${whereSql}
-      ORDER BY event_height DESC NULLS LAST, sequence DESC, channel_id_src DESC, port_id_src DESC
+      ORDER BY event_height DESC, sequence DESC, channel_id_src DESC, port_id_src DESC
       LIMIT ${probeLimit}
     `,
   );
@@ -169,14 +166,14 @@ export const listTransfers = async (
   const pageRows = hasMore ? rows.slice(0, params.limit) : rows;
   const data = pageRows.map(toDto);
 
-  const lastWithHeight = [...pageRows].reverse().find((r) => r.event_height !== null);
+  const last = pageRows[pageRows.length - 1];
   const cursor: TransfersListCursor | null =
-    hasMore && lastWithHeight && lastWithHeight.event_height !== null
+    hasMore && last && last.event_height !== null
       ? {
-          next_before_height: lastWithHeight.event_height.toString(),
-          next_before_sequence: lastWithHeight.sequence.toString(),
-          next_before_channel: lastWithHeight.channel_id_src,
-          next_before_port: lastWithHeight.port_id_src,
+          next_before_height: last.event_height.toString(),
+          next_before_sequence: last.sequence.toString(),
+          next_before_channel: last.channel_id_src,
+          next_before_port: last.port_id_src,
         }
       : null;
 

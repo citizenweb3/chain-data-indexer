@@ -23,7 +23,7 @@ const toUTCDate = (timestamp: number): Date => {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 };
 
-const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<void> => {
+const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<boolean> => {
   const lastHistory = await db.priceHistory.findFirst({
     where: { assetId: asset.id },
     orderBy: { date: 'desc' },
@@ -39,18 +39,18 @@ const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<v
 
   if (lastDate && firstPriceDate && lastDate >= firstPriceDate) {
     log.logInfo(`[${asset.symbol}] no gap between PriceHistory and Price, skipping`);
-    return;
+    return true;
   }
 
   if (lastDate && !firstPriceDate) {
     log.logInfo(`[${asset.symbol}] PriceHistory exists but no Price records, skipping`);
-    return;
+    return true;
   }
 
   for (let i = 0; i < retries; i++) {
     try {
       const url = `https://api.coingecko.com/api/v3/coins/${asset.coingeckoId}/market_chart?vs_currency=usd&days=365&interval=daily`;
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
 
       if (response.status === 429) {
         log.logError(`[${asset.symbol}] 429 Too Many Requests, waiting ${TOO_MANY_REQUESTS_DELAY / 1000}s`);
@@ -67,7 +67,7 @@ const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<v
       const data = (await response.json()) as MarketChartResponse;
       if (!data.prices || data.prices.length === 0) {
         log.logInfo(`[${asset.symbol}] no price data returned from CoinGecko`);
-        return;
+        return true;
       }
 
       const points = data.prices
@@ -81,7 +81,7 @@ const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<v
 
       if (points.length === 0) {
         log.logInfo(`[${asset.symbol}] no new points to insert after filtering`);
-        return;
+        return true;
       }
 
       await db.$transaction(
@@ -95,7 +95,7 @@ const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<v
       );
 
       log.logInfo(`[${asset.symbol}] inserted ${points.length} price history points`);
-      return;
+      return true;
     } catch (e) {
       log.logError(`[${asset.symbol}] error`, e);
       if (i === retries - 1) {
@@ -105,6 +105,7 @@ const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<v
       }
     }
   }
+  return false;
 };
 
 export const runGetPriceHistory = async (): Promise<void> => {
@@ -117,11 +118,23 @@ export const runGetPriceHistory = async (): Promise<void> => {
     return;
   }
 
+  const failed: string[] = [];
   for (const asset of assets) {
-    await processAssetWithRetry(asset);
+    const ok = await processAssetWithRetry(asset);
+    if (!ok) failed.push(asset.symbol);
     await sleep(REQUEST_DELAY);
   }
 
   const elapsedMs = Date.now() - startedAt;
-  log.logInfo('get-price-history finished', { elapsedMs });
+  log.logInfo('get-price-history finished', {
+    elapsedMs,
+    total: assets.length,
+    failed: failed.length,
+  });
+
+  if (failed.length > 0) {
+    throw new Error(
+      `get-price-history: ${failed.length}/${assets.length} assets failed: ${failed.join(', ')}`,
+    );
+  }
 };

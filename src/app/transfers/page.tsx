@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import {
   listTransfers,
   type TransferFilterDirection,
@@ -59,10 +60,28 @@ export default async function TransfersPage({
   const channelIdSrc = sp.channel || undefined;
   const denom = sp.denom || undefined;
 
+  const rawCursorParts = [
+    sp.beforeHeight,
+    sp.beforeSequence,
+    sp.beforeChannel,
+    sp.beforePort,
+  ];
+  const cursorPresent = rawCursorParts.some((v) => v !== undefined && v !== "");
+  const cursorAllPresent = rawCursorParts.every(
+    (v) => v !== undefined && v !== "",
+  );
+  if (cursorPresent && !cursorAllPresent) {
+    notFound();
+  }
+
   const beforeHeight = parseBigint(sp.beforeHeight);
   const beforeSequence = parseBigint(sp.beforeSequence);
   const beforeChannel = sp.beforeChannel || undefined;
   const beforePort = sp.beforePort || undefined;
+
+  if (cursorAllPresent && (beforeHeight === undefined || beforeSequence === undefined)) {
+    notFound();
+  }
 
   const result = await listTransfers({
     limit,

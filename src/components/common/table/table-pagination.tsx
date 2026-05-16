@@ -36,7 +36,8 @@ const TablePagination: FC<TablePaginationProps> = ({
       ? new URLSearchParams(currentSearch.toString())
       : new URLSearchParams(currentSearch ?? "");
 
-  const currentPage = Math.max(1, parseInt(sp.get(pageParam) ?? "1", 10) || 1);
+  const rawPage = parseInt(sp.get(pageParam) ?? "1", 10) || 1;
+  const currentPage = Math.min(Math.max(1, pageLength), Math.max(1, rawPage));
   const pages: PageElement[] = [];
 
   const hrefFor = (page: number) => {

@@ -14,6 +14,7 @@ const ATOM_DENOM = 'uatom';
 const ATOM_DECIMALS = 6;
 const MS_PER_DAY = 86_400_000;
 const DEFAULT_DAYS = 30;
+const MAX_RANGE_DAYS = 365;
 
 const toUtcDate = (d: Date): Date => {
   const out = new Date(d);
@@ -154,9 +155,14 @@ export const getTimeseries = async (params: {
   const midnight = toUtcDate(now);
 
   const toBoundary = params.to ? toUtcDate(params.to) : midnight;
-  const fromBoundary = params.from
+  const fromRaw = params.from
     ? toUtcDate(params.from)
     : new Date(toBoundary.getTime() - (DEFAULT_DAYS - 1) * MS_PER_DAY);
+
+  const earliestFrom = new Date(
+    toBoundary.getTime() - (MAX_RANGE_DAYS - 1) * MS_PER_DAY,
+  );
+  const fromBoundary = fromRaw.getTime() < earliestFrom.getTime() ? earliestFrom : fromRaw;
 
   const toExclusive = new Date(toBoundary.getTime() + MS_PER_DAY);
 

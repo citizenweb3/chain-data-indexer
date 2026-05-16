@@ -5,17 +5,25 @@ const log = logger('upstream-client');
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 1500;
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 class UpstreamError extends Error {
   constructor(
     message: string,
     public readonly status: number | null,
     public readonly body: string | null,
+    public readonly retryable: boolean = true,
   ) {
     super(message);
     this.name = 'UpstreamError';
   }
 }
+
+const isRetryableStatus = (status: number): boolean => {
+  if (status === 408 || status === 429) return true;
+  if (status >= 500) return true;
+  return false;
+};
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -53,6 +61,7 @@ export const fetchUpstream = async <T>(
           'x-api-key': apiKey,
           accept: 'application/json',
         },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (response.status === 429) {
@@ -63,12 +72,22 @@ export const fetchUpstream = async <T>(
 
       if (!response.ok) {
         const body = await response.text().catch(() => null);
-        throw new UpstreamError(`upstream ${response.status} on ${path}`, response.status, body);
+        const retryable = isRetryableStatus(response.status);
+        throw new UpstreamError(
+          `upstream ${response.status} on ${path}`,
+          response.status,
+          body,
+          retryable,
+        );
       }
 
       return (await response.json()) as T;
     } catch (err) {
       lastError = err;
+      if (err instanceof UpstreamError && !err.retryable) {
+        log.logError(`upstream fetch ${path} permanent ${err.status}, not retrying`, err);
+        throw err;
+      }
       if (attempt < MAX_ATTEMPTS) {
         log.logWarn(`upstream fetch ${path} failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying in ${RETRY_DELAY_MS}ms`, {
           error: err instanceof Error ? err.message : String(err),

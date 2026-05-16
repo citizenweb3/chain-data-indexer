@@ -62,6 +62,7 @@ export default async function DashboardPage({
       getStats({ direction }),
       listChannels({
         direction,
+        period,
         sort,
         order,
         limit: PAGE_LIMIT,
