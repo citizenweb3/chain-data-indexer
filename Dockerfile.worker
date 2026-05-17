@@ -20,4 +20,10 @@ COPY tsconfig.json ./
 COPY server ./server
 COPY src ./src
 
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 worker \
+    && chown -R worker:nodejs /app
+
+USER worker
+
 CMD ["yarn", "worker"]
