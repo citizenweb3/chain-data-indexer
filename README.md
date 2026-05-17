@@ -8,6 +8,8 @@ PostgreSQL, recomputes daily rollups, and enriches seeded assets with CoinGecko 
 
 **Branch status:** Development
 
+**Live application:** [ibc.validatorinfo.com](https://ibc.validatorinfo.com)
+
 ## CDI repository context
 
 This branch is part of the [`citizenweb3/chain-data-indexer`](https://github.com/citizenweb3/chain-data-indexer)
