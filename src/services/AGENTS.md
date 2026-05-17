@@ -8,8 +8,10 @@ DB-touching read services for the API + RSC pages. Pure functions: take typed pa
 |------|-------|
 | `stats-service.ts` | `/api/v1/stats` + dashboard cards |
 | `channels-service.ts` | `/api/v1/channels` + channel list pages |
+| `assets-service.ts` | `/api/v1/assets` + `/assets` per-asset breakdown page + dashboard top-assets card |
 | `timeseries-service.ts` | `/api/v1/timeseries` + chart.js series on dashboard / channel detail |
 | `transfers-service.ts` | `/api/v1/transfers` + `/transfers/[port]/[channel]/[sequence]` |
+| `health-service.ts` | `/api/v1/health` + dashboard last-sync card (`getSyncWatermark` — MAX `event_height` / `event_time` from `ibc_packets`) |
 
 ## Imports
 

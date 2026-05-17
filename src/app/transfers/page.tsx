@@ -1,26 +1,31 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
 import {
   listTransfers,
   type TransferFilterDirection,
 } from "@/services/transfers-service";
 import TransfersTable from "@/components/transfers/transfers-table";
+import PeriodTabs, {
+  type Period,
+} from "@/components/dashboard/period-tabs";
+import DirectionToggle from "@/components/dashboard/direction-toggle";
 
 export const dynamic = "force-dynamic";
 
 interface SearchParams {
-  limit?: string;
+  period?: string;
   direction?: string;
   status?: string;
   channel?: string;
   denom?: string;
-  beforeHeight?: string;
-  beforeSequence?: string;
-  beforeChannel?: string;
-  beforePort?: string;
+  denom_base?: string;
+  p?: string;
 }
 
 type TransferStatus = "sent" | "received" | "acknowledged" | "timeout" | "failed";
+
+const PAGE_LIMIT = 20;
+
+const isPeriod = (v: unknown): v is Period =>
+  v === "24h" || v === "7d" || v === "30d";
 
 const isDirection = (v: unknown): v is TransferFilterDirection =>
   v === "outgoing" || v === "incoming" || v === "both";
@@ -32,19 +37,20 @@ const isStatus = (v: unknown): v is TransferStatus =>
   v === "timeout" ||
   v === "failed";
 
-const parseBigint = (s: string | undefined): bigint | undefined => {
-  if (!s) return undefined;
-  try {
-    return BigInt(s);
-  } catch {
-    return undefined;
-  }
+const periodLabel: Record<Period, string> = {
+  "24h": "last 24h",
+  "7d": "last 7 days",
+  "30d": "last 30 days",
 };
 
-const clampLimit = (raw: string | undefined): number => {
-  const n = parseInt(raw ?? "20", 10);
-  if (!Number.isFinite(n) || n <= 0) return 20;
-  return Math.min(100, n);
+const periodToSince = (period: Period): Date => {
+  const ms =
+    period === "24h"
+      ? 24 * 60 * 60 * 1000
+      : period === "7d"
+      ? 7 * 24 * 60 * 60 * 1000
+      : 30 * 24 * 60 * 60 * 1000;
+  return new Date(Date.now() - ms);
 };
 
 export default async function TransfersPage({
@@ -54,103 +60,68 @@ export default async function TransfersPage({
 }) {
   const sp = await searchParams;
 
-  const limit = clampLimit(sp.limit);
-  const direction = isDirection(sp.direction) ? sp.direction : undefined;
+  const period: Period = isPeriod(sp.period) ? sp.period : "24h";
+  const direction: TransferFilterDirection = isDirection(sp.direction)
+    ? sp.direction
+    : "both";
   const status = isStatus(sp.status) ? sp.status : undefined;
   const channelIdSrc = sp.channel || undefined;
   const denom = sp.denom || undefined;
-
-  const rawCursorParts = [
-    sp.beforeHeight,
-    sp.beforeSequence,
-    sp.beforeChannel,
-    sp.beforePort,
-  ];
-  const cursorPresent = rawCursorParts.some((v) => v !== undefined && v !== "");
-  const cursorAllPresent = rawCursorParts.every(
-    (v) => v !== undefined && v !== "",
-  );
-  if (cursorPresent && !cursorAllPresent) {
-    notFound();
-  }
-
-  const beforeHeight = parseBigint(sp.beforeHeight);
-  const beforeSequence = parseBigint(sp.beforeSequence);
-  const beforeChannel = sp.beforeChannel || undefined;
-  const beforePort = sp.beforePort || undefined;
-
-  if (cursorAllPresent && (beforeHeight === undefined || beforeSequence === undefined)) {
-    notFound();
-  }
+  const denomBase = !denom && sp.denom_base ? sp.denom_base : undefined;
+  const pageNum = Math.max(1, parseInt(sp.p ?? "1", 10) || 1);
+  const offset = (pageNum - 1) * PAGE_LIMIT;
+  const since = periodToSince(period);
 
   const result = await listTransfers({
-    limit,
+    limit: PAGE_LIMIT,
     direction,
     status,
     channelIdSrc,
     denom,
-    beforeHeight,
-    beforeSequence,
-    beforeChannel,
-    beforePort,
+    denomBase,
+    since,
+    offset,
   });
 
-  const filtersSearch = new URLSearchParams();
-  if (sp.limit) filtersSearch.set("limit", sp.limit);
-  if (direction) filtersSearch.set("direction", direction);
-  if (status) filtersSearch.set("status", status);
-  if (channelIdSrc) filtersSearch.set("channel", channelIdSrc);
-  if (denom) filtersSearch.set("denom", denom);
+  const totalRows = Number(result.total);
+  const pageLength = Math.max(
+    1,
+    Math.ceil((Number.isFinite(totalRows) ? totalRows : 0) / PAGE_LIMIT),
+  );
 
-  const olderHref = (() => {
-    if (!result.cursor) return null;
-    const next = new URLSearchParams(filtersSearch);
-    next.set("beforeHeight", result.cursor.next_before_height);
-    next.set("beforeSequence", result.cursor.next_before_sequence);
-    next.set("beforeChannel", result.cursor.next_before_channel);
-    next.set("beforePort", result.cursor.next_before_port);
-    return `/transfers?${next.toString()}`;
-  })();
-
-  const resetHref = `/transfers${filtersSearch.toString() ? `?${filtersSearch.toString()}` : ""}`;
-  const hasCursor =
-    !!sp.beforeHeight ||
-    !!sp.beforeSequence ||
-    !!sp.beforeChannel ||
-    !!sp.beforePort;
+  const currentSearch = new URLSearchParams();
+  for (const [k, v] of Object.entries(sp)) {
+    if (typeof v === "string" && v) currentSearch.set(k, v);
+  }
+  if (!currentSearch.has("period")) currentSearch.set("period", period);
+  if (!currentSearch.has("direction")) currentSearch.set("direction", direction);
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-12">
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
-        <h1 className="font-handjet text-4xl tracking-wide text-highlight">
+        <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
           IBC Transfers
         </h1>
-        <p className="font-sfpro text-sm text-white/70">
-          {result.total} total · showing {result.data.length} per page
-          {hasCursor ? " · cursor active" : ""}
+        <p className="font-sfpro text-sm text-white/60">
+          {result.total} total · {periodLabel[period]} · page {pageNum} of {pageLength}
         </p>
       </header>
 
-      <TransfersTable transfers={result.data} />
-
-      <div className="flex flex-row items-center justify-end gap-4">
-        {hasCursor && (
-          <Link
-            href={resetHref}
-            className="border-b border-bgSt px-2 font-handjet text-base hover:border-highlight hover:text-highlight"
-          >
-            Reset
-          </Link>
-        )}
-        {olderHref && (
-          <Link
-            href={olderHref}
-            className="border-b border-bgSt px-2 font-handjet text-base hover:border-highlight hover:text-highlight"
-          >
-            Older ›
-          </Link>
-        )}
+      <div className="flex flex-wrap items-center gap-3">
+        <PeriodTabs defaultValue={period} />
+        <DirectionToggle defaultValue={direction} />
       </div>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="font-sfpro text-sm uppercase tracking-wide text-white/60">
+          All packets
+        </h2>
+        <TransfersTable
+          transfers={result.data}
+          pageLength={pageLength}
+          currentSearch={currentSearch}
+        />
+      </section>
     </main>
   );
 }

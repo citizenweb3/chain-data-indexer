@@ -4,6 +4,8 @@ import { formatDistanceToNow } from "date-fns";
 import BaseTableCell from "@/components/common/table/base-table-cell";
 import BaseTableRow from "@/components/common/table/base-table-row";
 import { cn } from "@/utils/cn";
+import { formatDenomDisplay } from "@/utils/format-denom";
+import TxHashCell from "@/components/transfers/tx-hash-cell";
 
 export interface TransferRowDto {
   port_id_src: string;
@@ -16,6 +18,10 @@ export interface TransferRowDto {
   denom: string | null;
   amount: string | null;
   tx_hash_send: string | null;
+  tx_hash_recv: string | null;
+  tx_hash_ack: string | null;
+  asset_symbol: string | null;
+  asset_decimals: number | null;
 }
 
 interface TransfersTableRowProps {
@@ -28,17 +34,57 @@ const statusColor = (status: TransferRowDto["status"]) => {
   return "text-highlight";
 };
 
-const shortHash = (hash: string | null) => {
-  if (!hash) return "—";
-  if (hash.length <= 14) return hash;
-  return `${hash.slice(0, 6)}…${hash.slice(-6)}`;
+const pickHash = (transfer: TransferRowDto): string | null =>
+  transfer.tx_hash_send ?? transfer.tx_hash_recv ?? transfer.tx_hash_ack;
+
+const formatAmount = (
+  amount: string | null,
+  denom: string | null,
+  symbol: string | null,
+  decimals: number | null,
+) => {
+  if (!amount || !denom) return "—";
+  const display = formatDenomDisplay(denom, symbol);
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return `${amount} ${display}`;
+  const scaled = decimals !== null ? n / Math.pow(10, decimals) : n;
+  return `${scaled.toLocaleString("en-US", {
+    maximumFractionDigits: decimals ? 6 : 0,
+  })} ${display}`;
 };
 
-const formatAmount = (amount: string | null, denom: string | null) => {
-  if (!amount || !denom) return "—";
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return amount;
-  return `${n.toLocaleString("en-US", { maximumFractionDigits: 0 })} ${denom}`;
+const buildAmountTooltip = (
+  amount: string | null,
+  denom: string | null,
+  symbol: string | null,
+  decimals: number | null,
+): string => {
+  if (!amount || !denom) return "no amount";
+  const lines: string[] = [];
+  const rawN = Number(amount);
+  const rawLabel = Number.isFinite(rawN)
+    ? rawN.toLocaleString("en-US", { maximumFractionDigits: 0 })
+    : amount;
+  lines.push(`Raw amount: ${rawLabel}`);
+  if (decimals !== null && Number.isFinite(rawN)) {
+    const scaled = rawN / Math.pow(10, decimals);
+    lines.push(
+      `Scaled (10^${decimals}): ${scaled.toLocaleString("en-US", {
+        maximumFractionDigits: 6,
+      })}${symbol ? ` ${symbol}` : ""}`,
+    );
+  } else {
+    lines.push("Decimals: unknown — value shown is raw base units");
+  }
+  lines.push("");
+  lines.push(`Denom: ${denom}`);
+  if (symbol) lines.push(`Symbol: ${symbol}`);
+  if (!symbol && denom.startsWith("factory/")) {
+    lines.push(
+      "Note: token-factory subdenom — name is set by creator, not a canonical symbol",
+    );
+  }
+  return lines.join("\n");
 };
 
 const formatRelative = (iso: string | null) => {
@@ -85,14 +131,33 @@ const TransfersTableRow: FC<TransfersTableRowProps> = ({ transfer }) => {
         </div>
       </BaseTableCell>
       <BaseTableCell className="py-3">
-        <div className="text-center font-handjet text-lg">
-          {formatAmount(transfer.amount, transfer.denom)}
+        <div
+          className={cn(
+            "cursor-help text-center font-handjet text-lg",
+            transfer.asset_decimals === null && transfer.amount
+              ? "text-white/60"
+              : undefined,
+          )}
+          title={buildAmountTooltip(
+            transfer.amount,
+            transfer.denom,
+            transfer.asset_symbol,
+            transfer.asset_decimals,
+          )}
+        >
+          {formatAmount(
+            transfer.amount,
+            transfer.denom,
+            transfer.asset_symbol,
+            transfer.asset_decimals,
+          )}
+          {transfer.amount && transfer.asset_decimals === null ? (
+            <span className="ml-1 font-sfpro text-xs text-white/40">(?)</span>
+          ) : null}
         </div>
       </BaseTableCell>
       <BaseTableCell className="py-3">
-        <div className="text-center font-handjet text-sm text-white/70">
-          {shortHash(transfer.tx_hash_send)}
-        </div>
+        <TxHashCell hash={pickHash(transfer)} />
       </BaseTableCell>
       <BaseTableCell className="py-3">
         <div className="text-center font-sfpro text-sm text-white/70">

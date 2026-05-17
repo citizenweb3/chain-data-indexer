@@ -29,13 +29,13 @@ const ChannelsTable: FC<ChannelsTableProps> = ({
           <tr className="bg-table_header">
             <TableHeaderItem label="Channel" />
             <TableHeaderItem label="Counterparty" />
+            <TableHeaderItem label="Denoms" />
+            <TableHeaderItem label="Transfers" field="transfers" />
             <TableHeaderItem
-              label="Transfers"
-              field="transfers"
+              label="Volume (USD)"
+              field="volume_usd"
               defaultSelected
             />
-            <TableHeaderItem label="Volume (ATOM)" field="volume_atom" />
-            <TableHeaderItem label="Volume (USD)" />
             <TableHeaderItem label="Success (30d)" />
             <TableHeaderItem label="Last activity" field="last_activity" />
           </tr>
@@ -67,6 +67,7 @@ const ChannelsTable: FC<ChannelsTableProps> = ({
           pageLength={pageLength}
           currentSearch={currentSearch}
           pageParam={pageParam}
+          isScroll={false}
         />
       )}
     </div>

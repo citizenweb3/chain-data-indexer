@@ -22,6 +22,7 @@ export const TransfersListQuerySchema = z
     direction: TransferFilterDirectionEnum.default('both'),
     status: PacketStatusEnum.optional(),
     denom: DenomSchema.optional(),
+    denom_base: DenomSchema.optional(),
   })
   .superRefine((data, ctx) => {
     const fields = {
@@ -43,6 +44,13 @@ export const TransfersListQuerySchema = z
           });
         }
       }
+    }
+    if (data.denom !== undefined && data.denom_base !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['denom_base'],
+        message: 'denom and denom_base are mutually exclusive',
+      });
     }
   });
 
@@ -78,6 +86,9 @@ export const IbcTransferDtoSchema = z.object({
   relayer: z.string().nullable(),
   timeout_height: z.string().nullable(),
   timeout_ts: z.string().nullable(),
+  base_denom: z.string().nullable(),
+  asset_symbol: z.string().nullable(),
+  asset_decimals: z.number().int().nullable(),
 });
 
 export type IbcTransferDto = z.infer<typeof IbcTransferDtoSchema>;
@@ -101,7 +112,10 @@ export const TransfersListResponseSchema = z.object({
 export type TransfersListResponse = z.infer<typeof TransfersListResponseSchema>;
 
 export const TransferDetailResponseSchema = z.object({
-  data: IbcTransferDtoSchema,
+  data: IbcTransferDtoSchema.extend({
+    amount_usd: z.string().nullable(),
+    synced_at: z.string().nullable(),
+  }),
 });
 
 export type TransferDetailResponse = z.infer<typeof TransferDetailResponseSchema>;

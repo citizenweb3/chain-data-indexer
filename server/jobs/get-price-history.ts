@@ -47,15 +47,24 @@ const processAssetWithRetry = async (asset: Asset, retries = RETRIES): Promise<b
     return true;
   }
 
+  const apiKey = process.env.COINGECKO_API_KEY;
+  const headers: Record<string, string> = {};
+  if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
+
   for (let i = 0; i < retries; i++) {
     try {
       const url = `https://api.coingecko.com/api/v3/coins/${asset.coingeckoId}/market_chart?vs_currency=usd&days=365&interval=daily`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      const response = await fetch(url, { signal: AbortSignal.timeout(15_000), headers });
 
       if (response.status === 429) {
         log.logError(`[${asset.symbol}] 429 Too Many Requests, waiting ${TOO_MANY_REQUESTS_DELAY / 1000}s`);
         await sleep(TOO_MANY_REQUESTS_DELAY);
         continue;
+      }
+
+      if (response.status === 404) {
+        log.logWarn(`[${asset.symbol}] coingeckoId ${asset.coingeckoId} not found (404), skipping`);
+        return true;
       }
 
       if (!response.ok) {

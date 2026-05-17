@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 RUN apk add --no-cache libc6-compat
@@ -8,8 +8,12 @@ ENV NODE_ENV=production
 COPY package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
-# Prisma client must be generated before the worker can boot.
+# Prisma client must be generated before the worker can boot. Prisma 7 reads
+# prisma.config.ts which calls env('DATABASE_URL') eagerly — supply a
+# placeholder for build; runtime DATABASE_URL is injected by compose.
 COPY prisma ./prisma
+COPY prisma.config.ts ./
+ENV DATABASE_URL=postgres://placeholder:placeholder@localhost:5432/placeholder
 RUN yarn db:generate
 
 COPY tsconfig.json ./

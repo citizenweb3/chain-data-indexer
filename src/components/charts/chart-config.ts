@@ -35,8 +35,8 @@ export async function ensureChartRegistered() {
 export type ChartVariant = "full" | "card";
 export type ChartMetric = "transfers" | "volume_atom" | "volume_usd";
 
-const HIGHLIGHT = "#e5c46b";
-const HIGHLIGHT_FAINT = "rgba(229, 196, 107, 0.06)";
+const HIGHLIGHT = "#4FB848";
+const HIGHLIGHT_FAINT = "rgba(79, 184, 72, 0.06)";
 const GRID = "rgba(62, 62, 62, 0.5)";
 const TICK = "rgba(255, 255, 255, 0.55)";
 
@@ -128,7 +128,7 @@ export function buildGradient(
     0,
     chartArea.bottom,
   );
-  gradient.addColorStop(0, "rgba(229, 196, 107, 0.35)");
+  gradient.addColorStop(0, "rgba(79, 184, 72, 0.35)");
   gradient.addColorStop(1, HIGHLIGHT_FAINT);
   return gradient;
 }

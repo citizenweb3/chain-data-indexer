@@ -9,21 +9,23 @@ Next.js 16 app router. Routes are RSC by default and pull data directly from `@/
 | Route | File | Notes |
 |-------|------|-------|
 | `/` | `page.tsx` | One-line `redirect('/dashboard')` |
-| `/dashboard` | `dashboard/page.tsx` | Stats, big chart, channels table (paginated) |
-| `/channels/[channel]` | `channels/[channel]/page.tsx` | Per-channel stats + recent packets, regex-validated channel id |
+| `/dashboard` | `dashboard/page.tsx` | Volume card, last-sync card, full-size volume + transfers charts, top assets, channels table (paginated) |
+| `/channels/[channel]` | `channels/[channel]/page.tsx` | Per-channel `StatsCards` with sparklines + recent packets, regex-validated channel id |
+| `/assets` | `assets/page.tsx` | Per-asset breakdown (transfers / volume USD / share), offset/limit pagination |
 | `/transfers` | `transfers/page.tsx` | Keyset-cursor list, filter inputs in querystring |
 | `/transfers/[port]/[channel]/[sequence]` | `transfers/[port]/[channel]/[sequence]/page.tsx` | Single-packet detail; `sequence` parsed as bigint |
-| `/docs` | `docs/page.tsx` | API documentation stub |
+| `/docs` | `docs/page.tsx` | Scalar API reference UI mounted against `/api/openapi.json` |
 
 ## API routes
 
 | Route | File | Backed by |
 |-------|------|-----------|
-| `/api/openapi.json` | `api/openapi.json/route.ts` | Static spec |
-| `/api/v1/health` | `api/v1/health/route.ts` | Live DB ping |
+| `/api/openapi.json` | `api/openapi.json/route.ts` | `generateOpenApiDocument()` (cached as a string per process) |
+| `/api/v1/health` | `api/v1/health/route.ts` | `getSyncWatermark()` (max event_height/event_time in `ibc_packets`) |
 | `/api/v1/stats` | `api/v1/stats/route.ts` | `getStats()` |
 | `/api/v1/channels` | `api/v1/channels/route.ts` | `listChannels()` |
-| `/api/v1/timeseries` | `api/v1/timeseries/route.ts` | `getTimeseries()` |
+| `/api/v1/assets` | `api/v1/assets/route.ts` | `getAssetsBreakdown()` |
+| `/api/v1/timeseries` | `api/v1/timeseries/route.ts` | `getTimeseries()` / `getTimeseriesHourly()` |
 | `/api/v1/transfers` | `api/v1/transfers/route.ts` | `listTransfers()` |
 | `/api/v1/transfers/[port]/[channel]/[sequence]` | nested `route.ts` | `getTransfer()` |
 
@@ -72,11 +74,11 @@ All UI state that should survive reload, sharing, and back/forward navigation li
 
 | Param | Pages | Values | Default |
 |-------|-------|--------|---------|
-| `period` | `/dashboard`, `/channels/[channel]` | `24h` \| `7d` \| `30d` | `7d` |
-| `direction` | `/dashboard`, `/channels/[channel]`, `/transfers` | `outgoing` \| `incoming` \| `both` | `both` |
-| `sort` | `/dashboard` | `transfers` \| `volume_atom` \| `last_activity` | `transfers` |
-| `order` | `/dashboard` | `asc` \| `desc` | `desc` |
-| `p` | `/dashboard` | int ≥ 1 | `1` |
+| `period` | `/dashboard`, `/channels/[channel]`, `/assets` | `24h` \| `7d` \| `30d` | `24h` |
+| `direction` | `/dashboard`, `/channels/[channel]`, `/assets`, `/transfers` | `outgoing` \| `incoming` \| `both` | `both` |
+| `sort` | `/dashboard` (channels), `/assets` | dashboard: `transfers` \| `volume_atom` \| `volume_usd` \| `last_activity`; assets: `transfers` \| `volume_usd` \| `share` | dashboard `volume_usd`; assets `volume_usd` |
+| `order` | `/dashboard`, `/assets` | `asc` \| `desc` | `desc` |
+| `p` | `/dashboard`, `/assets` | int ≥ 1 | `1` |
 | `channel` | `/transfers` | `channel-\d+` | (none) |
 | `denom` | `/transfers` | string | (none) |
 | `status` | `/transfers` | `sent` \| `received` \| `acknowledged` \| `timeout` \| `failed` | (none) |
@@ -138,7 +140,9 @@ Do not collapse this convention to empty string — the dash makes "no data" vis
 - Font variable wiring (do not call `Handjet({ … })` / `Inter({ … })` anywhere else).
 - Default `<body>` colour and the flex column shell that lets pages own their `<main>` width.
 
-If you need a header / footer chrome, add it to `layout.tsx`. Per-page `<main>` already has `mx-auto max-w-6xl px-6 py-12` — do not re-wrap children in a second container.
+`layout.tsx` already renders the top `<Nav>` from `@/components/layout/nav` (Dashboard / Assets / Transfers / API Docs). If you need to add another root-level chrome element, add it next to `<Nav>` and keep the per-page `<main>` width contract.
+
+Per-page `<main>` uses `mx-auto max-w-7xl px-6 py-12` (matches the nav container width). Do not re-wrap children in a second container, and do not change the width per page — the dashboard, assets, transfers, and channel pages all share `max-w-7xl` intentionally.
 
 ## Testing pages locally
 

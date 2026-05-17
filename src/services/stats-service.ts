@@ -53,9 +53,9 @@ const queryPacketsWindow = async (
       ), 0) AS amount_native,
       COALESCE(SUM(
         CASE
-          WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM}
+          WHEN a.id IS NOT NULL
             AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
-          THEN (p.amount / POWER(10::numeric, ${ATOM_DECIMALS}))
+          THEN (p.amount / POWER(10::numeric, a.decimals))
             * COALESCE(ph.usd, dsp.usd)
         END
       ), 0) AS amount_usd
@@ -104,11 +104,11 @@ const queryDailyWindow = async (
     amount_usd: Prisma.Decimal | null;
   }[]>(Prisma.sql`
     SELECT
-      COALESCE(SUM(amount_native), 0) AS amount_native,
-      COALESCE(SUM(amount_usd), 0) AS amount_usd
+      COALESCE(SUM(amount_native) FILTER (WHERE denom = ${ATOM_DENOM}), 0) AS amount_native,
+      COALESCE(SUM(amount_usd) FILTER (WHERE denom IS NOT NULL), 0) AS amount_usd
     FROM ibc_daily_stats
     WHERE channel_id_src IS NULL
-      AND denom = ${ATOM_DENOM}
+      AND denom IS NOT NULL
       AND date >= ${fromDate}
       AND date < ${toDateExclusive}
       AND ${directionFilter(direction)}

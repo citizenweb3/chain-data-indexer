@@ -6,10 +6,12 @@ React 19 components for the Next.js 16 app router under `src/app/`. The UI is th
 
 | Folder | What lives here | Server / Client |
 |--------|-----------------|-----------------|
-| `common/table/` | Generic table primitives (`BaseTable`, `BaseTableRow`, `BaseTableCell`, `TableHeaderItem`, `TablePagination`, `TableSortItems`). Ported from validatorinfo, simplified. | Server, except `TableSortItems` (needs `useRouter`). |
-| `dashboard/` | Page-level pieces of `/dashboard` and `/channels/[channel]`: `StatsCards`, `ChannelsTable` (+ row), `PeriodTabs`, `DirectionToggle`. | Server containers + client toggles. |
+| `common/` | Cross-page primitives: `table/` group + `copy-button.tsx`, `subtitle.tsx`. Ported from validatorinfo, simplified. | Mixed; `copy-button` and `TableSortItems` are client. |
+| `dashboard/` | Page-level pieces of `/dashboard` and `/channels/[channel]`: `StatsCards`, `ChannelsTable` (+ row), `TopAssetsCard`, `PeriodTabs`, `DirectionToggle`. | Server containers + client toggles. |
+| `assets/` | `/assets` page surface — `AssetsTable` (+ row), backed by `assets-service`. | Server. |
 | `charts/` | chart.js 4 wrappers — see `charts/AGENTS.md` for the lazy-register pattern. | Always client. |
-| `transfers/` | `TransfersTable` + row, used by `/transfers` and inside the channel detail page. | Server. |
+| `transfers/` | `TransfersTable` + row, `TransferTimeline` (status stepper for the detail page), `TxHashCell` (truncated copyable hash). Used by `/transfers` and the channel detail page. | Server containers + client `CopyButton`. |
+| `layout/` | Top-level chrome — `Nav` (Dashboard / Assets / Transfers / API Docs). | Mixed; `Nav` is client because the `/docs` link forces a hard navigation. |
 | `ui/` | Tiny dark-mode primitives (`Card` family, `Tab` / `TabGroup`). Not a design system — only what the dashboard actually consumes. | Mixed; `Tab` is client because it owns `onClick`. |
 
 ## Library rules
@@ -34,9 +36,11 @@ Everything else stays server-side so the bundle stays small and pages stream HTM
 - `components/dashboard/period-tabs.tsx`
 - `components/dashboard/direction-toggle.tsx`
 - `components/common/table/table-sort-items.tsx`
+- `components/common/copy-button.tsx`
+- `components/layout/nav.tsx`
 - `components/charts/chart-config.ts` + `components/charts/timeseries-line.tsx`
 
-If you add a `'use client'` directive, audit whether the parent could pass already-rendered ReactNodes instead (this is how `StatsCards` injects sparkline charts — see `dashboard/page.tsx`).
+If you add a `'use client'` directive, audit whether the parent could pass already-rendered ReactNodes instead (this is how `StatsCards` injects sparkline charts — see `channels/[channel]/page.tsx`).
 
 ## DTOs
 

@@ -5,6 +5,18 @@ import BaseTableCell from "@/components/common/table/base-table-cell";
 import BaseTableRow from "@/components/common/table/base-table-row";
 import type { Period } from "@/components/dashboard/period-tabs";
 import { cn } from "@/utils/cn";
+import { formatNative } from "@/utils/format-amount";
+
+export interface ChannelDenom {
+  display: string;
+  native_denom: string;
+  symbol: string | null;
+  decimals: number | null;
+  count: number;
+  amount_native: string;
+  amount_usd: string;
+  raws: string[];
+}
 
 export interface ChannelDto {
   channel_id_src: string;
@@ -15,6 +27,7 @@ export interface ChannelDto {
   volume_usd: Record<Period, string>;
   success_rate_30d: number | null;
   last_activity: string | null;
+  denoms: ChannelDenom[];
 }
 
 interface ChannelsTableRowProps {
@@ -44,6 +57,36 @@ const formatRelative = (iso: string | null) => {
   return formatDistanceToNow(d, { addSuffix: true });
 };
 
+const formatNativeShort = (raw: string, decimals: number | null) => {
+  if (decimals === null) return raw;
+  const formatted = formatNative(raw, decimals);
+  if (formatted === null) return raw;
+  const n = Number(formatted);
+  if (!Number.isFinite(n)) return formatted;
+  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+};
+
+const formatUsdShort = (s: string) => {
+  const n = Number(s);
+  if (!Number.isFinite(n)) return s;
+  return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+};
+
+const buildDenomTooltip = (denoms: ChannelDenom[]): string =>
+  denoms
+    .map((d) => {
+      const native = formatNativeShort(d.amount_native, d.decimals);
+      const tail = d.symbol ? ` ${d.symbol}` : "";
+      const usd = Number(d.amount_usd) > 0
+        ? ` · $${formatUsdShort(d.amount_usd)}`
+        : "";
+      const head = `${d.display} (${d.count.toLocaleString("en-US")} pkts · ${native}${tail}${usd})`;
+      if (d.raws.length === 0) return head;
+      const indented = d.raws.map((r) => `  • ${r}`).join("\n");
+      return `${head}\n${indented}`;
+    })
+    .join("\n\n");
+
 const ChannelsTableRow: FC<ChannelsTableRowProps> = ({ channel, period }) => {
   const link = `/channels/${encodeURIComponent(channel.channel_id_src)}`;
   return (
@@ -61,14 +104,23 @@ const ChannelsTableRow: FC<ChannelsTableRowProps> = ({ channel, period }) => {
           {channel.channel_id_dst ?? "—"}
         </div>
       </BaseTableCell>
-      <BaseTableCell className="py-3">
-        <div className="text-center font-handjet text-lg">
-          {formatCount(channel.transfers[period])}
-        </div>
+      <BaseTableCell className="max-w-[14rem] py-3">
+        {channel.denoms.length === 0 ? (
+          <div className="text-center font-handjet text-lg text-white/40">
+            —
+          </div>
+        ) : (
+          <div
+            className="truncate text-center font-handjet text-lg"
+            title={buildDenomTooltip(channel.denoms)}
+          >
+            {channel.denoms.map((d) => d.display).join(", ")}
+          </div>
+        )}
       </BaseTableCell>
       <BaseTableCell className="py-3">
         <div className="text-center font-handjet text-lg">
-          {formatNumberString(channel.volume_atom[period], 2)}
+          {formatCount(channel.transfers[period])}
         </div>
       </BaseTableCell>
       <BaseTableCell className="py-3">

@@ -28,7 +28,20 @@ interface TimeseriesLineProps {
 const formatDateLabel = (iso: string) => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+  const hasTime = iso.includes("T");
+  if (hasTime) {
+    return d.toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "UTC",
+    });
+  }
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    timeZone: "UTC",
+  });
 };
 
 export default function TimeseriesLine({
@@ -62,7 +75,7 @@ export default function TimeseriesLine({
           borderColor: CHART_COLOR,
           backgroundColor: (ctx) => {
             const { ctx: canvas, chartArea } = ctx.chart;
-            if (!chartArea) return "rgba(229, 196, 107, 0.15)";
+            if (!chartArea) return "rgba(79, 184, 72, 0.15)";
             return buildGradient(canvas, chartArea);
           },
           fill: true,

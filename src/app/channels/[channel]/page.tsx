@@ -52,7 +52,7 @@ export default async function ChannelDetailPage({
   if (!CHANNEL_RE.test(decoded)) notFound();
 
   const sp = await searchParams;
-  const period: Period = isPeriod(sp.period) ? sp.period : "7d";
+  const period: Period = isPeriod(sp.period) ? sp.period : "24h";
   const direction: Direction = isDirection(sp.direction)
     ? sp.direction
     : "both";
@@ -111,10 +111,10 @@ export default async function ChannelDetailPage({
         >
           ‹ back to dashboard
         </Link>
-        <h1 className="font-handjet text-4xl tracking-wide text-highlight">
+        <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
           {channelRow.channel_id_src}
         </h1>
-        <p className="font-sfpro text-sm text-white/70">
+        <p className="font-sfpro text-sm text-white/60">
           port {channelRow.port_id_src}
           {channelRow.channel_id_dst
             ? ` · counterparty ${channelRow.channel_id_dst}`
@@ -158,7 +158,7 @@ export default async function ChannelDetailPage({
         }}
       />
 
-      <section className="rounded-md border border-bgSt bg-card p-5">
+      <section className="border border-bgSt bg-table_row p-6">
         <h2 className="mb-3 font-sfpro text-sm uppercase tracking-wide text-white/60">
           Transfers · last 30 days
         </h2>

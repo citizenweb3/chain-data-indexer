@@ -16,7 +16,7 @@ interface PeriodTabsProps {
   defaultValue?: Period;
 }
 
-const PeriodTabs: FC<PeriodTabsProps> = ({ defaultValue = "7d" }) => {
+const PeriodTabs: FC<PeriodTabsProps> = ({ defaultValue = "24h" }) => {
   const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();

@@ -8,6 +8,7 @@ Small, pure functions shared between UI and worker. No side effects, no imports 
 |------|---------|---------|
 | `cn.ts` | `cn(...inputs)` — `clsx` + `tailwind-merge` | Every component with conditional classes |
 | `format-amount.ts` | `formatNative(amount, decimals)` — bigint/string → decimal string | Worker stats jobs, transfer detail page |
+| `format-denom.ts` | `formatDenomDisplay(denom, symbol)` — defensive `(denom, symbol)` → display string for UI tables (handles `null`, `__unknown__`, `ibc/*`, `factory/*`, plain `u*`) | Transfers table row, top-assets card, channel detail recent packets |
 | `format-time.ts` | `formatRelativeTime(value)`, `formatIsoUtc(value)` — `date-fns` wrappers with null-safe input | (currently worker batch outputs; the UI still uses `formatDistanceToNow` from `date-fns` directly inside row components) |
 
 ## `cn` convention

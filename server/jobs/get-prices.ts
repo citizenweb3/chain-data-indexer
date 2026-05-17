@@ -22,7 +22,11 @@ export const runGetPrices = async (): Promise<void> => {
     const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`;
     log.logInfo(`fetching ${url}`);
 
-    const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    const apiKey = process.env.COINGECKO_API_KEY;
+    const headers: Record<string, string> = {};
+    if (apiKey) headers['x-cg-demo-api-key'] = apiKey;
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(15_000), headers });
     if (!response.ok) {
       throw new Error(`coingecko /simple/price ${response.status}`);
     }

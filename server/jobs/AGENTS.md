@@ -13,44 +13,60 @@ Each file exports a single `run<Job>()` function. The dispatcher in `../task-wor
 
 ## `sync-ibc-transfers.ts`
 
-Watermark-based incremental sync. Single source of truth: `SyncCursor[key='ibc-transfers']`.
+Watermark-based incremental sync. **The watermark is `ibc_packets` itself, not `SyncCursor`.** The job reads `MAX((eventHeight, sequence, channelIdSrc, portIdSrc))` from the mirror at the start of each run via `readLatestPacket()` (Prisma `findFirst` with the matching `orderBy`). `SyncCursor` exists in the schema but `sync-ibc-transfers` neither reads nor writes it — that table is reserved for future jobs that need a watermark divorced from a content table.
 
 ### Algorithm
 
 ```
-watermark = SyncCursor.ibc-transfers   (4-tuple, may be null)
-fetch upstream /ibc/transfers newest-first, paginate via cursor
-remember newest tuple from page 0 → new watermark candidate
-for each packet in stream:
-  if watermark != null and (eventHeight, sequence, channel, port) <= watermark: stop
-  if watermark == null and event_time < now - 30d: stop (initial backfill cutoff)
-  upsert by PK (channelIdSrc, portIdSrc, sequence)
-commit new watermark
+latest      = readLatestPacket()            (4-tuple from ibc_packets, may be null)
+earliest    = readEarliestEventTime()       (oldest event_time in mirror, may be null)
+cutoff      = now - BACKFILL_DAYS (30 days)
+windowComplete = (earliest != null) && (earliest <= cutoff)
+                   // true once the mirror spans the full retention window
+
+mode = windowComplete ? 'delta' : 'backfill'
+
+fetch upstream /ibc/transfers newest-first, paginate via 4-tuple cursor:
+  for each packet in page:
+    if event_height == null:           skip          // upstream rarely emits these
+    if event_time     < cutoff:        stop          // walked past the retention window
+    if windowComplete && tuple <= latest: stop       // caught up to the head of the mirror
+    upsert by PK (channelIdSrc, portIdSrc, sequence)
+  if !has_more or no cursor:           stop
 ```
 
-### Why a 4-tuple watermark, not just `(height, sequence)`
+Two stopping conditions matter:
 
-Multiple packets can share `(eventHeight, sequence)` if they belong to different channels/ports (rare, but valid). The upstream's keyset pagination uses the full 4-tuple `(before_height, before_sequence, before_channel, before_port)` (see `server/tools/upstream-types.ts:IbcTransferCursor`). The sync mirror has to compare on the same 4-tuple or it can either miss packets or duplicate them on the boundary page.
+- **`tuple <= latest`** is the steady-state stop — applied only after `windowComplete`. During the initial backfill the mirror's head shifts every page; pinning the stop to a moving target would terminate prematurely.
+- **`event_time < cutoff`** is the backfill stop — caps how far back any single run will paginate, independent of the mirror state.
+
+### Why a 4-tuple comparison, not just `(height, sequence)`
+
+Multiple packets can share `(eventHeight, sequence)` if they belong to different channels/ports (rare, but valid). The upstream's keyset pagination uses the full 4-tuple `(before_height, before_sequence, before_channel, before_port)` (see `server/tools/upstream-types.ts:IbcTransferCursor`). `compareCursor` mirrors that ordering exactly, or the mirror would either miss packets or duplicate them on the boundary page.
 
 ### Why `findUnique` + `create`/`update`, not `upsert`
 
 Pure `upsert` would give the right end state but doesn't tell us whether the row was new or updated. Splitting into pre-check + create/update gives accurate `{ new, updated }` counters in the log — useful for observability without a second query. This is a controlled performance tradeoff that we accept because the sync is rate-limited by upstream HTTP latency, not by Postgres.
 
-### Watermark caveat: `event_height` nullability
+### `event_height` nullability
 
-Packets with status `sent` may have no block yet (`event_height = null`). The upstream filters these out of the listing (`WHERE event_height IS NOT NULL` in upstream SQL), so the mirror never sees them. The watermark candidate code defensively skips any null-height row found on page 0 — see `nextWatermark` assignment.
+Packets with status `sent` may have no block yet (`event_height = null`). The upstream usually filters these out, but defensively the job:
+1. Skips them when iterating the response (`skippedCount++`).
+2. Filters them out in `readLatestPacket` (`where: { eventHeight: { not: null } }`) — a null-height row cannot anchor a watermark because comparison is undefined.
 
 ### Acceptance behavior
 
-- First run with empty `SyncCursor`: backfills 30 days, commits the newest tuple as watermark.
-- Second run within 5 min: page 0 first row equals the watermark → stop immediately, 1 page fetched, 0 inserts.
-- After `DELETE FROM sync_cursors WHERE key='ibc-transfers'`: full re-backfill, all rows hit the upsert update branch (`updated` counter goes up), no PK duplicates because the upsert PK is `(channelIdSrc, portIdSrc, sequence)`.
+- **First run on empty DB**: `latest = null`, `earliest = null`, `windowComplete = false`. Mode `backfill`. Paginates newest-first until `event_time < cutoff`. Typical: ~1300 pages, ~10 min, ~130k packets for a busy chain.
+- **Second run within 60 s after a fully-backfilled mirror**: `windowComplete = true`, `latest` set. Page 0 first row equals the head → stop after 1 page, 0 new, 0 updated.
+- **After `TRUNCATE ibc_packets`**: full re-backfill, all rows hit the create branch (since none exist yet). No PK duplicates because the upsert PK is `(channelIdSrc, portIdSrc, sequence)`.
+- **Partial wipe (e.g. `DELETE FROM ibc_packets WHERE event_time < ...`)**: the next run sees a non-null `latest` matching the surviving newest row. Mode flips between `backfill` (if `earliest > cutoff`) and `delta` (if `earliest <= cutoff`) based on how the surviving rows align with the retention window.
 
 ### Constants
 
 - `PAGE_SIZE = 100` — chosen to balance upstream load against round-trip count.
-- `MAX_PAGES = 500` — hard ceiling. Protects against a runaway loop if the watermark check ever malfunctions; at 100 rows/page this caps a single run at 50k packets. Hit this and you should investigate, not raise the limit.
-- `BACKFILL_DAYS = 30` — design doc §6.1.
+- `BACKFILL_DAYS = 30` — design doc §6.1. Same horizon that the upstream retains.
+
+There is no `MAX_PAGES` ceiling — the `event_time < cutoff` stop bounds the walk in time, and the per-task watchdog in `indexer.ts` (`TASK_TIMEOUT_MS['sync-ibc-transfers'] = 30 min`) is the catch-all if the upstream ever streams without honoring the cutoff.
 
 ## `recompute-daily-stats.ts`
 
@@ -107,7 +123,7 @@ Three days back from `NOW()`. This covers late-arriving packets that the upstrea
 
 ## `get-prices.ts`
 
-CoinGecko `/api/v3/simple/price?ids=...&vs_currencies=usd`. Asset list from `getAllAssets()` (DB-driven, currently just ATOM). Append-only `INSERT INTO prices`. No rate-limit logic here — upstream is forgiving on `/simple/price` and a missed cycle is irrelevant (next 5-min run catches up).
+CoinGecko `/api/v3/simple/price?ids=...&vs_currencies=usd`. Asset list from `getAllAssets()` (DB-driven, ~56 assets after seed). Append-only `INSERT INTO prices` — one row per asset per run. No rate-limit logic here — upstream is forgiving on `/simple/price` and a missed cycle is irrelevant (next 5-min run catches up).
 
 ### Ported from validatorinfo
 

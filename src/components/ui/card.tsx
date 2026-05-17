@@ -9,7 +9,7 @@ interface CardProps {
 const Card: FC<CardProps> = ({ children, className }) => (
   <div
     className={cn(
-      "rounded-md border border-bgSt bg-card p-5 shadow-md",
+      "border border-bgSt bg-table_row p-6 transition-colors duration-75 hover:bg-bgHover",
       className,
     )}
   >
@@ -20,7 +20,7 @@ const Card: FC<CardProps> = ({ children, className }) => (
 export const CardHeader: FC<CardProps> = ({ children, className }) => (
   <div
     className={cn(
-      "mb-2 font-sfpro text-xs uppercase tracking-wide text-white/60",
+      "mb-3 font-sfpro text-xs uppercase tracking-wide text-white/60",
       className,
     )}
   >
@@ -31,7 +31,7 @@ export const CardHeader: FC<CardProps> = ({ children, className }) => (
 export const CardValue: FC<CardProps> = ({ children, className }) => (
   <div
     className={cn(
-      "font-handjet text-3xl tracking-wide text-highlight",
+      "font-handjet text-4xl tracking-wide text-white",
       className,
     )}
   >

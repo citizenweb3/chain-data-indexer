@@ -6,7 +6,8 @@ Worker process — cron-driven background jobs that fill the Postgres mirror. Ru
 
 | File | Purpose |
 |------|---------|
-| `indexer.ts` | Entry point — `CronJob` × `worker_threads.Worker` orchestration |
+| `indexer.ts` | Entry point — `CronJob` (from the `cron` package) × `worker_threads.Worker` orchestration + per-task watchdog |
+| `task-worker-bootstrap.mjs` | ESM bootstrap that loads `task-worker.ts` through `tsx/esm/api`'s `tsImport`. Worker threads do not inherit the parent's `--import tsx` flag, so the `.ts` entrypoint cannot be a `Worker` URL directly |
 | `task-worker.ts` | Per-task dispatcher running inside each spawned worker thread |
 | `logger.ts` | Re-exports `@/logger` so server code can `import logger from './logger'` |
 | `jobs/` | One file per scheduled task — see `server/jobs/AGENTS.md` |
@@ -18,10 +19,12 @@ Worker process — cron-driven background jobs that fill the Postgres mirror. Ru
 server/indexer.ts (parent process)
   ├─ CronJob × 4   ──────────► triggers spawnTask(name)
   ├─ tasksRunning map  ──────► anti-overlap guard
+  ├─ TASK_TIMEOUT_MS   ──────► per-task watchdog (terminate hung worker)
   └─ spawnTask(name)
-       └─ new Worker(./task-worker.ts, { workerData: { taskName } })
-            └─ task-worker.ts dispatches by taskName
-                 └─ server/jobs/<task>.ts
+       └─ new Worker(./task-worker-bootstrap.mjs, { workerData: { taskName } })
+            └─ tsImport('./task-worker.ts') (tsx/esm/api)
+                 └─ task-worker.ts dispatches by taskName
+                      └─ server/jobs/<task>.ts
 ```
 
 The parent never touches Postgres or HTTP; it only schedules and supervises. Every job runs in a fresh worker thread so a crash isolates to that task.
@@ -30,12 +33,25 @@ The parent never touches Postgres or HTTP; it only schedules and supervises. Eve
 
 | Task | Schedule | Reason |
 |------|----------|--------|
-| `sync-ibc-transfers` | `*/5 * * * *` | Five-minute pull window matches upstream block cadence headroom |
-| `recompute-daily-stats` | `1-59/5 * * * *` | Offset by 1 min so it runs **after** the sync of the same window, never before |
+| `sync-ibc-transfers` | `*/1 * * * *` | One-minute pull window. Delta runs finish in ~2 s; the 60 s cadence comfortably absorbs upstream slack |
+| `recompute-daily-stats` | `1-59/5 * * * *` | Every 5 minutes, offset by 1 min so it runs **after** the sync of the same window, never before |
 | `prices` | `*/5 * * * *` | Free CoinGecko tier — 1-2 rps budget across 5-min windows |
 | `price-history` | `0 0 * * *` | Daily — backfills any UTC-day gap once per midnight |
 
-`recompute-daily-stats` is intentionally offset rather than chained because both jobs are stateless; if the recompute starts a few seconds before fresh packets land, the next 5-min cycle catches them via the 3-day window the job covers.
+`recompute-daily-stats` is intentionally offset rather than chained because both jobs are stateless; if the recompute starts a few seconds before fresh packets land, the next 5-min cycle catches them via the 3-day window the job covers. Sync at `*/1` means the dashboard "last sync" indicator drifts at most ~60 s.
+
+### Per-task watchdog
+
+`TASK_TIMEOUT_MS` in `indexer.ts` caps each worker's lifetime:
+
+| Task | Timeout |
+|------|---------|
+| `sync-ibc-transfers` | 30 min (backfill page count can dominate cold-start) |
+| `recompute-daily-stats` | 4 min |
+| `prices` | 4 min |
+| `price-history` | 30 min (per-asset CoinGecko fetches dominate; 56 assets × ~1.5 s/page) |
+
+`setTimeout` fires `worker.terminate()`, which triggers `on('exit')` with non-zero code; the parent logs and resets `tasksRunning`. Watchdog is cleared on normal `exit` / `error`. Do **not** raise these limits without an explanation in this doc — a hang here means a real bug (deadlock, infinite paging, upstream blackhole) and should be investigated, not papered over.
 
 ## `tasksRunning` anti-overlap map
 
@@ -50,19 +66,24 @@ This is the classic validatorinfo pattern. Do not replace it with a queue/lock i
 ## Worker thread pattern
 
 ```ts
-new Worker(new URL('./task-worker.ts', import.meta.url), {
+new Worker(new URL('./task-worker-bootstrap.mjs', import.meta.url), {
   workerData: { taskName },
-  execArgv: ['--import', 'tsx'],
 });
 ```
 
-The `--import tsx` flag is required because worker threads do not inherit the parent's tsx loader. Without it, `new Worker(... .ts)` fails with `ERR_UNKNOWN_FILE_EXTENSION`. This is preferred over the older ts-node + tsconfig-paths approach used by validatorinfo.
+```js
+// task-worker-bootstrap.mjs
+import { tsImport } from 'tsx/esm/api';
+await tsImport('./task-worker.ts', import.meta.url);
+```
+
+Worker threads do not inherit `--import` ESM loaders from the parent (only CommonJS `-r` hooks propagate). Passing `execArgv: ['--import', 'tsx']` does work, but is fragile across Node minor versions; the `tsImport` programmatic API is the supported path on Node 22 + tsx 4. The `.mjs` extension is required because worker threads load it before any loader is in place.
 
 `workerData` is the only contract from parent to child. The child re-loads `dotenv/config` at top of `task-worker.ts` because worker threads do not inherit `process.env` mutations from parent (they get a snapshot at spawn time, but explicit re-load keeps the contract local).
 
 ## Dispatcher (`task-worker.ts`)
 
-Plain `switch (taskName)`. Each case awaits a single `run*` function from `server/jobs/`. On success: `process.exit(0)`. On failure: log error and `process.exit(2)`. The parent picks up the exit code via `worker.on('exit')` and updates `tasksRunning`.
+Plain `switch (taskName)`. Each case awaits a single `run*` function from `server/jobs/`. On success: `parentPort?.postMessage(...)` then `process.exit(0)`. On failure: log error and `process.exit(2)`. The parent picks up the exit code via `worker.on('exit')`, clears the watchdog, and updates `tasksRunning`.
 
 No retries inside the worker. Upstream retries are handled at the HTTP layer (`server/tools/upstream-client.ts`). Cron is the retry policy for job-level failures.
 
@@ -72,12 +93,14 @@ Two-line re-export of `@/logger`. The reason it exists: `server/jobs/*.ts` uses 
 
 ## Smoke / boot
 
-`yarn worker` starts everything. Expected first ~3 lines:
+`yarn worker` starts everything. Expected first ~5 lines:
 ```
 Starting indexer server
-registered cron sync-ibc-transfers @ */5 * * * *
-... (3 more registered lines)
+registered cron sync-ibc-transfers @ */1 * * * *
+registered cron recompute-daily-stats @ 1-59/5 * * * *
+registered cron prices @ */5 * * * *
+registered cron price-history @ 0 0 * * *
 starting task sync-ibc-transfers   (initial run)
 ```
 
-Initial run on boot is intentional. Skipping it would leave stats stale for up to the schedule interval (5 min) after a restart.
+Initial run on boot is intentional — all four jobs fire once on startup (see the second `for (const task of tasks)` loop in `runServer`). Skipping it would leave stats stale for up to the schedule interval (24 h for `price-history`) after a restart.

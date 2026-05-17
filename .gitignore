@@ -48,3 +48,19 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# editors / IDE
+.idea/
+.vscode/
+
+# local agent / MCP workspaces
+.claude/
+.gitnexus/
+.playwright-mcp/
+
+# runtime logs from local worker / web (yarn dev:worker writes here)
+.runtime/
+
+# bundler caches
+.swc/
+.turbo/

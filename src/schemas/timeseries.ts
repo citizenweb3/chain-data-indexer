@@ -5,7 +5,7 @@ import { ChannelSchema, DirectionEnum, IsoDateCoerceSchema } from '@/schemas/com
 export const TimeseriesMetricEnum = z.enum(['transfers', 'volume_atom', 'volume_usd']);
 export type TimeseriesMetric = z.infer<typeof TimeseriesMetricEnum>;
 
-export const TimeseriesBucketEnum = z.enum(['day']);
+export const TimeseriesBucketEnum = z.enum(['hour', 'day']);
 
 export const TimeseriesQuerySchema = z
   .object({

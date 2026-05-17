@@ -63,5 +63,5 @@ Why prop-based instead of middleware:
 
 Do **not**:
 - Add `<div role="table">` constructs — keep semantic HTML.
-- Wrap the table in a horizontal scroller before checking it actually overflows; the dashboard width is fixed at `max-w-6xl` so most tables fit.
+- Wrap the table in a horizontal scroller before checking it actually overflows; the dashboard width is fixed at `max-w-7xl` so most tables fit.
 - Read `useSearchParams` inside a row component to pick a sort indicator. The header is the only place sort UI lives.

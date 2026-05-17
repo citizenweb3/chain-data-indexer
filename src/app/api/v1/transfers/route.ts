@@ -22,6 +22,7 @@ export const GET = async (request: Request): Promise<Response> => {
       direction: parsed.data.direction,
       status: parsed.data.status,
       denom: parsed.data.denom,
+      denomBase: parsed.data.denom_base,
     });
     return okJson(result, 'public, max-age=10');
   } catch (e) {

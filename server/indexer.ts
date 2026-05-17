@@ -12,7 +12,7 @@ type ScheduledTask = {
 };
 
 const tasks: ScheduledTask[] = [
-  { name: 'sync-ibc-transfers', schedule: '*/5 * * * *' },
+  { name: 'sync-ibc-transfers', schedule: '*/1 * * * *' },
   { name: 'recompute-daily-stats', schedule: '1-59/5 * * * *' },
   { name: 'prices', schedule: '*/5 * * * *' },
   { name: 'price-history', schedule: '0 0 * * *' },
@@ -36,9 +36,8 @@ const spawnTask = (taskName: ScheduledTask['name']): Promise<void> => {
   log.logInfo(`starting task ${taskName}`);
 
   return new Promise<void>((resolve, reject) => {
-    const worker = new Worker(new URL('./task-worker.ts', import.meta.url), {
+    const worker = new Worker(new URL('./task-worker-bootstrap.mjs', import.meta.url), {
       workerData: { taskName },
-      execArgv: ['--import', 'tsx'],
     });
 
     const timeoutMs = TASK_TIMEOUT_MS[taskName];

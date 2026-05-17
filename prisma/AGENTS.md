@@ -8,7 +8,7 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 |------|---------|
 | `schema.prisma` | 6 models — `IbcPacket`, `Asset`, `Price`, `PriceHistory`, `IbcDailyStats`, `SyncCursor` |
 | `migrations/20260515075735_init/migration.sql` | Initial DDL — includes hand-patched `NULLS NOT DISTINCT` index |
-| `seed.ts` | Inserts the ATOM asset (`uatom`, decimals 6, coingeckoId `cosmos`) |
+| `seed.ts` | Idempotent upsert of ~56 assets across Cosmos-native, ERC-20 bridge (gravity/axelar/noble), and liquid-staking variants (see `ASSETS` array at the top of the file) |
 
 `prisma.config.ts` lives in the repo root, **not here**. Prisma 7 mandates it (replaces `datasource.url` in the schema). It loads `DATABASE_URL` via `dotenv/config` and wires the `prisma/seed.ts` runner. Touch it if migration paths or seed command change.
 
@@ -16,7 +16,7 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 
 `IbcPacket` — local mirror of upstream `/api/v1/ibc/transfers`. PK `(channelIdSrc, portIdSrc, sequence)`. Nullable `event_height` / `event_time` for transient `sent` packets that have no block yet. `amount: Decimal(80, 0)` matches upstream `NUMERIC(80,0)` — never coerce to JS `number`.
 
-`Asset` — coingecko-priced asset registry. `nativeDenom` is unique (used by `getAssetByDenom`). Seeded with ATOM only.
+`Asset` — coingecko-priced asset registry. `nativeDenom` is unique (used by `getAssetByDenom`). Seeded with ~56 assets — see `seed.ts` `ASSETS` constant. The seed is idempotent (upsert by `nativeDenom`), so re-running it after adding a row only inserts the new one.
 
 `Price` — point-in-time spot prices written by the `prices` cron (every 5 min). Append-only; no upsert.
 
@@ -69,4 +69,4 @@ Singleton wiring lives in `src/db.ts`. Do not instantiate `PrismaClient` anywher
 
 ## Seed
 
-`yarn db:seed` runs `tsx prisma/seed.ts` and idempotently upserts the ATOM asset. Add new assets here, not via raw SQL. Production deploys run seed automatically as part of `db:deploy` flow per `package.json`.
+`yarn db:seed` runs `tsx prisma/seed.ts` and idempotently upserts the full asset list defined inline in that file. Add new assets to the `ASSETS` array, not via raw SQL — keeping them in one place makes the `getAllAssets()` driven cron jobs (`get-prices`, `get-price-history`) pick them up automatically on the next tick. Production deploys run seed automatically as part of the `migrations` compose service (`yarn db:deploy && yarn db:seed`).

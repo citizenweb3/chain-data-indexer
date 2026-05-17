@@ -6,15 +6,15 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 # Crosschain IBC Indexer
 
-Map-of-Zones–style dashboard for IBC transfers on Cosmos Hub. A Next.js 16 app (RSC) renders stats, channels, time-series, and a transfers explorer on top of a Postgres warehouse that is populated by a Node worker. The worker syncs IBC packets from an upstream `chain-data-indexer` deployment, recomputes daily rollups, and pulls ATOM prices from CoinGecko.
+Map-of-Zones–style dashboard for IBC transfers on Cosmos Hub. A Next.js 16 app (RSC) renders stats, channels, per-asset breakdowns, time-series, and a transfers explorer on top of a Postgres warehouse that is populated by a Node worker. The worker syncs IBC packets from an upstream `chain-data-indexer` deployment, recomputes daily rollups, and pulls CoinGecko prices for all seeded assets (~56).
 
 ## Tech stack
 
-- **Runtime**: Node 20 (Alpine in Docker), Next.js 16.2 (Turbopack dev), React 19.2
+- **Runtime**: Node 22 (Alpine in Docker), Next.js 16.2 (Turbopack dev), React 19.2
 - **DB**: Postgres 16 with `NULLS NOT DISTINCT` PKs and `GROUPING SETS` rollups
 - **ORM**: Prisma 7.8 with the `@prisma/adapter-pg` driver adapter (so we can run raw SQL via `pg`)
 - **API validation / OpenAPI**: Zod 4 + `@asteasolutions/zod-to-openapi` + Scalar UI for `/docs`
-- **Worker**: `tsx` + `node-cron` + `worker_threads` (dispatcher in `server/indexer.ts`)
+- **Worker**: `tsx` + `cron@4` (`CronJob`) + `worker_threads` (dispatcher in `server/indexer.ts`)
 - **UI**: Tailwind v4 (`@tailwindcss/postcss`), chart.js + `react-chartjs-2` + `chartjs-plugin-zoom`
 - **Lint/Format**: eslint flat config (`eslint.config.mjs`), prettier with `prettier-plugin-tailwindcss`
 - **Package manager**: yarn 1.22 (classic) — do not introduce `pnpm-lock.yaml` or `package-lock.json` (both are gitignored)
@@ -50,7 +50,7 @@ Map-of-Zones–style dashboard for IBC transfers on Cosmos Hub. A Next.js 16 app
 
 Two long-running processes share the same `DATABASE_URL`:
 
-- **web** (`yarn dev` / `yarn start`) — Next.js standalone output. Serves RSC pages (`/dashboard`, `/channels/[channel]`, `/transfers`, `/transfers/[port]/[channel]/[sequence]`) and the JSON API under `/api/v1/*`. Never writes to the DB outside of read-only queries and OpenAPI generation.
+- **web** (`yarn dev` / `yarn start`) — Next.js standalone output. Serves RSC pages (`/dashboard`, `/channels/[channel]`, `/assets`, `/transfers`, `/transfers/[port]/[channel]/[sequence]`, `/docs`) and the JSON API under `/api/v1/*`. Never writes to the DB outside of read-only queries and OpenAPI generation.
 - **worker** (`yarn dev:worker` / `yarn worker`) — boots `server/indexer.ts`, registers cron schedules, dispatches each job into a worker thread. Owns all DB writes for `ibc_packets`, `ibc_daily_stats`, `prices`, `price_history`, `sync_cursors`.
 
 ## Layout
@@ -71,7 +71,9 @@ chain-data-indexer/
 │   └── api/                 v1 route handlers          → src/app/api/AGENTS.md
 ├── src/services/            DB-facing query services   → src/services/AGENTS.md
 ├── src/schemas/             Zod request/response shapes → src/schemas/AGENTS.md
-└── src/components/          UI primitives + widgets    → src/components/AGENTS.md
+├── src/components/          UI primitives + widgets    → src/components/AGENTS.md
+├── src/lib/                 OpenAPI registry + api helpers → src/lib/AGENTS.md
+└── src/utils/               pure shared helpers        → src/utils/AGENTS.md
 ```
 
 ## Module docs
@@ -83,9 +85,11 @@ chain-data-indexer/
 | [`server/AGENTS.md`](server/AGENTS.md) | db-worker-dev | worker entry, dispatcher, jobs, tools |
 | [`src/app/AGENTS.md`](src/app/AGENTS.md) | frontend-dev | App Router pages, layouts, routing |
 | [`src/app/api/AGENTS.md`](src/app/api/AGENTS.md) | api-dev | `/api/v1/*` route handlers |
-| [`src/services/AGENTS.md`](src/services/AGENTS.md) | api-dev | stats / channels / timeseries / transfers query layer |
+| [`src/services/AGENTS.md`](src/services/AGENTS.md) | api-dev | stats / channels / assets / timeseries / transfers / health query layer |
 | [`src/schemas/AGENTS.md`](src/schemas/AGENTS.md) | api-dev | Zod schemas + OpenAPI registration |
-| [`src/components/AGENTS.md`](src/components/AGENTS.md) | frontend-dev | tables, cards, chart, theme |
+| [`src/components/AGENTS.md`](src/components/AGENTS.md) | frontend-dev | tables, cards, chart, nav, theme |
+| [`src/lib/AGENTS.md`](src/lib/AGENTS.md) | api-dev | OpenAPI registry, patched Zod, route-handler helpers |
+| [`src/utils/AGENTS.md`](src/utils/AGENTS.md) | frontend-dev | pure helpers (`cn`, `format-amount`, `format-denom`, `format-time`) |
 
 ## How to run
 
@@ -104,9 +108,10 @@ Set `DATABASE_URL=postgres://app:app@localhost:5432/crosschain` in `.env` for ho
 ### Production-shaped (compose)
 
 ```bash
-docker compose up -d --build         # postgres + web + worker
-docker compose exec web yarn db:deploy   # one-time, before first traffic
+docker compose up -d --build         # postgres → migrations (one-shot) → web + worker
 ```
+
+The `migrations` service runs `yarn db:deploy && yarn db:seed` once and exits. `web` and `worker` gate on it via `service_completed_successfully`, so no manual migration step is required.
 
 `web` listens on `:${PORT}` (default `3000`). `worker` runs cron and writes to the DB; it has no public port.
 

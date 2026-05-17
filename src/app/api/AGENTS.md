@@ -6,10 +6,11 @@ Public read-only HTTP API. Next.js 16 App Router route handlers. All endpoints a
 
 | Route | Handler | Service backing | Cache-Control |
 |-------|---------|-----------------|---------------|
-| `GET /api/v1/health` | `v1/health/route.ts` | `db.$queryRaw\`SELECT 1\`` + `syncCursor` lookup | `no-store` |
+| `GET /api/v1/health` | `v1/health/route.ts` | `getSyncWatermark` (MAX `event_height` / `event_time` from `ibc_packets`) | `no-store` |
 | `GET /api/v1/stats` | `v1/stats/route.ts` | `getStats` | `public, max-age=30` |
 | `GET /api/v1/channels` | `v1/channels/route.ts` | `listChannels` | `public, max-age=30` |
-| `GET /api/v1/timeseries` | `v1/timeseries/route.ts` | `getTimeseries` | `public, max-age=60` |
+| `GET /api/v1/assets` | `v1/assets/route.ts` | `getAssetsBreakdown` | `public, max-age=30` |
+| `GET /api/v1/timeseries` | `v1/timeseries/route.ts` | `getTimeseries` (daily) / `getTimeseriesHourly` (when `bucket=hour`) | `public, max-age=60` |
 | `GET /api/v1/transfers` | `v1/transfers/route.ts` | `listTransfers` | `public, max-age=10` |
 | `GET /api/v1/transfers/[port]/[channel]/[sequence]` | `v1/transfers/[port]/[channel]/[sequence]/route.ts` | `getTransfer` | `public, max-age=60` in-flight, `public, max-age=86400` for `acknowledged` / `timeout` / `failed` |
 | `GET /api/openapi.json` | `openapi.json/route.ts` | `generateOpenApiDocument` | `public, max-age=300` |

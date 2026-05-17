@@ -2,13 +2,18 @@ import { z } from '@/lib/openapi-zod';
 
 import { DirectionEnum, PeriodEnum } from '@/schemas/common';
 
-export const ChannelsSortEnum = z.enum(['transfers', 'volume_atom', 'last_activity']);
+export const ChannelsSortEnum = z.enum([
+  'transfers',
+  'volume_atom',
+  'volume_usd',
+  'last_activity',
+]);
 export const SortOrderEnum = z.enum(['asc', 'desc']);
 
 export const ChannelsQuerySchema = z.object({
   direction: DirectionEnum.default('both'),
   period: PeriodEnum.default('30d'),
-  sort: ChannelsSortEnum.default('transfers'),
+  sort: ChannelsSortEnum.default('volume_usd'),
   order: SortOrderEnum.default('desc'),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -28,6 +33,17 @@ const PeriodAmountsSchema = z.object({
   '30d': z.string(),
 });
 
+const ChannelDenomSchema = z.object({
+  display: z.string(),
+  native_denom: z.string(),
+  symbol: z.string().nullable(),
+  decimals: z.number().int().nonnegative().nullable(),
+  count: z.number().int().nonnegative(),
+  amount_native: z.string(),
+  amount_usd: z.string(),
+  raws: z.array(z.string()),
+});
+
 export const ChannelDtoSchema = z.object({
   channel_id_src: z.string(),
   port_id_src: z.string(),
@@ -37,6 +53,7 @@ export const ChannelDtoSchema = z.object({
   volume_usd: PeriodAmountsSchema,
   success_rate_30d: z.number().min(0).max(1).nullable(),
   last_activity: z.string().nullable(),
+  denoms: z.array(ChannelDenomSchema),
 });
 
 export type ChannelDto = z.infer<typeof ChannelDtoSchema>;

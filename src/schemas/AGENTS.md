@@ -6,9 +6,10 @@ Zod 4 contract-first schemas. Every public API request/response goes through one
 
 | File | Purpose |
 |------|---------|
-| `common.ts` | Shared primitives — `DirectionEnum`, `PeriodEnum`, `PacketStatusEnum`, `PortSchema`, `ChannelSchema`, `BigIntStringSchema`, `IsoDateCoerceSchema`, `DenomSchema`, `ErrorResponseSchema` |
+| `common.ts` | Shared primitives — `DirectionEnum`, `PacketDirectionEnum`, `PeriodEnum`, `PacketStatusEnum`, `PortSchema`, `ChannelSchema`, `BigIntStringSchema`, `IsoDateCoerceSchema`, `IsoDateStringSchema`, `DenomSchema`, `ErrorResponseSchema` |
 | `stats.ts` | `/api/v1/stats` query + response |
 | `channels.ts` | `/api/v1/channels` query + response (`ChannelsSortEnum`, `SortOrderEnum`) |
+| `assets.ts` | `/api/v1/assets` query + response (`AssetsSortEnum`) |
 | `timeseries.ts` | `/api/v1/timeseries` query + response (`TimeseriesMetricEnum`, `TimeseriesBucketEnum`) |
 | `transfers.ts` | `/api/v1/transfers` list query, route params, list/detail responses, cursor |
 
@@ -46,6 +47,8 @@ No manual TS types for API payloads. If you find yourself writing `type Foo = {.
 - **Enums use `z.enum([...])`** not string literal unions. Gives a runtime guard and shows up as `enum` in OpenAPI.
 - **`BigIntStringSchema`** validates `^\d+$` and transforms the parsed string to a `bigint`. We never expose JS `number` for chain heights / sequences (precision loss above 2^53). Wire format is **always** a decimal string.
 - **`IsoDateCoerceSchema`** accepts `YYYY-MM-DD`, refines that it round-trips through `Date.toISOString()` (catches `2025-02-30` etc.), and transforms to `Date` at UTC midnight. Use this for date-range filters; do not accept full ISO timestamps from clients for daily-bucket endpoints.
+- **`IsoDateStringSchema`** is the wire-side counterpart — validates the `YYYY-MM-DD` form **without** transforming. Use this in response schemas (timeseries buckets) so the JSON output is a stable string the frontend can pass through `Date` parsing once.
+- **`PacketDirectionEnum`** (`outgoing | incoming`) is the strict two-value variant for per-packet fields. `DirectionEnum` (`outgoing | incoming | both`) is the query-side variant — `both` is a filter aggregator and must never reach a stored row.
 - **`PortSchema` / `ChannelSchema`** have explicit length caps and regex (`^channel-\d+$`). Treat these as defense-in-depth against malformed input before the SQL builder ever sees the value.
 - **`ErrorResponseSchema`** mirrors what `errorResponse()` in `@/lib/api-helpers` actually emits. If you add a new `ApiErrorCode`, update both.
 

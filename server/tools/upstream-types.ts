@@ -38,6 +38,10 @@ export type IbcTransferDto = {
 
   timeout_height: string | null;
   timeout_ts: string | null;
+
+  base_denom: string | null;
+  asset_symbol: string | null;
+  asset_decimals: number | null;
 };
 
 export type IbcTransferCursor = {

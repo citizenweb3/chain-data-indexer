@@ -2,11 +2,27 @@ import { Prisma } from '@prisma/client';
 
 import { db } from '@/db';
 import { formatNative } from '@/utils/format-amount';
+import { formatDenomDisplay } from '@/utils/format-denom';
 
 export type ChannelsDirection = 'outgoing' | 'incoming' | 'both';
 export type ChannelsPeriod = '24h' | '7d' | '30d';
-export type ChannelsSort = 'transfers' | 'volume_atom' | 'last_activity';
+export type ChannelsSort =
+  | 'transfers'
+  | 'volume_atom'
+  | 'volume_usd'
+  | 'last_activity';
 export type SortOrder = 'asc' | 'desc';
+
+export type ChannelDenom = {
+  display: string;
+  native_denom: string;
+  symbol: string | null;
+  decimals: number | null;
+  count: number;
+  amount_native: string;
+  amount_usd: string;
+  raws: string[];
+};
 
 export type ChannelDto = {
   channel_id_src: string;
@@ -17,6 +33,7 @@ export type ChannelDto = {
   volume_usd: { '24h': string; '7d': string; '30d': string };
   success_rate_30d: number | null;
   last_activity: string | null;
+  denoms: ChannelDenom[];
 };
 
 export type ChannelsResult = {
@@ -38,8 +55,8 @@ type ChannelMetaRow = {
   port_id_src: string;
   channel_id_dst: string | null;
   last_activity: Date | null;
-  total_30d: bigint;
-  acked_30d: bigint;
+  delivered_30d: bigint;
+  failed_30d: bigint;
 };
 
 const queryChannelsMeta = async (
@@ -55,36 +72,107 @@ const queryChannelsMeta = async (
         AND ${directionFilter(direction)}
     ),
     keys AS (
-      SELECT DISTINCT channel_id_src, port_id_src FROM recent
+      SELECT DISTINCT channel_id_src FROM recent
+    ),
+    primary_port AS (
+      SELECT channel_id_src, port_id_src
+      FROM (
+        SELECT
+          channel_id_src,
+          port_id_src,
+          ROW_NUMBER() OVER (
+            PARTITION BY channel_id_src ORDER BY COUNT(*) DESC
+          ) AS rn
+        FROM recent
+        GROUP BY channel_id_src, port_id_src
+      ) t
+      WHERE rn = 1
     ),
     last_dst AS (
-      SELECT DISTINCT ON (channel_id_src, port_id_src)
-        channel_id_src, port_id_src, channel_id_dst, event_time
+      SELECT DISTINCT ON (channel_id_src)
+        channel_id_src, channel_id_dst, event_time
       FROM recent
-      ORDER BY channel_id_src, port_id_src, event_time DESC NULLS LAST
+      ORDER BY channel_id_src, event_time DESC NULLS LAST
     ),
     stats AS (
       SELECT
         channel_id_src,
-        port_id_src,
         MAX(event_time) AS last_activity,
-        COUNT(*)::bigint AS total_30d,
-        COUNT(*) FILTER (WHERE status = 'acknowledged')::bigint AS acked_30d
+        COUNT(*) FILTER (
+          WHERE (direction = 'outgoing' AND status = 'acknowledged')
+             OR (direction = 'incoming' AND status = 'received')
+        )::bigint AS delivered_30d,
+        COUNT(*) FILTER (WHERE status IN ('timeout', 'failed'))::bigint AS failed_30d
       FROM recent
-      GROUP BY channel_id_src, port_id_src
+      GROUP BY channel_id_src
     )
     SELECT
       k.channel_id_src,
-      k.port_id_src,
+      pp.port_id_src,
       ld.channel_id_dst,
       s.last_activity,
-      s.total_30d,
-      s.acked_30d
+      s.delivered_30d,
+      s.failed_30d
     FROM keys k
-    LEFT JOIN last_dst ld
-      ON ld.channel_id_src = k.channel_id_src AND ld.port_id_src = k.port_id_src
-    LEFT JOIN stats s
-      ON s.channel_id_src = k.channel_id_src AND s.port_id_src = k.port_id_src
+    LEFT JOIN primary_port pp ON pp.channel_id_src = k.channel_id_src
+    LEFT JOIN last_dst ld ON ld.channel_id_src = k.channel_id_src
+    LEFT JOIN stats s ON s.channel_id_src = k.channel_id_src
+  `);
+};
+
+type ChannelDenomRow = {
+  channel_id_src: string;
+  base_denom: string;
+  raw_denom: string | null;
+  symbol: string | null;
+  decimals: number | null;
+  count: bigint;
+  amount_native: Prisma.Decimal | null;
+  amount_usd: Prisma.Decimal | null;
+};
+
+const TOP_DENOMS_PER_CHANNEL = 3;
+
+const queryChannelDenoms = async (
+  direction: ChannelsDirection,
+  thirtyDaysAgo: Date,
+): Promise<ChannelDenomRow[]> => {
+  return db.$queryRaw<ChannelDenomRow[]>(Prisma.sql`
+    WITH daily_spot_prices AS (
+      SELECT DISTINCT ON (asset_id, date)
+        asset_id,
+        (created_at AT TIME ZONE 'UTC')::date AS date,
+        usd
+      FROM prices
+      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+    )
+    SELECT
+      p.channel_id_src,
+      resolve_base_denom(p.denom) AS base_denom,
+      p.denom AS raw_denom,
+      a.symbol AS symbol,
+      a.decimals AS decimals,
+      COUNT(*)::bigint AS count,
+      COALESCE(SUM(p.amount), 0) AS amount_native,
+      COALESCE(SUM(
+        CASE
+          WHEN a.id IS NOT NULL
+            AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
+          THEN (p.amount / POWER(10::numeric, a.decimals))
+            * COALESCE(ph.usd, dsp.usd)
+        END
+      ), 0) AS amount_usd
+    FROM ibc_packets p
+    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
+    LEFT JOIN price_history ph ON ph.asset_id = a.id
+      AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
+    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
+      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
+    WHERE p.event_time IS NOT NULL
+      AND p.event_time >= ${thirtyDaysAgo}
+      AND p.denom IS NOT NULL
+      AND ${directionFilter(direction)}
+    GROUP BY p.channel_id_src, resolve_base_denom(p.denom), p.denom, a.symbol, a.decimals
   `);
 };
 
@@ -116,11 +204,11 @@ const queryDailyAggregates = async (
       SELECT
         channel_id_src,
         date,
-        SUM(amount_native) AS amount_native,
-        SUM(amount_usd) AS amount_usd
+        SUM(amount_native) FILTER (WHERE denom = ${ATOM_DENOM}) AS amount_native,
+        SUM(amount_usd) FILTER (WHERE denom IS NOT NULL) AS amount_usd
       FROM ibc_daily_stats
       WHERE channel_id_src IS NOT NULL
-        AND denom = ${ATOM_DENOM}
+        AND denom IS NOT NULL
         AND date >= ${thirtyDaysAgo}::date
         AND date < ${midnight}::date
         AND ${directionFilter(direction)}
@@ -149,23 +237,35 @@ const queryTodayAggregates = async (
   direction: ChannelsDirection,
   midnight: Date,
 ): Promise<TodayAggRow[]> => {
+  const spotFrom = new Date(midnight.getTime() - MS_PER_DAY);
   return db.$queryRaw<TodayAggRow[]>(Prisma.sql`
+    WITH daily_spot_prices AS (
+      SELECT DISTINCT ON (asset_id, date)
+        asset_id,
+        (created_at AT TIME ZONE 'UTC')::date AS date,
+        usd
+      FROM prices
+      WHERE created_at >= ${spotFrom}
+      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+    )
     SELECT
       p.channel_id_src,
       COUNT(*)::bigint AS transfers_count,
-      COALESCE(SUM(CASE WHEN p.denom = ${ATOM_DENOM} THEN p.amount END), 0) AS amount_native,
+      COALESCE(SUM(CASE WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM} THEN p.amount END), 0) AS amount_native,
       COALESCE(
         SUM(
-          CASE WHEN p.denom = ${ATOM_DENOM} AND ph.usd IS NOT NULL
-            THEN (p.amount / POWER(10::numeric, ${ATOM_DECIMALS})) * ph.usd
+          CASE WHEN a.id IS NOT NULL AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
+            THEN (p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)
           END
         ),
         0
       ) AS amount_usd
     FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = p.denom
+    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
     LEFT JOIN price_history ph ON ph.asset_id = a.id
       AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
+    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
+      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${midnight}
       AND ${directionFilter(direction)}
@@ -201,6 +301,10 @@ const compareDto = (sort: ChannelsSort, order: SortOrder, period: ChannelsPeriod
       const cmp = Number(a.volume_atom[period]) - Number(b.volume_atom[period]);
       return cmp * dir;
     }
+    if (sort === 'volume_usd') {
+      const cmp = Number(a.volume_usd[period]) - Number(b.volume_usd[period]);
+      return cmp * dir;
+    }
     const aT = a.last_activity ? new Date(a.last_activity).getTime() : 0;
     const bT = b.last_activity ? new Date(b.last_activity).getTime() : 0;
     return (aT - bT) * dir;
@@ -222,11 +326,73 @@ export const listChannels = async (params: {
   const sevenDaysAgo = new Date(midnight.getTime() - 7 * MS_PER_DAY);
   const window24hStart = new Date(now.getTime() - MS_PER_DAY);
 
-  const [meta, dailyRows, todayRows] = await Promise.all([
+  const [meta, dailyRows, todayRows, denomRows] = await Promise.all([
     queryChannelsMeta(params.direction, thirtyDaysAgo),
     queryDailyAggregates(params.direction, thirtyDaysAgo, midnight),
     queryTodayAggregates(params.direction, midnight),
+    queryChannelDenoms(params.direction, thirtyDaysAgo),
   ]);
+
+  type DenomEntry = {
+    symbol: string | null;
+    decimals: number | null;
+    count: number;
+    amount_native: Prisma.Decimal;
+    amount_usd: Prisma.Decimal;
+    raws: Set<string>;
+  };
+  const denomsAggByChannel = new Map<string, Map<string, DenomEntry>>();
+  for (const r of denomRows) {
+    const channelKey = r.channel_id_src;
+    const denomKey = r.base_denom;
+    const agg =
+      denomsAggByChannel.get(channelKey) ?? new Map<string, DenomEntry>();
+    const entry =
+      agg.get(denomKey) ?? {
+        symbol: r.symbol,
+        decimals: r.decimals,
+        count: 0,
+        amount_native: new Prisma.Decimal(0),
+        amount_usd: new Prisma.Decimal(0),
+        raws: new Set<string>(),
+      };
+    if (entry.symbol === null && r.symbol !== null) entry.symbol = r.symbol;
+    if (entry.decimals === null && r.decimals !== null) {
+      entry.decimals = r.decimals;
+    }
+    entry.count += Number(r.count);
+    if (r.amount_native !== null) {
+      entry.amount_native = entry.amount_native.add(r.amount_native);
+    }
+    if (r.amount_usd !== null) {
+      entry.amount_usd = entry.amount_usd.add(r.amount_usd);
+    }
+    if (r.raw_denom) entry.raws.add(r.raw_denom);
+    agg.set(denomKey, entry);
+    denomsAggByChannel.set(channelKey, agg);
+  }
+
+  const denomsByChannel = new Map<string, ChannelDenom[]>();
+  for (const [channelKey, agg] of denomsAggByChannel) {
+    const sorted = [...agg.entries()]
+      .map(([base_denom, entry]) => ({
+        display: formatDenomDisplay(base_denom, entry.symbol),
+        native_denom: base_denom,
+        symbol: entry.symbol,
+        decimals: entry.decimals,
+        count: entry.count,
+        amount_native: entry.amount_native.toFixed(0),
+        amount_usd: entry.amount_usd.toFixed(2),
+        raws: [...entry.raws],
+      }))
+      .sort((a, b) => {
+        const cmp = Number(b.amount_usd) - Number(a.amount_usd);
+        if (cmp !== 0) return cmp;
+        return b.count - a.count;
+      })
+      .slice(0, TOP_DENOMS_PER_CHANNEL);
+    denomsByChannel.set(channelKey, sorted);
+  }
 
   const buckets = new Map<string, ChannelBuckets>();
   for (const m of meta) {
@@ -266,23 +432,35 @@ export const listChannels = async (params: {
     b['30d'].usd = b['30d'].usd.add(usd);
   }
 
+  const window24hSpotFrom = new Date(window24hStart.getTime() - MS_PER_DAY);
   const today24Rows = await db.$queryRaw<TodayAggRow[]>(Prisma.sql`
+    WITH daily_spot_prices AS (
+      SELECT DISTINCT ON (asset_id, date)
+        asset_id,
+        (created_at AT TIME ZONE 'UTC')::date AS date,
+        usd
+      FROM prices
+      WHERE created_at >= ${window24hSpotFrom}
+      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+    )
     SELECT
       p.channel_id_src,
       COUNT(*)::bigint AS transfers_count,
-      COALESCE(SUM(CASE WHEN p.denom = ${ATOM_DENOM} THEN p.amount END), 0) AS amount_native,
+      COALESCE(SUM(CASE WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM} THEN p.amount END), 0) AS amount_native,
       COALESCE(
         SUM(
-          CASE WHEN p.denom = ${ATOM_DENOM} AND ph.usd IS NOT NULL
-            THEN (p.amount / POWER(10::numeric, ${ATOM_DECIMALS})) * ph.usd
+          CASE WHEN a.id IS NOT NULL AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
+            THEN (p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)
           END
         ),
         0
       ) AS amount_usd
     FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = p.denom
+    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
     LEFT JOIN price_history ph ON ph.asset_id = a.id
       AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
+    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
+      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${window24hStart}
       AND ${directionFilter(params.direction)}
@@ -298,8 +476,9 @@ export const listChannels = async (params: {
 
   const dtos: ChannelDto[] = meta.map((m) => {
     const b = buckets.get(m.channel_id_src) ?? newBuckets();
-    const total = Number(m.total_30d);
-    const acked = Number(m.acked_30d);
+    const delivered = Number(m.delivered_30d);
+    const failed = Number(m.failed_30d);
+    const denom = delivered + failed;
     return {
       channel_id_src: m.channel_id_src,
       port_id_src: m.port_id_src,
@@ -319,8 +498,9 @@ export const listChannels = async (params: {
         '7d': formatUsd(b['7d'].usd),
         '30d': formatUsd(b['30d'].usd),
       },
-      success_rate_30d: total > 0 ? acked / total : null,
+      success_rate_30d: denom > 0 ? delivered / denom : null,
       last_activity: m.last_activity !== null ? m.last_activity.toISOString() : null,
+      denoms: denomsByChannel.get(m.channel_id_src) ?? [],
     };
   });
 

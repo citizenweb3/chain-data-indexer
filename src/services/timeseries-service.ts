@@ -10,6 +10,119 @@ export type TimeseriesPoint = { date: string; value: string };
 
 export type TimeseriesResult = { data: TimeseriesPoint[] };
 
+const MS_PER_HOUR = 3_600_000;
+const HOURLY_BUCKETS = 24;
+
+type HourlyRow = { hour: Date; value: Prisma.Decimal | bigint };
+
+const queryHourly = async (params: {
+  metric: TimeseriesMetric;
+  direction: TimeseriesDirection;
+  from: Date;
+  channelIdSrc?: string;
+}): Promise<HourlyRow[]> => {
+  const spotFrom = new Date(params.from.getTime() - 2 * MS_PER_DAY);
+  const channelClause =
+    params.channelIdSrc !== undefined
+      ? Prisma.sql`p.channel_id_src = ${params.channelIdSrc}`
+      : Prisma.sql`TRUE`;
+
+  if (params.metric === 'transfers') {
+    return db.$queryRaw<HourlyRow[]>(Prisma.sql`
+      SELECT date_trunc('hour', p.event_time) AS hour,
+             COUNT(*)::bigint AS value
+      FROM ibc_packets p
+      WHERE p.event_time IS NOT NULL
+        AND p.event_time >= ${params.from}
+        AND ${channelClause}
+        AND ${directionFilter(params.direction)}
+      GROUP BY hour
+      ORDER BY hour ASC
+    `);
+  }
+
+  if (params.metric === 'volume_atom') {
+    return db.$queryRaw<HourlyRow[]>(Prisma.sql`
+      SELECT date_trunc('hour', p.event_time) AS hour,
+             COALESCE(SUM(p.amount), 0) AS value
+      FROM ibc_packets p
+      WHERE p.event_time IS NOT NULL
+        AND p.event_time >= ${params.from}
+        AND resolve_base_denom(p.denom) = ${ATOM_DENOM}
+        AND ${channelClause}
+        AND ${directionFilter(params.direction)}
+      GROUP BY hour
+      ORDER BY hour ASC
+    `);
+  }
+
+  return db.$queryRaw<HourlyRow[]>(Prisma.sql`
+    WITH daily_spot_prices AS (
+      SELECT DISTINCT ON (asset_id, date)
+        asset_id,
+        (created_at AT TIME ZONE 'UTC')::date AS date,
+        usd
+      FROM prices
+      WHERE created_at >= ${spotFrom}
+      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+    )
+    SELECT date_trunc('hour', p.event_time) AS hour,
+           COALESCE(
+             SUM((p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)),
+             0
+           ) AS value
+    FROM ibc_packets p
+    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
+    LEFT JOIN price_history ph ON ph.asset_id = a.id
+      AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
+    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
+      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
+    WHERE p.event_time IS NOT NULL
+      AND p.event_time >= ${params.from}
+      AND a.id IS NOT NULL
+      AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
+      AND ${channelClause}
+      AND ${directionFilter(params.direction)}
+    GROUP BY hour
+    ORDER BY hour ASC
+  `);
+};
+
+export const getTimeseriesHourly = async (params: {
+  metric: TimeseriesMetric;
+  direction: TimeseriesDirection;
+  channelIdSrc?: string;
+}): Promise<TimeseriesResult> => {
+  const now = new Date();
+  const currentHour = new Date(now);
+  currentHour.setUTCMinutes(0, 0, 0);
+  const from = new Date(
+    currentHour.getTime() - (HOURLY_BUCKETS - 1) * MS_PER_HOUR,
+  );
+
+  const rows = await queryHourly({
+    metric: params.metric,
+    direction: params.direction,
+    from,
+    channelIdSrc: params.channelIdSrc,
+  });
+
+  const byHour = new Map<string, Prisma.Decimal | bigint>();
+  for (const row of rows) {
+    byHour.set(row.hour.toISOString(), row.value);
+  }
+
+  const data: TimeseriesPoint[] = [];
+  for (let i = 0; i < HOURLY_BUCKETS; i++) {
+    const t = new Date(from.getTime() + i * MS_PER_HOUR);
+    const key = t.toISOString();
+    const value = byHour.get(key) ?? null;
+    data.push({ date: key, value: formatValue(params.metric, value) });
+  }
+
+  return { data };
+};
+
 const ATOM_DENOM = 'uatom';
 const ATOM_DECIMALS = 6;
 const MS_PER_DAY = 86_400_000;
@@ -62,11 +175,16 @@ const queryDailyStats = async (params: {
       ? Prisma.sql`COALESCE(SUM(amount_native), 0)`
       : Prisma.sql`COALESCE(SUM(amount_usd), 0)`;
 
+  const denomFilter =
+    params.metric === 'volume_atom'
+      ? Prisma.sql`denom = ${ATOM_DENOM}`
+      : Prisma.sql`denom IS NOT NULL`;
+
   return db.$queryRaw<RawRow[]>(Prisma.sql`
     SELECT date, ${valueExpr} AS value
     FROM ibc_daily_stats
     WHERE ${channelClause}
-      AND denom = ${ATOM_DENOM}
+      AND ${denomFilter}
       AND date >= ${params.from}
       AND date < ${params.toExclusive}
       AND ${directionFilter(params.direction)}
@@ -106,26 +224,38 @@ const queryToday = async (params: {
       FROM ibc_packets p
       WHERE p.event_time IS NOT NULL
         AND p.event_time >= ${params.midnight}
-        AND p.denom = ${ATOM_DENOM}
+        AND resolve_base_denom(p.denom) = ${ATOM_DENOM}
         AND ${channelClause}
         AND ${directionFilter(params.direction)}
     `);
     return rows[0]?.value ?? new Prisma.Decimal(0);
   }
 
+  const spotFrom = new Date(params.midnight.getTime() - MS_PER_DAY);
   const rows = await db.$queryRaw<TodayRow[]>(Prisma.sql`
+    WITH daily_spot_prices AS (
+      SELECT DISTINCT ON (asset_id, date)
+        asset_id,
+        (created_at AT TIME ZONE 'UTC')::date AS date,
+        usd
+      FROM prices
+      WHERE created_at >= ${spotFrom}
+      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+    )
     SELECT COALESCE(
-      SUM((p.amount / POWER(10::numeric, ${ATOM_DECIMALS})) * ph.usd),
+      SUM((p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)),
       0
     ) AS value
     FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = p.denom
+    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
     LEFT JOIN price_history ph ON ph.asset_id = a.id
       AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
+    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
+      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${params.midnight}
-      AND p.denom = ${ATOM_DENOM}
-      AND ph.usd IS NOT NULL
+      AND a.id IS NOT NULL
+      AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
       AND ${channelClause}
       AND ${directionFilter(params.direction)}
   `);
@@ -133,7 +263,7 @@ const queryToday = async (params: {
 };
 
 const formatValue = (metric: TimeseriesMetric, value: Prisma.Decimal | bigint | null): string => {
-  if (value === null) return metric === 'transfers' ? '0' : metric === 'volume_atom' ? '0' : '0';
+  if (value === null) return '0';
   if (metric === 'transfers') {
     return typeof value === 'bigint' ? value.toString() : value.toFixed(0);
   }

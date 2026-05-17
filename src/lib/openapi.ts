@@ -5,6 +5,7 @@ import {
 
 import { z } from '@/lib/openapi-zod';
 
+import { AssetsBreakdownQuerySchema, AssetsBreakdownResponseSchema } from '@/schemas/assets';
 import { ChannelsQuerySchema, ChannelsResponseSchema } from '@/schemas/channels';
 import { ErrorResponseSchema } from '@/schemas/common';
 import { StatsQuerySchema, StatsResponseSchema } from '@/schemas/stats';
@@ -33,6 +34,7 @@ registry.register('ChannelsResponse', ChannelsResponseSchema);
 registry.register('TimeseriesResponse', TimeseriesResponseSchema);
 registry.register('TransfersListResponse', TransfersListResponseSchema);
 registry.register('TransferDetailResponse', TransferDetailResponseSchema);
+registry.register('AssetsBreakdownResponse', AssetsBreakdownResponseSchema);
 
 const errorRef = { $ref: '#/components/schemas/ErrorResponse' };
 
@@ -94,8 +96,24 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'get',
+  path: '/api/v1/assets',
+  summary: 'Per-asset breakdown of transfers and volume for 24h/7d/30d windows',
+  tags: ['assets'],
+  request: { query: AssetsBreakdownQuerySchema },
+  responses: {
+    200: {
+      description: 'Per-asset breakdown sorted by USD volume desc',
+      content: { 'application/json': { schema: AssetsBreakdownResponseSchema } },
+    },
+    400: error400,
+    500: error500,
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/api/v1/timeseries',
-  summary: 'Daily metric series (transfers / volume_atom / volume_usd)',
+  summary: 'Metric series — daily (default) or hourly (bucket=hour, fixed 24h window) for transfers / volume_atom / volume_usd',
   tags: ['timeseries'],
   request: { query: TimeseriesQuerySchema },
   responses: {

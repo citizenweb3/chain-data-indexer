@@ -19,6 +19,9 @@ export type ListTransfersParams = {
   direction?: TransferFilterDirection;
   status?: IbcTransferStatus;
   denom?: string;
+  denomBase?: string;
+  since?: Date;
+  offset?: number;
 };
 
 export type TransfersListCursor = {
@@ -57,6 +60,9 @@ type PacketRow = {
   relayer: string | null;
   timeout_height: string | null;
   timeout_ts: bigint | null;
+  base_denom?: string | null;
+  asset_symbol?: string | null;
+  asset_decimals?: number | null;
 };
 
 const toDto = (row: PacketRow): IbcTransferDto => ({
@@ -81,6 +87,9 @@ const toDto = (row: PacketRow): IbcTransferDto => ({
   relayer: row.relayer,
   timeout_height: row.timeout_height,
   timeout_ts: row.timeout_ts !== null ? row.timeout_ts.toString() : null,
+  base_denom: row.base_denom ?? null,
+  asset_symbol: row.asset_symbol ?? null,
+  asset_decimals: row.asset_decimals ?? null,
 });
 
 const buildFilterConditions = (params: ListTransfersParams): Prisma.Sql[] => {
@@ -97,6 +106,12 @@ const buildFilterConditions = (params: ListTransfersParams): Prisma.Sql[] => {
   }
   if (params.denom !== undefined) {
     conditions.push(Prisma.sql`denom = ${params.denom}`);
+  }
+  if (params.denomBase !== undefined) {
+    conditions.push(Prisma.sql`resolve_base_denom(denom) = ${params.denomBase}`);
+  }
+  if (params.since !== undefined) {
+    conditions.push(Prisma.sql`event_time >= ${params.since}`);
   }
 
   return conditions;
@@ -130,35 +145,43 @@ export const listTransfers = async (
 ): Promise<TransfersListResult> => {
   const whereSql = buildListWhere(params);
   const probeLimit = params.limit + 1;
+  const offset = params.offset ?? 0;
+  const offsetSql =
+    params.offset !== undefined ? Prisma.sql`OFFSET ${offset}` : Prisma.empty;
 
   const rows = await db.$queryRaw<PacketRow[]>(
     Prisma.sql`
       SELECT
-        channel_id_src,
-        port_id_src,
-        sequence,
-        port_id_dst,
-        channel_id_dst,
-        status,
-        direction,
-        event_height,
-        event_time,
-        tx_hash_send,
-        height_send,
-        tx_hash_recv,
-        height_recv,
-        tx_hash_ack,
-        height_ack,
-        denom,
-        amount,
-        memo,
-        relayer,
-        timeout_height,
-        timeout_ts
+        ibc_packets.channel_id_src,
+        ibc_packets.port_id_src,
+        ibc_packets.sequence,
+        ibc_packets.port_id_dst,
+        ibc_packets.channel_id_dst,
+        ibc_packets.status,
+        ibc_packets.direction,
+        ibc_packets.event_height,
+        ibc_packets.event_time,
+        ibc_packets.tx_hash_send,
+        ibc_packets.height_send,
+        ibc_packets.tx_hash_recv,
+        ibc_packets.height_recv,
+        ibc_packets.tx_hash_ack,
+        ibc_packets.height_ack,
+        ibc_packets.denom,
+        ibc_packets.amount,
+        ibc_packets.memo,
+        ibc_packets.relayer,
+        ibc_packets.timeout_height,
+        ibc_packets.timeout_ts,
+        resolve_base_denom(ibc_packets.denom) AS base_denom,
+        assets.symbol AS asset_symbol,
+        assets.decimals AS asset_decimals
       FROM ibc_packets
+      LEFT JOIN assets ON assets.native_denom = resolve_base_denom(ibc_packets.denom)
       ${whereSql}
-      ORDER BY event_height DESC, sequence DESC, channel_id_src DESC, port_id_src DESC
+      ORDER BY ibc_packets.event_height DESC, ibc_packets.sequence DESC, ibc_packets.channel_id_src DESC, ibc_packets.port_id_src DESC
       LIMIT ${probeLimit}
+      ${offsetSql}
     `,
   );
 
@@ -168,7 +191,7 @@ export const listTransfers = async (
 
   const last = pageRows[pageRows.length - 1];
   const cursor: TransfersListCursor | null =
-    hasMore && last && last.event_height !== null
+    hasMore && last && last.event_height !== null && params.offset === undefined
       ? {
           next_before_height: last.event_height.toString(),
           next_before_sequence: last.sequence.toString(),
@@ -189,44 +212,91 @@ export const listTransfers = async (
   return { data, cursor, has_more: hasMore, total: total.toString() };
 };
 
+export type TransferDetailDto = IbcTransferDto & {
+  base_denom: string | null;
+  amount_usd: string | null;
+  synced_at: string | null;
+  asset_symbol: string | null;
+  asset_decimals: number | null;
+};
+
+type DetailRow = PacketRow & {
+  base_denom: string | null;
+  amount_usd: Prisma.Decimal | null;
+  synced_at: Date | null;
+  asset_symbol: string | null;
+  asset_decimals: number | null;
+};
+
 export const getTransfer = async (params: {
   port: string;
   channel: string;
   sequence: bigint;
-}): Promise<IbcTransferDto | null> => {
-  const row = await db.ibcPacket.findUnique({
-    where: {
-      channelIdSrc_portIdSrc_sequence: {
-        channelIdSrc: params.channel,
-        portIdSrc: params.port,
-        sequence: params.sequence,
-      },
-    },
-  });
+}): Promise<TransferDetailDto | null> => {
+  const rows = await db.$queryRaw<DetailRow[]>(Prisma.sql`
+    WITH daily_spot_prices AS (
+      SELECT DISTINCT ON (asset_id, date)
+        asset_id,
+        (created_at AT TIME ZONE 'UTC')::date AS date,
+        usd
+      FROM prices
+      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+    )
+    SELECT
+      p.channel_id_src,
+      p.port_id_src,
+      p.sequence,
+      p.port_id_dst,
+      p.channel_id_dst,
+      p.status,
+      p.direction,
+      p.event_height,
+      p.event_time,
+      p.tx_hash_send,
+      p.height_send,
+      p.tx_hash_recv,
+      p.height_recv,
+      p.tx_hash_ack,
+      p.height_ack,
+      p.denom,
+      p.amount,
+      p.memo,
+      p.relayer,
+      p.timeout_height,
+      p.timeout_ts,
+      p.synced_at,
+      resolve_base_denom(p.denom) AS base_denom,
+      a.symbol AS asset_symbol,
+      a.decimals AS asset_decimals,
+      CASE
+        WHEN a.id IS NOT NULL
+          AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
+          AND p.amount IS NOT NULL
+        THEN (p.amount / POWER(10::numeric, a.decimals))
+          * COALESCE(ph.usd, dsp.usd)
+      END AS amount_usd
+    FROM ibc_packets p
+    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
+    LEFT JOIN price_history ph ON ph.asset_id = a.id
+      AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
+    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
+      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
+    WHERE p.channel_id_src = ${params.channel}
+      AND p.port_id_src = ${params.port}
+      AND p.sequence = ${params.sequence}
+    LIMIT 1
+  `);
 
+  const row = rows[0];
   if (!row) return null;
 
-  return toDto({
-    channel_id_src: row.channelIdSrc,
-    port_id_src: row.portIdSrc,
-    sequence: row.sequence,
-    port_id_dst: row.portIdDst,
-    channel_id_dst: row.channelIdDst,
-    status: row.status,
-    direction: row.direction,
-    event_height: row.eventHeight,
-    event_time: row.eventTime,
-    tx_hash_send: row.txHashSend,
-    height_send: row.heightSend,
-    tx_hash_recv: row.txHashRecv,
-    height_recv: row.heightRecv,
-    tx_hash_ack: row.txHashAck,
-    height_ack: row.heightAck,
-    denom: row.denom,
-    amount: row.amount,
-    memo: row.memo,
-    relayer: row.relayer,
-    timeout_height: row.timeoutHeight,
-    timeout_ts: row.timeoutTs,
-  });
+  const base = toDto(row);
+  return {
+    ...base,
+    base_denom: row.base_denom,
+    amount_usd: row.amount_usd !== null ? row.amount_usd.toFixed(2) : null,
+    synced_at: row.synced_at !== null ? row.synced_at.toISOString() : null,
+    asset_symbol: row.asset_symbol,
+    asset_decimals: row.asset_decimals,
+  };
 };
