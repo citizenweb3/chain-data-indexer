@@ -28,6 +28,8 @@ export type ChannelDto = {
   channel_id_src: string;
   port_id_src: string;
   channel_id_dst: string | null;
+  counterparty_chain_id: string | null;
+  counterparty_chain_name: string | null;
   transfers: { '24h': number; '7d': number; '30d': number };
   volume_atom: { '24h': string; '7d': string; '30d': string };
   volume_usd: { '24h': string; '7d': string; '30d': string };
@@ -54,6 +56,8 @@ type ChannelMetaRow = {
   channel_id_src: string;
   port_id_src: string;
   channel_id_dst: string | null;
+  counterparty_chain_id: string | null;
+  counterparty_chain_name: string | null;
   last_activity: Date | null;
   delivered_30d: bigint;
   failed_30d: bigint;
@@ -110,6 +114,8 @@ const queryChannelsMeta = async (
       k.channel_id_src,
       pp.port_id_src,
       ld.channel_id_dst,
+      COALESCE(ic_out.counterparty_chain_id, ic_in.counterparty_chain_id) AS counterparty_chain_id,
+      COALESCE(ic_out.counterparty_chain_name, ic_in.counterparty_chain_name) AS counterparty_chain_name,
       s.last_activity,
       s.delivered_30d,
       s.failed_30d
@@ -117,6 +123,13 @@ const queryChannelsMeta = async (
     LEFT JOIN primary_port pp ON pp.channel_id_src = k.channel_id_src
     LEFT JOIN last_dst ld ON ld.channel_id_src = k.channel_id_src
     LEFT JOIN stats s ON s.channel_id_src = k.channel_id_src
+    LEFT JOIN ibc_channels ic_out
+      ON ic_out.channel_id_src = k.channel_id_src
+     AND ic_out.port_id_src = pp.port_id_src
+    LEFT JOIN ibc_channels ic_in
+      ON ic_in.counterparty_channel_id = k.channel_id_src
+     AND ic_in.counterparty_port_id = pp.port_id_src
+     AND ic_in.channel_id_src = ld.channel_id_dst
   `);
 };
 
@@ -483,6 +496,8 @@ export const listChannels = async (params: {
       channel_id_src: m.channel_id_src,
       port_id_src: m.port_id_src,
       channel_id_dst: m.channel_id_dst,
+      counterparty_chain_id: m.counterparty_chain_id,
+      counterparty_chain_name: m.counterparty_chain_name,
       transfers: {
         '24h': b['24h'].count,
         '7d': b['7d'].count,

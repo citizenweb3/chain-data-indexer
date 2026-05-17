@@ -112,12 +112,18 @@ export default async function ChannelDetailPage({
           ‹ back to dashboard
         </Link>
         <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
-          {channelRow.channel_id_src}
+          Cosmos Hub
+          {channelRow.counterparty_chain_name
+            ? ` → ${channelRow.counterparty_chain_name.charAt(0).toUpperCase()}${channelRow.counterparty_chain_name.slice(1)}`
+            : ""}
         </h1>
         <p className="font-sfpro text-sm text-white/60">
-          port {channelRow.port_id_src}
+          {channelRow.channel_id_src} · port {channelRow.port_id_src}
           {channelRow.channel_id_dst
             ? ` · counterparty ${channelRow.channel_id_dst}`
+            : ""}
+          {channelRow.counterparty_chain_id
+            ? ` (${channelRow.counterparty_chain_id})`
             : ""}
           {channelRow.success_rate_30d !== null
             ? ` · success ${(channelRow.success_rate_30d * 100).toFixed(1)}% (30d)`

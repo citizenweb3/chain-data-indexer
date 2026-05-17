@@ -22,6 +22,8 @@ export interface ChannelDto {
   channel_id_src: string;
   port_id_src: string;
   channel_id_dst: string | null;
+  counterparty_chain_id: string | null;
+  counterparty_chain_name: string | null;
   transfers: Record<Period, number>;
   volume_atom: Record<Period, string>;
   volume_usd: Record<Period, string>;
@@ -29,6 +31,9 @@ export interface ChannelDto {
   last_activity: string | null;
   denoms: ChannelDenom[];
 }
+
+const formatChainName = (slug: string): string =>
+  slug.charAt(0).toUpperCase() + slug.slice(1);
 
 interface ChannelsTableRowProps {
   channel: ChannelDto;
@@ -100,8 +105,17 @@ const ChannelsTableRow: FC<ChannelsTableRowProps> = ({ channel, period }) => {
         </Link>
       </BaseTableCell>
       <BaseTableCell className="py-3">
-        <div className="text-center font-handjet text-lg">
-          {channel.channel_id_dst ?? "—"}
+        <div className="flex flex-col items-center">
+          <div className="font-handjet text-lg">
+            {channel.counterparty_chain_name
+              ? formatChainName(channel.counterparty_chain_name)
+              : "—"}
+          </div>
+          {channel.channel_id_dst && (
+            <div className="font-sfpro text-xs text-white/50">
+              {channel.channel_id_dst}
+            </div>
+          )}
         </div>
       </BaseTableCell>
       <BaseTableCell className="max-w-[14rem] py-3">

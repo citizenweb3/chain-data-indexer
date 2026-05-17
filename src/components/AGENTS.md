@@ -52,6 +52,8 @@ DTO types live next to the component that owns the rendering, **not** in a separ
 
 Pages import the type from the same file they import the component from. This is deliberate: when the DTO shape changes you only have one file to update, and a row component is the natural owner of "what one record looks like."
 
+The `ChannelDto.counterparty_chain_name` field is the registry slug (lowercase, no separators — e.g. `osmosis`, `secretnetwork`, `cryptoorgchain`). Both `ChannelsTableRow` and the `channels/[channel]` page header title-case it on render with a tiny `formatChainName(slug)` helper that capitalises the first letter and accepts that multi-word slugs render as one token. There is no curated display map. When `counterparty_chain_name` is `null` (channel exists in `ibc_packets` but not in `ibc_channels`), the row shows `—` as the primary line and falls back to `channel_id_dst` as the subtext so the cell is never blank.
+
 ## Naming
 
 - `kebab-case.tsx` file names. The component itself is `PascalCase` and is the default export.

@@ -70,6 +70,10 @@ Channel-level uses the same pattern with the extra column: `channel_id_src IS NO
 
 For the global (cross-channel) rollup row, filter `channel_id_src IS NULL`.
 
+## Counterparty chain enrichment
+
+`channels-service.queryChannelsMeta` `LEFT JOIN`s `ibc_channels` on `(channel_id_src, port_id_src)` to surface `counterparty_chain_id` and `counterparty_chain_name` in the `ChannelDto`. The join is left-side: rows from `ibc_packets` without a matching `ibc_channels` row (newer channels, non-seeded ports like `icahost`) still appear in the API output with `null` chain fields — clients must tolerate that. The lookup never widens the result set because `(channel_id_src, port_id_src)` is the PK of `ibc_channels`.
+
 ## `DISTINCT ON` pattern for last-known `channel_id_dst`
 
 In `channels-service.queryChannelsMeta`, the same `(channel_id_src, port_id_src)` pair may have appeared with different `channel_id_dst` values over its lifetime (or NULL during the `sent`-only phase). To pick the latest known destination:

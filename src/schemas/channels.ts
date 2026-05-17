@@ -48,6 +48,8 @@ export const ChannelDtoSchema = z.object({
   channel_id_src: z.string(),
   port_id_src: z.string(),
   channel_id_dst: z.string().nullable(),
+  counterparty_chain_id: z.string().nullable(),
+  counterparty_chain_name: z.string().nullable(),
   transfers: PeriodCountsSchema,
   volume_atom: PeriodAmountsSchema,
   volume_usd: PeriodAmountsSchema,

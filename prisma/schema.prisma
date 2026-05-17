@@ -92,6 +92,24 @@ model IbcDailyStats {
   @@map("ibc_daily_stats")
 }
 
+model IbcChannel {
+  channelIdSrc          String  @map("channel_id_src")
+  portIdSrc             String  @map("port_id_src")
+  counterpartyChainId   String  @map("counterparty_chain_id")
+  counterpartyChainName String  @map("counterparty_chain_name")
+  counterpartyChannelId String? @map("counterparty_channel_id")
+  counterpartyPortId    String? @map("counterparty_port_id")
+  clientId              String? @map("client_id")
+  status                String?
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@id([channelIdSrc, portIdSrc])
+  @@index([counterpartyChainId])
+  @@index([counterpartyChannelId, counterpartyPortId], map: "ibc_channels_counterparty_channel_idx")
+  @@map("ibc_channels")
+}
+
 model SyncCursor {
   key             String   @id
   lastEventHeight BigInt?  @map("last_event_height")

@@ -6,9 +6,10 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 
 | File | Purpose |
 |------|---------|
-| `schema.prisma` | 6 models — `IbcPacket`, `Asset`, `Price`, `PriceHistory`, `IbcDailyStats`, `SyncCursor` |
+| `schema.prisma` | 7 models — `IbcPacket`, `Asset`, `Price`, `PriceHistory`, `IbcDailyStats`, `IbcChannel`, `SyncCursor` |
 | `migrations/20260515075735_init/migration.sql` | Initial DDL — includes hand-patched `NULLS NOT DISTINCT` index |
-| `seed.ts` | Idempotent upsert of ~56 assets across Cosmos-native, ERC-20 bridge (gravity/axelar/noble), and liquid-staking variants (see `ASSETS` array at the top of the file) |
+| `migrations/20260517120000_add_ibc_channels/migration.sql` | `ibc_channels` lookup table for counterparty chain metadata |
+| `seed.ts` | Idempotent upsert of ~56 assets and 80 IBC channels (see `ASSETS` + `IBC_CHANNELS` arrays) |
 
 `prisma.config.ts` lives in the repo root, **not here**. Prisma 7 mandates it (replaces `datasource.url` in the schema). It loads `DATABASE_URL` via `dotenv/config` and wires the `prisma/seed.ts` runner. Touch it if migration paths or seed command change.
 
@@ -23,6 +24,8 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 `PriceHistory` — daily closing prices from CoinGecko `market_chart`. PK `(assetId, date)`. Upsert by compound PK.
 
 `IbcDailyStats` — pre-aggregated rollup for the API stats/channels/timeseries services. Pre-cube of 4 `GROUPING SETS` levels; see `server/jobs/AGENTS.md`. Schema uses a **synthetic `id` PK + a separate `@@unique(...)` on the dim tuple** — read the rationale below.
+
+`IbcChannel` — static lookup of cosmoshub-4 IBC channels to their counterparty chain (chain-registry mainnet). PK `(channelIdSrc, portIdSrc)`. Seeded from `prisma/seed.ts` `IBC_CHANNELS` array, which is generated from `github.com/cosmos/chain-registry` `_IBC/*cosmoshub*.json` — do **not** hand-edit individual rows. To regenerate the array, sparse-clone the registry, run the jq pipeline in the working notes, and replace the array verbatim. `counterpartyChainName` is the registry slug (lowercase, no separators); UI is responsible for display casing.
 
 `SyncCursor` — single-row-per-job watermark store. `key` is the job name (`ibc-transfers`). All last_* columns are nullable to allow first-run absence.
 
