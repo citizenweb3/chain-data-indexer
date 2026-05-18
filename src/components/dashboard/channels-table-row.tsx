@@ -99,9 +99,12 @@ const ChannelsTableRow: FC<ChannelsTableRowProps> = ({ channel, period }) => {
       <BaseTableCell className="py-3 hover:text-highlight">
         <Link
           href={link}
-          className="flex justify-center font-handjet text-lg underline underline-offset-4"
+          className="flex flex-col items-center underline-offset-4 hover:underline"
         >
-          {channel.channel_id_src}
+          <div className="font-handjet text-lg">Cosmos Hub</div>
+          <div className="font-sfpro text-xs text-white/50">
+            {channel.channel_id_src}
+          </div>
         </Link>
       </BaseTableCell>
       <BaseTableCell className="py-3">

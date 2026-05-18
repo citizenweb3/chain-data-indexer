@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { FC } from "react";
 import { Tab, TabGroup } from "@/components/ui/tabs";
+import { useNavigationLoading } from "@/components/layout/navigation-loading";
 
 export type Direction = "outgoing" | "incoming" | "both";
 
@@ -22,6 +23,7 @@ const DirectionToggle: FC<DirectionToggleProps> = ({
   const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();
+  const { startNavigation } = useNavigationLoading();
   const current =
     (sp.get("direction") as Direction | null) ?? defaultValue;
 
@@ -30,7 +32,9 @@ const DirectionToggle: FC<DirectionToggleProps> = ({
     const next = new URLSearchParams(sp.toString());
     next.set("direction", value);
     next.delete("p");
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    startNavigation(() => {
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    });
   };
 
   return (

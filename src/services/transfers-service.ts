@@ -16,6 +16,7 @@ export type ListTransfersParams = {
   beforeChannel?: string;
   beforePort?: string;
   channelIdSrc?: string;
+  channelOnHub?: string;
   direction?: TransferFilterDirection;
   status?: IbcTransferStatus;
   denom?: string;
@@ -97,6 +98,18 @@ const buildFilterConditions = (params: ListTransfersParams): Prisma.Sql[] => {
 
   if (params.channelIdSrc !== undefined) {
     conditions.push(Prisma.sql`channel_id_src = ${params.channelIdSrc}`);
+  }
+  if (params.channelOnHub !== undefined) {
+    const ch = params.channelOnHub;
+    if (params.direction === 'outgoing') {
+      conditions.push(Prisma.sql`channel_id_src = ${ch}`);
+    } else if (params.direction === 'incoming') {
+      conditions.push(Prisma.sql`channel_id_dst = ${ch}`);
+    } else {
+      conditions.push(
+        Prisma.sql`((direction = 'outgoing' AND channel_id_src = ${ch}) OR (direction = 'incoming' AND channel_id_dst = ${ch}))`,
+      );
+    }
   }
   if (params.direction !== undefined && params.direction !== 'both') {
     conditions.push(Prisma.sql`direction = ${params.direction}`);

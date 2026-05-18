@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Handjet, Inter } from "next/font/google";
 import Nav from "@/components/layout/nav";
+import { NavigationLoadingProvider } from "@/components/layout/navigation-loading";
 import "./globals.css";
 
 const handjet = Handjet({
@@ -32,8 +33,10 @@ export default function RootLayout({
       className={`dark ${handjet.variable} ${inter.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-background font-sfpro text-white">
-        <Nav />
-        {children}
+        <NavigationLoadingProvider>
+          <Nav />
+          {children}
+        </NavigationLoadingProvider>
       </body>
     </html>
   );

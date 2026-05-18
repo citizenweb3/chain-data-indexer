@@ -1,19 +1,20 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { listChannels } from "@/services/channels-service";
-import { getTimeseries } from "@/services/timeseries-service";
-import { listTransfers } from "@/services/transfers-service";
 import PeriodTabs, {
   type Period,
 } from "@/components/dashboard/period-tabs";
 import DirectionToggle, {
   type Direction,
 } from "@/components/dashboard/direction-toggle";
-import StatsCards, {
-  type StatsDto,
-} from "@/components/dashboard/stats-cards";
-import TimeseriesLine from "@/components/charts/timeseries-line";
-import TransfersTable from "@/components/transfers/transfers-table";
+import AsyncTimeseries from "@/components/charts/async-timeseries";
+import ChartSkeleton from "@/components/charts/chart-skeleton";
+import AsyncChannelTransfers from "@/components/channels/async-channel-transfers";
+import Card, { CardSubtext, CardValue } from "@/components/ui/card";
+import Subtitle from "@/components/common/subtitle";
+import LoadingBlock from "@/components/ui/loading-block";
+import PendingSwitch from "@/components/layout/pending-switch";
 
 export const dynamic = "force-dynamic";
 
@@ -24,9 +25,17 @@ interface RouteParams {
 interface SearchParams {
   period?: string;
   direction?: string;
+  p?: string;
 }
 
 const CHANNEL_RE = /^channel-\d+$/;
+const PAGE_LIMIT = 10;
+
+const periodLabel: Record<Period, string> = {
+  "24h": "last 24h",
+  "7d": "last 7 days",
+  "30d": "last 30 days",
+};
 
 const isPeriod = (v: unknown): v is Period =>
   v === "24h" || v === "7d" || v === "30d";
@@ -34,10 +43,14 @@ const isPeriod = (v: unknown): v is Period =>
 const isDirection = (v: unknown): v is Direction =>
   v === "outgoing" || v === "incoming" || v === "both";
 
-const sparkRange = (points: { date: string; value: string }[]) =>
-  points.slice(-7);
+const formatCount = (n: number) =>
+  n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-const RECENT_LIMIT = 10;
+const formatUsd = (s: string) => {
+  const n = Number(s);
+  if (!Number.isFinite(n)) return s;
+  return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+};
 
 export default async function ChannelDetailPage({
   params,
@@ -56,38 +69,17 @@ export default async function ChannelDetailPage({
   const direction: Direction = isDirection(sp.direction)
     ? sp.direction
     : "both";
+  const pageNum = Math.max(1, parseInt(sp.p ?? "1", 10) || 1);
+  const offset = (pageNum - 1) * PAGE_LIMIT;
 
-  const [channelsResult, transfersSeries, atomSeries, usdSeries, recent] =
-    await Promise.all([
-      listChannels({
-        direction,
-        period,
-        sort: "transfers",
-        order: "desc",
-        limit: 1000,
-        offset: 0,
-      }),
-      getTimeseries({
-        metric: "transfers",
-        direction,
-        channelIdSrc: decoded,
-      }),
-      getTimeseries({
-        metric: "volume_atom",
-        direction,
-        channelIdSrc: decoded,
-      }),
-      getTimeseries({
-        metric: "volume_usd",
-        direction,
-        channelIdSrc: decoded,
-      }),
-      listTransfers({
-        limit: RECENT_LIMIT,
-        channelIdSrc: decoded,
-        direction: direction === "both" ? undefined : direction,
-      }),
-    ]);
+  const channelsResult = await listChannels({
+    direction,
+    period,
+    sort: "transfers",
+    order: "desc",
+    limit: 1000,
+    offset: 0,
+  });
 
   const channelRow = channelsResult.data.find(
     (c) => c.channel_id_src === decoded,
@@ -95,15 +87,21 @@ export default async function ChannelDetailPage({
 
   if (!channelRow) notFound();
 
-  const channelStats: StatsDto = {
-    transfers_count: channelRow.transfers,
-    volume_atom: channelRow.volume_atom,
-    volume_usd: channelRow.volume_usd,
-    as_of: new Date().toISOString(),
-  };
+  const currentSearch = new URLSearchParams();
+  for (const [k, v] of Object.entries(sp)) {
+    if (typeof v === "string" && v) currentSearch.set(k, v);
+  }
+  if (!currentSearch.has("period")) currentSearch.set("period", period);
+  if (!currentSearch.has("direction"))
+    currentSearch.set("direction", direction);
+
+  const k = `${decoded}-${period}-${direction}`;
+  const counterpartyName = channelRow.counterparty_chain_name
+    ? `${channelRow.counterparty_chain_name.charAt(0).toUpperCase()}${channelRow.counterparty_chain_name.slice(1)}`
+    : null;
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-12">
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
         <Link
           href="/dashboard"
@@ -111,11 +109,9 @@ export default async function ChannelDetailPage({
         >
           ‹ back to dashboard
         </Link>
-        <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
+        <h1 className="font-handjet text-highlight text-4xl tracking-wide uppercase">
           Cosmos Hub
-          {channelRow.counterparty_chain_name
-            ? ` → ${channelRow.counterparty_chain_name.charAt(0).toUpperCase()}${channelRow.counterparty_chain_name.slice(1)}`
-            : ""}
+          {counterpartyName ? ` → ${counterpartyName}` : ""}
         </h1>
         <p className="font-sfpro text-sm text-white/60">
           {channelRow.channel_id_src} · port {channelRow.port_id_src}
@@ -136,61 +132,98 @@ export default async function ChannelDetailPage({
         <DirectionToggle defaultValue={direction} />
       </div>
 
-      <StatsCards
-        stats={channelStats}
-        period={period}
-        sparklines={{
-          transfers: (
-            <TimeseriesLine
-              data={sparkRange(transfersSeries.data)}
-              metric="transfers"
-              variant="card"
-            />
-          ),
-          volumeAtom: (
-            <TimeseriesLine
-              data={sparkRange(atomSeries.data)}
-              metric="volume_atom"
-              variant="card"
-            />
-          ),
-          volumeUsd: (
-            <TimeseriesLine
-              data={sparkRange(usdSeries.data)}
-              metric="volume_usd"
-              variant="card"
-            />
-          ),
-        }}
-      />
-
-      <section className="border border-bgSt bg-table_row p-6">
-        <h2 className="mb-3 font-sfpro text-sm uppercase tracking-wide text-white/60">
-          Transfers · last 30 days
-        </h2>
-        <TimeseriesLine
-          data={transfersSeries.data}
-          metric="transfers"
-          variant="full"
-        />
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <h2 className="font-sfpro text-sm uppercase tracking-wide text-white/60">
-          Recent packets
-        </h2>
-        <TransfersTable transfers={recent.data} />
-        <div className="flex justify-end">
-          <Link
-            href={`/transfers?channel=${encodeURIComponent(decoded)}${
-              direction !== "both" ? `&direction=${direction}` : ""
-            }`}
-            className="border-b border-bgSt px-2 font-handjet text-base hover:border-highlight hover:text-highlight"
-          >
-            All packets for this channel ›
-          </Link>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-3">
+          <Subtitle>Channel volume · {periodLabel[period]}</Subtitle>
+          <PendingSwitch fallback={<LoadingBlock height="h-32" />}>
+            <Card>
+              <CardValue>${formatUsd(channelRow.volume_usd[period])}</CardValue>
+              <CardSubtext>USD</CardSubtext>
+            </Card>
+          </PendingSwitch>
         </div>
-      </section>
+
+        <div className="flex flex-col gap-3">
+          <Subtitle>Channel packets · {periodLabel[period]}</Subtitle>
+          <PendingSwitch fallback={<LoadingBlock height="h-32" />}>
+            <Card>
+              <CardValue>{formatCount(channelRow.transfers[period])}</CardValue>
+              <CardSubtext>transfers</CardSubtext>
+            </Card>
+          </PendingSwitch>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <Subtitle>
+          Volume (USD) · {periodLabel[period]}
+          <span className="font-sfpro ml-2 text-xs tracking-normal text-white/40 normal-case">
+            (UTC)
+          </span>
+        </Subtitle>
+        <section className="border-bgSt bg-table_row border p-6">
+          <Suspense
+            key={`volume-${k}`}
+            fallback={<ChartSkeleton variant="full" />}
+          >
+            <PendingSwitch fallback={<ChartSkeleton variant="full" />}>
+              <AsyncTimeseries
+                metric="volume_usd"
+                period={period}
+                direction={direction}
+                channelIdSrc={decoded}
+                variant="full"
+              />
+            </PendingSwitch>
+          </Suspense>
+        </section>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <Subtitle>
+          Transfers · {periodLabel[period]}
+          <span className="font-sfpro ml-2 text-xs tracking-normal text-white/40 normal-case">
+            (UTC)
+          </span>
+        </Subtitle>
+        <section className="border-bgSt bg-table_row border p-6">
+          <Suspense
+            key={`transfers-${k}`}
+            fallback={<ChartSkeleton variant="full" />}
+          >
+            <PendingSwitch fallback={<ChartSkeleton variant="full" />}>
+              <AsyncTimeseries
+                metric="transfers"
+                period={period}
+                direction={direction}
+                channelIdSrc={decoded}
+                variant="full"
+              />
+            </PendingSwitch>
+          </Suspense>
+        </section>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <Subtitle>Recent packets · {periodLabel[period]}</Subtitle>
+        <Suspense
+          key={`packets-${k}-${pageNum}`}
+          fallback={<LoadingBlock height="h-96" label="loading packets" />}
+        >
+          <PendingSwitch
+            fallback={<LoadingBlock height="h-96" label="loading packets" />}
+          >
+            <AsyncChannelTransfers
+              channelIdSrc={decoded}
+              direction={direction}
+              period={period}
+              limit={PAGE_LIMIT}
+              offset={offset}
+              currentSearch={currentSearch}
+            />
+          </PendingSwitch>
+        </Suspense>
+      </div>
     </main>
   );
 }

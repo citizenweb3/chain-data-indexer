@@ -1,15 +1,15 @@
-import { getStats } from '@/services/stats-service';
-import { listChannels } from '@/services/channels-service';
-import { getAssetsBreakdown } from '@/services/assets-service';
-import { getSyncWatermark } from '@/services/health-service';
-import { getTimeseries, getTimeseriesHourly } from '@/services/timeseries-service';
+import { Suspense } from 'react';
 import PeriodTabs, { type Period } from '@/components/dashboard/period-tabs';
 import DirectionToggle, { type Direction } from '@/components/dashboard/direction-toggle';
-import TopAssetsCard from '@/components/dashboard/top-assets-card';
-import TimeseriesLine from '@/components/charts/timeseries-line';
-import ChannelsTable from '@/components/dashboard/channels-table';
+import AsyncTimeseries from '@/components/charts/async-timeseries';
+import ChartSkeleton from '@/components/charts/chart-skeleton';
+import AsyncChannelsTable from '@/components/dashboard/async-channels-table';
+import AsyncTopStatCard from '@/components/dashboard/async-top-stat-card';
+import AsyncSyncCard from '@/components/dashboard/async-sync-card';
+import AsyncTopAssets from '@/components/dashboard/async-top-assets';
 import Subtitle from '@/components/common/subtitle';
-import Card, { CardSubtext, CardValue } from '@/components/ui/card';
+import LoadingBlock from '@/components/ui/loading-block';
+import PendingSwitch from '@/components/layout/pending-switch';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,13 +24,6 @@ interface SearchParams {
 type ChannelSort = 'transfers' | 'volume_usd' | 'last_activity';
 
 const PAGE_LIMIT = 10;
-const MS_PER_DAY = 86_400_000;
-
-const periodDays: Record<Period, number> = {
-  '24h': 1,
-  '7d': 7,
-  '30d': 30,
-};
 
 const periodLabel: Record<Period, string> = {
   '24h': 'last 24h',
@@ -48,12 +41,6 @@ const isChannelSort = (v: unknown): v is ChannelSort =>
 
 const isOrder = (v: unknown): v is 'asc' | 'desc' => v === 'asc' || v === 'desc';
 
-const formatUsd = (s: string) => {
-  const n = Number(s);
-  if (!Number.isFinite(n)) return s;
-  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-};
-
 export default async function DashboardPage({ searchParams, }: { searchParams: Promise<SearchParams>; }) {
   const sp = await searchParams;
   const period: Period = isPeriod(sp.period) ? sp.period : '24h';
@@ -68,48 +55,7 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
     if (typeof v === 'string') currentSearch.set(k, v);
   }
 
-  const days = periodDays[period];
-  const chartTo = new Date();
-  const chartFrom = new Date(chartTo.getTime() - (days - 1) * MS_PER_DAY);
-
-  const transfersChartPromise =
-    period === '24h'
-      ? getTimeseriesHourly({ metric: 'transfers', direction })
-      : getTimeseries({
-          metric: 'transfers',
-          direction,
-          from: chartFrom,
-          to: chartTo,
-        });
-
-  const volumeUsdChartPromise =
-    period === '24h'
-      ? getTimeseriesHourly({ metric: 'volume_usd', direction })
-      : getTimeseries({
-          metric: 'volume_usd',
-          direction,
-          from: chartFrom,
-          to: chartTo,
-        });
-
-  const [stats, channels, transfersSeries, volumeUsdSeries, assetsBreakdown, watermark] =
-    await Promise.all([
-      getStats({ direction }),
-      listChannels({
-        direction,
-        period,
-        sort,
-        order,
-        limit: PAGE_LIMIT,
-        offset,
-      }),
-      transfersChartPromise,
-      volumeUsdChartPromise,
-      getAssetsBreakdown({ direction, period, limit: 5 }),
-      getSyncWatermark(),
-    ]);
-
-  const pageLength = Math.max(1, Math.ceil(channels.page.total / PAGE_LIMIT));
+  const k = `${period}-${direction}`;
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
@@ -127,24 +73,23 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-3">
           <Subtitle>Cosmos Hub transfers · {periodLabel[period]}</Subtitle>
-          <Card>
-            <CardValue>${formatUsd(stats.volume_usd[period])}</CardValue>
-            <CardSubtext>USD</CardSubtext>
-          </Card>
+          <Suspense
+            key={`stat-${k}`}
+            fallback={<LoadingBlock height="h-32" />}
+          >
+            <PendingSwitch fallback={<LoadingBlock height="h-32" />}>
+              <AsyncTopStatCard direction={direction} period={period} />
+            </PendingSwitch>
+          </Suspense>
         </div>
 
         <div className="flex flex-col gap-3">
           <Subtitle>Last sync</Subtitle>
-          <Card>
-            <CardValue>
-              {watermark.last_synced_height ? `#${watermark.last_synced_height}` : '—'}
-            </CardValue>
-            <CardSubtext>
-              {watermark.last_synced_at
-                ? `${new Date(watermark.last_synced_at).toLocaleString('en-GB', { timeZone: 'UTC' })} UTC`
-                : 'no data'}
-            </CardSubtext>
-          </Card>
+          <Suspense fallback={<LoadingBlock height="h-32" />}>
+            <PendingSwitch fallback={<LoadingBlock height="h-32" />}>
+              <AsyncSyncCard />
+            </PendingSwitch>
+          </Suspense>
         </div>
       </div>
 
@@ -156,7 +101,19 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
           </span>
         </Subtitle>
         <section className="border-bgSt bg-table_row border p-6">
-          <TimeseriesLine data={volumeUsdSeries.data} metric="volume_usd" variant="full" />
+          <Suspense
+            key={`volume-${k}`}
+            fallback={<ChartSkeleton variant="full" />}
+          >
+            <PendingSwitch fallback={<ChartSkeleton variant="full" />}>
+              <AsyncTimeseries
+                metric="volume_usd"
+                period={period}
+                direction={direction}
+                variant="full"
+              />
+            </PendingSwitch>
+          </Suspense>
         </section>
       </div>
 
@@ -168,23 +125,56 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
           </span>
         </Subtitle>
         <section className="border-bgSt bg-table_row border p-6">
-          <TimeseriesLine data={transfersSeries.data} metric="transfers" variant="full" />
+          <Suspense
+            key={`transfers-${k}`}
+            fallback={<ChartSkeleton variant="full" />}
+          >
+            <PendingSwitch fallback={<ChartSkeleton variant="full" />}>
+              <AsyncTimeseries
+                metric="transfers"
+                period={period}
+                direction={direction}
+                variant="full"
+              />
+            </PendingSwitch>
+          </Suspense>
         </section>
       </div>
 
       <div className="flex flex-col gap-3">
         <Subtitle>Top assets · {periodLabel[period]}</Subtitle>
-        <TopAssetsCard data={assetsBreakdown.data} period={period} direction={direction} />
+        <Suspense
+          key={`assets-${k}`}
+          fallback={<LoadingBlock height="h-48" label="loading assets" />}
+        >
+          <PendingSwitch
+            fallback={<LoadingBlock height="h-48" label="loading assets" />}
+          >
+            <AsyncTopAssets direction={direction} period={period} />
+          </PendingSwitch>
+        </Suspense>
       </div>
 
       <div className="flex flex-col gap-3">
         <Subtitle>Channels · {periodLabel[period]}</Subtitle>
-        <ChannelsTable
-          channels={channels.data}
-          period={period}
-          pageLength={pageLength}
-          currentSearch={currentSearch}
-        />
+        <Suspense
+          key={`channels-${k}-${sort}-${order}-${pageNum}`}
+          fallback={<LoadingBlock height="h-96" label="loading channels" />}
+        >
+          <PendingSwitch
+            fallback={<LoadingBlock height="h-96" label="loading channels" />}
+          >
+            <AsyncChannelsTable
+              direction={direction}
+              period={period}
+              sort={sort}
+              order={order}
+              limit={PAGE_LIMIT}
+              offset={offset}
+              currentSearch={currentSearch}
+            />
+          </PendingSwitch>
+        </Suspense>
       </div>
     </main>
   );

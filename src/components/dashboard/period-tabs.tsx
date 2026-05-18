@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { FC } from "react";
 import { Tab, TabGroup } from "@/components/ui/tabs";
+import { useNavigationLoading } from "@/components/layout/navigation-loading";
 
 export type Period = "24h" | "7d" | "30d";
 
@@ -20,6 +21,7 @@ const PeriodTabs: FC<PeriodTabsProps> = ({ defaultValue = "24h" }) => {
   const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();
+  const { startNavigation } = useNavigationLoading();
   const current = (sp.get("period") as Period | null) ?? defaultValue;
 
   const onSelect = (value: Period) => {
@@ -27,7 +29,9 @@ const PeriodTabs: FC<PeriodTabsProps> = ({ defaultValue = "24h" }) => {
     const next = new URLSearchParams(sp.toString());
     next.set("period", value);
     next.delete("p");
-    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    startNavigation(() => {
+      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+    });
   };
 
   return (
