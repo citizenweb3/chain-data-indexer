@@ -17,6 +17,22 @@ services:
       timeout: 5s
       retries: 10
 
+  sidecar:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DECODER_PORT: ${DECODER_PORT:-4000}
+      RUST_LOG: ${DECODER_LOG_LEVEL:-miden_decoder=info}
+    ports:
+      - "${DECODER_HOST_BIND:-127.0.0.1}:${DECODER_HOST_PORT:-14000}:${DECODER_PORT:-4000}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${DECODER_PORT:-4000}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   indexer:
     build: .
     restart: unless-stopped
@@ -38,6 +54,7 @@ services:
       POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-1500}
       BACKFILL_CONCURRENCY: ${BACKFILL_CONCURRENCY:-16}
       MAX_LAG_BLOCKS_BEFORE_BATCH: ${MAX_LAG_BLOCKS_BEFORE_BATCH:-5}
+      DECODER_URL: ${DECODER_URL:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       METRICS_ENABLED: ${METRICS_ENABLED:-true}

@@ -5,6 +5,7 @@ import { observeBlock, setIndexedHeight } from '../metrics/registry.js';
 import type { MidenRpcClient } from '../rpc/client.js';
 import { processBatch } from '../sink/postgres.js';
 import type { BlockBundle, BlockHeader } from '../types.js';
+import { decodeBlockBytes } from '../utils/decoder.js';
 import { logger } from '../utils/logger.js';
 import { withRetry } from '../utils/retry.js';
 
@@ -40,6 +41,44 @@ async function buildBlockBundle(rpc: MidenRpcClient, blockNum: number): Promise<
       raw_block_present: blockResponse.block !== undefined,
     });
   }
+
+  const decoded = await decodeBlockBytes(blockNum, blockBytes);
+  if (decoded) {
+    return {
+      header: headerResponse.blockHeader,
+      blockBytes,
+      txCount: decoded.txCount,
+      noteCount: decoded.noteCount,
+      nullifierCount: decoded.nullifierCount,
+      transactions: decoded.transactions.map((t) => ({
+        txId: t.txId,
+        blockNum,
+        accountId: t.accountId,
+        initAccountState: t.initState,
+        finalAccountState: t.finalState,
+      })),
+      notes: decoded.notes.map((n) => ({
+        noteId: n.noteId,
+        blockNum,
+        noteIndex: n.noteIndex,
+        isPublic: n.isPublic,
+        metadata: Buffer.from([]),  // raw metadata word not needed for basic indexing
+        sender: n.sender,
+        tag: n.tag,
+      })),
+      nullifiers: decoded.nullifiers.map((n) => ({
+        nullifier: n.nullifier,
+        blockNum,
+      })),
+      accountUpdates: decoded.accountUpdates.map((a) => ({
+        accountId: a.accountId,
+        isPublic: !a.isPrivate,
+        lastBlockNum: blockNum,
+        accountCommitment: a.finalState,
+      })),
+    };
+  }
+
   return {
     header: headerResponse.blockHeader,
     blockBytes,

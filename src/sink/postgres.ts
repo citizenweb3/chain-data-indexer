@@ -243,6 +243,18 @@ async function insertNullifiers(client: QueryRunner, rows: NullifierRow[]): Prom
 
 async function upsertAccounts(client: QueryRunner, rows: AccountRow[]): Promise<void> {
   if (rows.length === 0) return;
+  // Deduplicate: keep only the latest update per account_id (highest lastBlockNum).
+  // PostgreSQL ON CONFLICT DO UPDATE fails if the same key appears twice in the same unnest.
+  const deduped = new Map<string, AccountRow>();
+  for (const row of rows) {
+    const key = row.accountId.toString('hex');
+    const existing = deduped.get(key);
+    if (!existing || row.lastBlockNum > existing.lastBlockNum) {
+      deduped.set(key, row);
+    }
+  }
+  const dedupedRows = [...deduped.values()];
+
   await client.query(
     `INSERT INTO miden_accounts (
        account_id, is_public, last_block_num, account_commitment, nonce,
@@ -265,16 +277,16 @@ async function upsertAccounts(client: QueryRunner, rows: AccountRow[]): Promise<
        updated_at = now()
      WHERE EXCLUDED.last_block_num > miden_accounts.last_block_num`,
     [
-      rows.map((r) => r.accountId),
-      rows.map((r) => r.isPublic),
-      rows.map((r) => r.lastBlockNum),
-      rows.map((r) => r.accountCommitment),
-      rows.map((r) => r.nonce ?? null),
-      rows.map((r) => r.codeCommitment ?? null),
-      rows.map((r) => r.storageCommitment ?? null),
-      rows.map((r) => r.vaultRoot ?? null),
-      rows.map((r) => r.accountType ?? null),
-      rows.map((r) => r.storageMode ?? null),
+      dedupedRows.map((r) => r.accountId),
+      dedupedRows.map((r) => r.isPublic),
+      dedupedRows.map((r) => r.lastBlockNum),
+      dedupedRows.map((r) => r.accountCommitment),
+      dedupedRows.map((r) => r.nonce ?? null),
+      dedupedRows.map((r) => r.codeCommitment ?? null),
+      dedupedRows.map((r) => r.storageCommitment ?? null),
+      dedupedRows.map((r) => r.vaultRoot ?? null),
+      dedupedRows.map((r) => r.accountType ?? null),
+      dedupedRows.map((r) => r.storageMode ?? null),
     ],
   );
 }

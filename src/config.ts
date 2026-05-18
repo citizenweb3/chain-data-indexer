@@ -30,6 +30,7 @@ const ConfigSchema = z.object({
     .transform((v) => v.toLowerCase() === 'true')
     .default('true'),
   METRICS_SAMPLE_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
+  DECODER_URL: z.string().url().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
