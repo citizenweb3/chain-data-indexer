@@ -484,7 +484,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
     getPool().query<BlockSummaryRow>(
       `SELECT ${blockSummaryColumns}
        FROM miden_blocks
-        ORDER BY block_num ${page.order === 'asc' ? 'ASC' : 'DESC'}
+        ORDER BY miden_blocks.block_num ${page.order === 'asc' ? 'ASC' : 'DESC'}
         LIMIT $1 OFFSET $2`,
       values,
     ),
@@ -546,7 +546,7 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
       `SELECT ${transactionColumns}
        FROM miden_transactions
        ${filters.where}
-       ORDER BY block_num DESC, tx_id ASC
+       ORDER BY miden_transactions.block_num DESC, tx_id ASC
         LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
@@ -589,7 +589,7 @@ async function handleNotes(url: URL, res: http.ServerResponse): Promise<void> {
       `SELECT ${noteColumns}
        FROM miden_notes
        ${filters.where}
-       ORDER BY block_num DESC, note_index ASC, note_id ASC
+       ORDER BY miden_notes.block_num DESC, note_index ASC, note_id ASC
         LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
@@ -626,7 +626,7 @@ async function handleNullifiers(url: URL, res: http.ServerResponse): Promise<voi
       `SELECT ${nullifierColumns}
        FROM miden_nullifiers
        ${filters.where}
-       ORDER BY block_num DESC, nullifier ASC
+       ORDER BY miden_nullifiers.block_num DESC, nullifier ASC
         LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
@@ -663,7 +663,7 @@ async function handleAccounts(url: URL, res: http.ServerResponse): Promise<void>
       `SELECT ${accountColumns}
        FROM miden_accounts
        ${filters.where}
-       ORDER BY last_block_num DESC, account_id ASC
+       ORDER BY miden_accounts.last_block_num DESC, account_id ASC
         LIMIT $${limitParam} OFFSET $${offsetParam}`,
       values,
     ),
