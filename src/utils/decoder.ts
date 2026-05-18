@@ -8,6 +8,8 @@ interface TxData {
   account_id: string;
   init_state: string;
   final_state: string;
+  expiration_block_num: number | null;
+  input_notes_commitment: string | null;
 }
 
 interface NoteData {
@@ -17,6 +19,7 @@ interface NoteData {
   tag: number;
   sender: string;
   is_public: boolean;
+  metadata_word: string;
 }
 
 interface NullifierData {
@@ -59,6 +62,8 @@ export interface DecodedBlock {
     accountId: Buffer;
     initState: Buffer;
     finalState: Buffer;
+    expirationBlockNum: number | null;
+    inputNotesCommitment: Buffer | null;
   }>;
   notes: Array<{
     noteId: Buffer;
@@ -67,6 +72,7 @@ export interface DecodedBlock {
     tag: number;
     sender: Buffer;
     isPublic: boolean;
+    metadataWord: Buffer;
   }>;
   nullifiers: Array<{ nullifier: Buffer }>;
   accountUpdates: Array<{
@@ -141,6 +147,8 @@ export async function decodeBlockBytes(
       accountId: hexToBuffer(t.account_id),
       initState: hexToBuffer(t.init_state),
       finalState: hexToBuffer(t.final_state),
+      expirationBlockNum: t.expiration_block_num,
+      inputNotesCommitment: t.input_notes_commitment ? hexToBuffer(t.input_notes_commitment) : null,
     })),
     notes: json.notes.map((n) => ({
       noteId: hexToBuffer(n.note_id),
@@ -149,6 +157,7 @@ export async function decodeBlockBytes(
       tag: n.tag,
       sender: hexToBuffer(n.sender),
       isPublic: n.is_public,
+      metadataWord: hexToBuffer(n.metadata_word),
     })),
     nullifiers: json.nullifiers.map((n) => ({
       nullifier: hexToBuffer(n.nullifier),

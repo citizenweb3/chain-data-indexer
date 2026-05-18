@@ -174,6 +174,8 @@ interface ApiErrorBody {
   code: string;
 }
 
+type SearchType = 'tx' | 'block' | 'note' | 'nullifier' | 'account' | 'ambiguous' | 'not_found';
+
 class HttpError extends Error {
   readonly status: number;
   readonly code: string;
@@ -526,6 +528,24 @@ async function handleBlockByHash(hex: string, url: URL, res: http.ServerResponse
   sendJson(res, 200, blockDetailResponse(rows[0]));
 }
 
+async function handleBlockTransactions(blockNumStr: string, url: URL, res: http.ServerResponse): Promise<void> {
+  const blockNum = parseIntegerParam('block_num', blockNumStr, true);
+  if (blockNum === null || blockNum < 0) throw new HttpError(400, 'invalid block_num', 'INVALID_NUMERIC');
+  const page = parsePage(url);
+  const [items, total] = await Promise.all([
+    getPool().query<TransactionRow>(
+      `SELECT ${transactionColumns}
+       FROM miden_transactions
+       WHERE block_num = $1
+       ORDER BY tx_id ASC
+       LIMIT $2 OFFSET $3`,
+      [blockNum, page.limit, page.offset],
+    ),
+    cachedCount('miden_transactions', 'WHERE block_num = $1', [blockNum]),
+  ]);
+  sendJson(res, 200, paginated(items.rows.map(transactionResponse), total, page));
+}
+
 function transactionFilters(url: URL): QueryParts {
   const parts: QueryParts = { where: '', values: [] };
   const blockNum = parseIntegerParam('block_num', url.searchParams.get('block_num'), false);
@@ -608,6 +628,24 @@ async function handleNote(hex: string, res: http.ServerResponse): Promise<void> 
   sendJson(res, 200, noteResponse(rows[0]));
 }
 
+async function handleBlockNotes(blockNumStr: string, url: URL, res: http.ServerResponse): Promise<void> {
+  const blockNum = parseIntegerParam('block_num', blockNumStr, true);
+  if (blockNum === null || blockNum < 0) throw new HttpError(400, 'invalid block_num', 'INVALID_NUMERIC');
+  const page = parsePage(url);
+  const [items, total] = await Promise.all([
+    getPool().query<NoteRow>(
+      `SELECT ${noteColumns}
+       FROM miden_notes
+       WHERE block_num = $1
+       ORDER BY note_index ASC, note_id ASC
+       LIMIT $2 OFFSET $3`,
+      [blockNum, page.limit, page.offset],
+    ),
+    cachedCount('miden_notes', 'WHERE block_num = $1', [blockNum]),
+  ]);
+  sendJson(res, 200, paginated(items.rows.map(noteResponse), total, page));
+}
+
 function nullifierFilters(url: URL): QueryParts {
   const parts: QueryParts = { where: '', values: [] };
   const blockNum = parseIntegerParam('block_num', url.searchParams.get('block_num'), false);
@@ -682,6 +720,147 @@ async function handleAccount(hex: string, res: http.ServerResponse): Promise<voi
   sendJson(res, 200, accountResponse(rows[0]));
 }
 
+async function handleAccountTransactions(accountIdHex: string, url: URL, res: http.ServerResponse): Promise<void> {
+  const accountId = parseHexParam(accountIdHex, 15);
+  const page = parsePage(url);
+  const [items, total] = await Promise.all([
+    getPool().query<TransactionRow>(
+      `SELECT ${transactionColumns}
+       FROM miden_transactions
+       WHERE account_id = $1
+       ORDER BY miden_transactions.block_num DESC, tx_id ASC
+       LIMIT $2 OFFSET $3`,
+      [accountId, page.limit, page.offset],
+    ),
+    cachedCount('miden_transactions', 'WHERE account_id = $1', [accountId]),
+  ]);
+  sendJson(res, 200, paginated(items.rows.map(transactionResponse), total, page));
+}
+
+async function handleSearch(url: URL, res: http.ServerResponse): Promise<void> {
+  const query = url.searchParams.get('q');
+  if (query === null || query === '') throw new HttpError(400, 'missing q', 'MISSING_QUERY');
+
+  if (/^\d+$/.test(query)) {
+    const blockNum = parseIntegerParam('q', query, true);
+    if (blockNum === null || blockNum < 0) throw new HttpError(400, 'invalid q', 'INVALID_NUMERIC');
+    const { rows } = await getPool().query<BlockDetailRow>(
+      `SELECT ${blockSummaryColumns}
+       FROM miden_blocks
+       WHERE block_num = $1`,
+      [blockNum],
+    );
+    const blocks = rows.map(blockDetailResponse);
+    sendJson(res, 200, {
+      query,
+      type: blocks.length > 0 ? 'block' : 'not_found',
+      results: {
+        blocks: blocks.length > 0 ? blocks : null,
+        transactions: null,
+        notes: null,
+        nullifiers: null,
+        accounts: null,
+      },
+    });
+    return;
+  }
+
+  if (HEX_RE.test(query) && query.length === 30) {
+    const accountId = parseHexParam(query, 15);
+    const { rows } = await getPool().query<AccountRow>(
+      `SELECT ${accountColumns}
+       FROM miden_accounts
+       WHERE account_id = $1`,
+      [accountId],
+    );
+    const accounts = rows.map(accountResponse);
+    sendJson(res, 200, {
+      query,
+      type: accounts.length > 0 ? 'account' : 'not_found',
+      results: {
+        blocks: null,
+        transactions: null,
+        notes: null,
+        nullifiers: null,
+        accounts: accounts.length > 0 ? accounts : null,
+      },
+    });
+    return;
+  }
+
+  if (!(HEX_RE.test(query) && query.length === 64)) {
+    sendJson(res, 200, {
+      query,
+      type: 'not_found' satisfies SearchType,
+      results: {
+        blocks: null,
+        transactions: null,
+        notes: null,
+        nullifiers: null,
+        accounts: null,
+      },
+    });
+    return;
+  }
+
+  const hex = parseHexParam(query, 32);
+  const [blockRows, transactionRows, noteRows, nullifierRows] = await Promise.all([
+    getPool().query<BlockDetailRow>(
+      `SELECT ${blockSummaryColumns}
+       FROM miden_blocks
+       WHERE block_hash = $1`,
+      [hex],
+    ),
+    getPool().query<TransactionRow>(
+      `SELECT ${transactionColumns}
+       FROM miden_transactions
+       WHERE tx_id = $1`,
+      [hex],
+    ),
+    getPool().query<NoteRow>(
+      `SELECT ${noteColumns}
+       FROM miden_notes
+       WHERE note_id = $1`,
+      [hex],
+    ),
+    getPool().query<NullifierRow>(
+      `SELECT ${nullifierColumns}
+       FROM miden_nullifiers
+       WHERE nullifier = $1`,
+      [hex],
+    ),
+  ]);
+
+  const blocks = blockRows.rows.map(blockDetailResponse);
+  const transactions = transactionRows.rows.map(transactionResponse);
+  const notes = noteRows.rows.map(noteResponse);
+  const nullifiers = nullifierRows.rows.map(nullifierResponse);
+  const matchTypes: SearchType[] = [
+    ...(blocks.length > 0 ? ['block' as const] : []),
+    ...(transactions.length > 0 ? ['tx' as const] : []),
+    ...(notes.length > 0 ? ['note' as const] : []),
+    ...(nullifiers.length > 0 ? ['nullifier' as const] : []),
+  ];
+
+  const type: SearchType = matchTypes.length === 0
+    ? 'not_found'
+    : matchTypes.length === 1
+      ? matchTypes[0]
+      : 'ambiguous';
+
+  sendJson(res, 200, {
+    query,
+    type,
+    results: {
+      blocks: blocks.length > 0 ? blocks : null,
+      transactions: transactions.length > 0 ? transactions : null,
+      notes: notes.length > 0 ? notes : null,
+      nullifiers: nullifiers.length > 0 ? nullifiers : null,
+      accounts: null,
+    },
+  });
+}
+
 async function route(req: http.IncomingMessage, res: http.ServerResponse, options: ApiServerOptions): Promise<void> {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -724,6 +903,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, option
 
   const resource = parts[2];
   if (parts.length === 3 && resource === 'stats') return handleStats(res);
+  if (parts.length === 5 && resource === 'blocks' && parts[4] === 'transactions') return handleBlockTransactions(parts[3], url, res);
+  if (parts.length === 5 && resource === 'blocks' && parts[4] === 'notes') return handleBlockNotes(parts[3], url, res);
   if (parts.length === 3 && resource === 'blocks') return handleBlocks(url, res);
   if (parts.length === 4 && resource === 'blocks') return handleBlockByNumber(parts[3], url, res);
   if (parts.length === 5 && resource === 'blocks' && parts[3] === 'by-hash') return handleBlockByHash(parts[4], url, res);
@@ -733,8 +914,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse, option
   if (parts.length === 4 && resource === 'notes') return handleNote(parts[3], res);
   if (parts.length === 3 && resource === 'nullifiers') return handleNullifiers(url, res);
   if (parts.length === 4 && resource === 'nullifiers') return handleNullifier(parts[3], res);
+  if (parts.length === 5 && resource === 'accounts' && parts[4] === 'transactions') return handleAccountTransactions(parts[3], url, res);
   if (parts.length === 3 && resource === 'accounts') return handleAccounts(url, res);
   if (parts.length === 4 && resource === 'accounts') return handleAccount(parts[3], res);
+  if (parts.length === 3 && resource === 'search') return handleSearch(url, res);
 
   throw new HttpError(404, 'not found', 'NOT_FOUND');
 }

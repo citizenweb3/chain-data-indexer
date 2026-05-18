@@ -56,13 +56,15 @@ async function buildBlockBundle(rpc: MidenRpcClient, blockNum: number): Promise<
         accountId: t.accountId,
         initAccountState: t.initState,
         finalAccountState: t.finalState,
+        expirationBlockNum: t.expirationBlockNum ?? null,
+        inputNotesCommitment: t.inputNotesCommitment ?? null,
       })),
       notes: decoded.notes.map((n) => ({
         noteId: n.noteId,
         blockNum,
         noteIndex: n.noteIndex,
         isPublic: n.isPublic,
-        metadata: Buffer.from([]),  // raw metadata word not needed for basic indexing
+        metadata: n.metadataWord,
         sender: n.sender,
         tag: n.tag,
       })),

@@ -1,6 +1,7 @@
 use miden_protocol::block::{ProvenBlock, SignedBlock};
 use miden_protocol::note::NoteType;
 use miden_protocol::utils::serde::Deserializable;
+use miden_protocol::MAX_OUTPUT_NOTES_PER_BATCH;
 use serde::Serialize;
 
 // ── Output types ────────────────────────────────────────────────────────────
@@ -11,6 +12,8 @@ pub struct TxData {
     pub account_id: String,
     pub init_state: String,
     pub final_state: String,
+    pub expiration_block_num: Option<u32>,
+    pub input_notes_commitment: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -21,6 +24,7 @@ pub struct NoteData {
     pub tag: u32,
     pub sender: String,
     pub is_public: bool,
+    pub metadata_word: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +86,8 @@ pub fn decode_block(block_num: u32, raw_bytes: &[u8]) -> Result<BlockDecoded, St
             account_id: tx.account_id().to_hex(),
             init_state: word_to_hex(tx.initial_state_commitment()),
             final_state: word_to_hex(tx.final_state_commitment()),
+            expiration_block_num: None,
+            input_notes_commitment: Some(word_to_hex(tx.input_notes().commitment())),
         })
         .collect();
 
@@ -93,10 +99,11 @@ pub fn decode_block(block_num: u32, raw_bytes: &[u8]) -> Result<BlockDecoded, St
             NoteData {
                 note_id: note.id().to_hex(),
                 batch_index: idx.batch_idx(),
-                note_index: idx.note_idx_in_batch(),
+                note_index: idx.batch_idx() * MAX_OUTPUT_NOTES_PER_BATCH + idx.note_idx_in_batch(),
                 tag: meta.tag().as_u32(),
                 sender: meta.sender().to_hex(),
                 is_public: meta.note_type() == NoteType::Public,
+                metadata_word: word_to_hex(meta.to_header_word()),
             }
         })
         .collect();
