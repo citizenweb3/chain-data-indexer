@@ -264,8 +264,8 @@ export const listChannels = async (params: {
   const now = new Date();
   const midnight = new Date(now);
   midnight.setUTCHours(0, 0, 0, 0);
-  const thirtyDaysAgo = new Date(midnight.getTime() - 30 * MS_PER_DAY);
-  const sevenDaysAgo = new Date(midnight.getTime() - 7 * MS_PER_DAY);
+  const thirtyDaysAgo = new Date(midnight.getTime() - 29 * MS_PER_DAY);
+  const sevenDaysAgo = new Date(midnight.getTime() - 6 * MS_PER_DAY);
   const window24hStart = new Date(now.getTime() - MS_PER_DAY);
 
   const [hubChannels, meta, agg24h, agg7d, agg30d, denomRows] = await Promise.all([
