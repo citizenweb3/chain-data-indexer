@@ -1,7 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import { observeRpc, type RpcStatusLabel } from '../metrics/registry.js';
 import { logger } from '../utils/logger.js';
-import { withRetry } from '../utils/retry.js';
+import { RateLimitError, withRetry } from '../utils/retry.js';
 import { digestFromFelts, wireDigestFromBuffer } from './digest.js';
 import { getApiServiceConstructor } from './protoLoader.js';
 import type {
@@ -72,7 +72,7 @@ import type {
 } from './types.js';
 
 const DEFAULT_MAX_RECEIVE_MESSAGE_LENGTH = 64 * 1024 * 1024;
-const RETRY_ATTEMPTS = 5;
+const RETRY_ATTEMPTS = 8;
 const RETRY_BASE_MS = 250;
 const RETRYABLE_GRPC_CODES = new Set<grpc.status>([
   grpc.status.UNAVAILABLE,
@@ -94,6 +94,12 @@ class RetryableGrpcError extends Error {
     super(grpcError.message);
     this.name = 'RetryableGrpcError';
   }
+}
+
+/** Parse "Wait for Ns" hint from a RESOURCE_EXHAUSTED message, returns ms. */
+function parseRateLimitHint(message: string): number {
+  const match = /wait for (\d+(?:\.\d+)?)s/i.exec(message);
+  return match ? Math.round(parseFloat(match[1]!) * 1_000) : 0;
 }
 
 function asRecord(value: unknown): WireRecord {
@@ -666,6 +672,9 @@ export class MidenRpcClient {
           }).catch((error: unknown) => {
             const grpcError = serviceErrorFromUnknown(error);
             attemptStatus = grpcError.code === grpc.status.DEADLINE_EXCEEDED ? 'timeout' : 'error';
+            if (grpcError.code === grpc.status.RESOURCE_EXHAUSTED) {
+              throw new RateLimitError(parseRateLimitHint(grpcError.message));
+            }
             if (isRetryableGrpcError(grpcError)) {
               if (grpcError.code === grpc.status.INTERNAL) {
                 logger.warn('Retrying INTERNAL gRPC error from Miden RPC', { method, message: grpcError.message });
