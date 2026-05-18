@@ -42,6 +42,18 @@ buf export buf.build/persistence/cosmos-sdk-lsm --output protos
 echo "✨ Exporting ibc-go…"
 buf export buf.build/cosmos/ibc --output protos
 
+echo "✨ Copying AtomOne custom protos…"
+ATOMONE_PROTO_SOURCE="${ATOMONE_PROTO_SOURCE:-/root/atomone/proto/atomone}"
+if [ -d "$ATOMONE_PROTO_SOURCE" ]; then
+  mkdir -p protos/atomone
+  cp -R "$ATOMONE_PROTO_SOURCE"/. protos/atomone/
+else
+  git clone --depth 1 https://github.com/atomone-hub/atomone.git tmp-atomone
+  mkdir -p protos/atomone
+  cp -R tmp-atomone/proto/atomone/. protos/atomone/
+  rm -rf tmp-atomone
+fi
+
 echo "✨ Exporting interchain-security…"
 buf export buf.build/cosmos/interchain-security --output protos
 

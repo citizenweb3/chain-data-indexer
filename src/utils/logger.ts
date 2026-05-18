@@ -84,7 +84,7 @@ function buildRoot(options?: { level?: string; json?: boolean }) {
     level,
     levels: winston.config.npm.levels,
     format: useJson ? prodFormat : devFormat,
-    defaultMeta: { app: 'cosmos-indexer', env },
+    defaultMeta: { app: process.env.APP_NAME ?? 'atomone-indexer', env },
     transports,
     silent: env === 'test',
   });

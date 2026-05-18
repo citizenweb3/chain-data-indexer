@@ -192,7 +192,7 @@ export class PostgresSink implements Sink {
    * @returns {Promise<void>}
    */
   async init(): Promise<void> {
-    createPgPool({ ...this.cfg.pg, applicationName: 'cosmos-indexer' });
+    createPgPool({ ...this.cfg.pg, applicationName: process.env.APP_NAME ?? 'atomone-indexer' });
   }
 
   /**
@@ -292,7 +292,8 @@ export class PostgresSink implements Sink {
       height,
       block_hash: b?.block_id?.hash ?? null,
       time,
-      proposer_address: b?.block?.last_commit?.signatures?.[0]?.validator_address ?? null,
+      proposer_address:
+        b?.block?.header?.proposer_address ?? b?.block?.last_commit?.signatures?.[0]?.validator_address ?? null,
       tx_count: Array.isArray(blockLine?.txs) ? blockLine.txs.length : 0,
       size_bytes: b?.block?.size ?? null,
       last_commit_hash: b?.block?.last_commit?.block_id?.hash ?? null,

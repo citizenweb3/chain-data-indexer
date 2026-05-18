@@ -92,7 +92,7 @@ export function getConfig(): Config {
     ? Number(args['first-block'])
     : process.env.FIRST_BLOCK
       ? Number(process.env.FIRST_BLOCK)
-      : 5200792;
+      : 1;
 
   const follow = asBool('follow', args['follow'] ?? process.env.FOLLOW ?? false, false);
   const followIntervalMs = asPositiveInt(

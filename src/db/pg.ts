@@ -60,7 +60,7 @@ export function createPgPool(cfg: PgConfig): Pool {
     password: cfg.password,
     database: cfg.database,
     ssl: cfg.ssl ? { rejectUnauthorized: false } : undefined,
-    application_name: cfg.applicationName ?? 'cosmos-indexer',
+    application_name: cfg.applicationName ?? process.env.APP_NAME ?? 'atomone-indexer',
     max: cfg.poolSize ?? 16,
     idleTimeoutMillis: 30_000,
   });

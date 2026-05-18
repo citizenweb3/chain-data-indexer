@@ -98,7 +98,7 @@ async function main() {
 
   if (wantResume) {
     if (cfg.sinkKind === 'postgres') {
-      const pool = createPgPool({ ...cfg.pg, applicationName: 'cosmos-indexer-resolver' });
+      const pool = createPgPool({ ...cfg.pg, applicationName: `${process.env.APP_NAME ?? 'atomone-indexer'}-resolver` });
       try {
         const last = await getProgress(pool, cfg.pg?.progressId ?? 'default');
         const earliest = Number(status['sync_info']['earliest_block_height']);

@@ -1,5 +1,5 @@
 {
-  "name": "cosmos-indexer",
+  "name": "atomone-indexer",
   "type": "module",
   "scripts": {
     "dev": "tsx --watch src/index.ts",

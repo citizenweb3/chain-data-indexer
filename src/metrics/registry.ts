@@ -14,7 +14,7 @@
 import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics, type LabelValues } from 'prom-client';
 
 export const registry = new Registry();
-registry.setDefaultLabels({ app: 'cosmos-indexer' });
+registry.setDefaultLabels({ app: process.env.APP_NAME ?? 'atomone-indexer' });
 collectDefaultMetrics({ register: registry, prefix: 'cdi_node_' });
 
 // ── Pipeline progress ────────────────────────────────────────────────────────
