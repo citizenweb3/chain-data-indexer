@@ -2,6 +2,59 @@
 
 This roadmap is scoped to things future agents should pick up after the MVP. Items are in priority order.
 
+---
+
+## 0. Protocol limitations — blocked on upstream (v0.13.4)
+
+These fields are **not available** from the current `miden-node 0.13.4` protocol.
+Do not attempt to implement them until the relevant upstream type exposes the data.
+When a new node version ships, re-check and move the item to the implementation backlog.
+
+### 0.1 `expiration_block_num` on transactions
+- **Why missing:** The block body carries `TransactionHeader` (a compact header type),
+  which does NOT expose `expiration_block_num()`. That field exists only on
+  `ProvenTransaction` / executed transaction types, which are not stored in the block body.
+- **When unblocked:** If Miden adds `expiration_block_num` to `TransactionHeader` in the
+  block binary format (i.e. `miden-protocol` crate bumps the wire format).
+- **Current handling:** Column exists in schema with `DEFAULT NULL`; sidecar always returns
+  `None`; API exposes the null value so frontends can show "—".
+
+### 0.2 Account details (nonce, code_commitment, storage_commitment, vault_root)
+- **Why missing:** `BlockAccountUpdate` (the per-block account diff in the block body)
+  carries only `account_id`, `final_state_hash`, and `is_private`. It does NOT carry
+  nonce, code, storage, or vault roots.
+- **Partial workaround:** Call `GetAccount` RPC for a specific account. This returns the
+  _current_ state only, not historical snapshots. Doing this for every account on every
+  block would be extremely expensive. Viable only for a small configured watchlist.
+- **When unblocked:** If Miden expands `BlockAccountUpdate` to include full state diff,
+  or if a new RPC endpoint returns historical snapshots.
+- **Current handling:** Columns `nonce`, `code_commitment`, `storage_commitment`,
+  `vault_root` exist in `miden_accounts` schema but remain NULL.
+
+### 0.3 Transaction output_notes_commitment
+- **Status:** Implemented in the sidecar for `miden-protocol 0.14.x`.
+- **Why possible:** `TransactionHeader` does not expose a dedicated
+  `output_notes_commitment()` accessor, but it does expose `output_notes() ->
+  &[NoteHeader]`. The commitment can be derived from those note headers using
+  the same hash over `(note_id, metadata_commitment)` tuples that the protocol
+  uses internally.
+
+### 0.4 Note payload / script
+- **Why missing:** The block body contains `OutputNote` metadata (tag, sender, note_id)
+  but does NOT contain note script, inputs, or assets. Full note content is only available
+  via `GetNotesByIds` RPC for public notes.
+- **Partial workaround:** For public notes, call `GetNotesByIds` after indexing. This adds
+  significant RPC overhead; use only for a configured tag/note watchlist.
+- **When unblocked:** When a future block format includes note payloads or a streaming
+  endpoint is added for note content.
+
+### 0.5 Transaction fees / gas
+- **Why missing:** Miden v0.13.4 has no on-chain fee market. `verification_base_fee` is
+  a block-level field, not a per-transaction field.
+- **When unblocked:** When per-transaction fee fields are added to the protocol.
+
+---
+
 ## 1. Midenscan parity: public-RPC-backed explorer fields
 
 - **Rationale:** `testnet.midenscan.com` exposes blocks, transactions, accounts,

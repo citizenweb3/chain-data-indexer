@@ -28,9 +28,10 @@ services:
     ports:
       - "${DECODER_HOST_BIND:-127.0.0.1}:${DECODER_HOST_PORT:-14000}:${DECODER_PORT:-4000}"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:${DECODER_PORT:-4000}/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:$$DECODER_PORT/health > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
+      start_period: 30s
       retries: 5
 
   indexer:

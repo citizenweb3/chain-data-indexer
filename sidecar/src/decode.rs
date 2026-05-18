@@ -14,6 +14,7 @@ pub struct TxData {
     pub final_state: String,
     pub expiration_block_num: Option<u32>,
     pub input_notes_commitment: Option<String>,
+    pub output_notes_commitment: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +60,20 @@ fn word_to_hex(word: miden_protocol::Word) -> String {
     hex::encode(bytes)
 }
 
+fn output_notes_commitment_to_hex(notes: &[miden_protocol::note::NoteHeader]) -> String {
+    if notes.is_empty() {
+        return word_to_hex(miden_protocol::Word::empty());
+    }
+
+    let mut elements = Vec::with_capacity(notes.len() * 8);
+    for note in notes {
+        elements.extend_from_slice(note.id().as_word().as_elements());
+        elements.extend_from_slice(note.metadata().to_commitment().as_elements());
+    }
+
+    word_to_hex(miden_protocol::Hasher::hash_elements(&elements))
+}
+
 // ── Decoder ─────────────────────────────────────────────────────────────────
 
 pub fn decode_block(block_num: u32, raw_bytes: &[u8]) -> Result<BlockDecoded, String> {
@@ -88,6 +103,7 @@ pub fn decode_block(block_num: u32, raw_bytes: &[u8]) -> Result<BlockDecoded, St
             final_state: word_to_hex(tx.final_state_commitment()),
             expiration_block_num: None,
             input_notes_commitment: Some(word_to_hex(tx.input_notes().commitment())),
+            output_notes_commitment: Some(output_notes_commitment_to_hex(tx.output_notes())),
         })
         .collect();
 

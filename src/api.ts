@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { bech32m } from 'bech32';
 import { config } from './config.js';
 import { getPool } from './db/pg.js';
 import { metricsContentType, metricsText } from './metrics/registry.js';
@@ -13,6 +14,9 @@ const API_VERSION = '0.0.1';
 const HEX_RE = /^[0-9a-fA-F]+$/;
 const STATS_CACHE_TTL_MS = 5_000;
 const COUNT_CACHE_TTL_MS = 5_000;
+const ACCOUNT_ID_BYTES = 15;
+const ACCOUNT_ID_HEX_LENGTH = ACCOUNT_ID_BYTES * 2;
+const ACCOUNT_ID_BECH32_HRP = 'miden';
 
 let statsCache: { value: unknown; expiresAt: number } | null = null;
 const countCache = new Map<string, { value: string; expiresAt: number }>();
@@ -84,6 +88,7 @@ interface StatsRow {
   total_nullifiers: string;
   total_accounts: string;
   latest_block_timestamp: Date | null;
+  tps: number;
 }
 
 interface BlockSummaryRow {
@@ -287,6 +292,17 @@ function parseOptionalSafeApiInteger(value: string | null, field: string): numbe
   return value === null ? null : parseSafeApiInteger(value, field);
 }
 
+function accountIdToBech32(hexId: string): string | null {
+  if (!HEX_RE.test(hexId) || hexId.length !== ACCOUNT_ID_HEX_LENGTH) return null;
+  try {
+    const bytes = Buffer.from(hexId, 'hex');
+    if (bytes.length !== ACCOUNT_ID_BYTES) return null;
+    return bech32m.encode(ACCOUNT_ID_BECH32_HRP, bech32m.toWords(bytes));
+  } catch {
+    return null;
+  }
+}
+
 function blockSummaryResponse(row: BlockSummaryRow): Record<string, unknown> {
   return {
     ...row,
@@ -306,6 +322,7 @@ function blockDetailResponse(row: BlockDetailRow): Record<string, unknown> {
 function transactionResponse(row: TransactionRow): Record<string, unknown> {
   return {
     ...row,
+    account_id_bech32: accountIdToBech32(row.account_id),
     block_num: parseSafeApiInteger(row.block_num, 'block_num'),
     expiration_block_num: parseOptionalSafeApiInteger(row.expiration_block_num, 'expiration_block_num'),
   };
@@ -328,6 +345,7 @@ function nullifierResponse(row: NullifierRow): Record<string, unknown> {
 function accountResponse(row: AccountRow): Record<string, unknown> {
   return {
     ...row,
+    account_id_bech32: accountIdToBech32(row.account_id),
     last_block_num: parseSafeApiInteger(row.last_block_num, 'last_block_num'),
   };
 }
@@ -459,11 +477,19 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
        COUNT(*)::text AS total_blocks,
        -- TODO(perf): switch exact counts to maintained counters if data volume grows.
        (SELECT COUNT(*)::text FROM miden_transactions) AS total_transactions,
-       (SELECT COUNT(*)::text FROM miden_notes) AS total_notes,
-       (SELECT COUNT(*)::text FROM miden_nullifiers) AS total_nullifiers,
-       (SELECT COUNT(*)::text FROM miden_accounts) AS total_accounts,
-       MAX(timestamp) AS latest_block_timestamp
-     FROM miden_blocks`,
+        (SELECT COUNT(*)::text FROM miden_notes) AS total_notes,
+        (SELECT COUNT(*)::text FROM miden_nullifiers) AS total_nullifiers,
+        (SELECT COUNT(*)::text FROM miden_accounts) AS total_accounts,
+        MAX(timestamp) AS latest_block_timestamp,
+        (
+          SELECT ROUND(
+            COUNT(*)::numeric / 60.0,
+            4
+          )::float
+          FROM miden_transactions
+          WHERE inserted_at >= now() - interval '60 seconds'
+        ) AS tps
+      FROM miden_blocks`,
   );
   const stats = rows[0];
   const payload = {
@@ -474,6 +500,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
     total_nullifiers: Number(stats.total_nullifiers),
     total_accounts: Number(stats.total_accounts),
     latest_block_timestamp: stats.latest_block_timestamp,
+    tps: stats.tps,
   };
   statsCache = { value: payload, expiresAt: Date.now() + STATS_CACHE_TTL_MS };
   sendJson(res, 200, payload);

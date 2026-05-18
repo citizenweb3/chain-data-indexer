@@ -10,6 +10,7 @@ interface TxData {
   final_state: string;
   expiration_block_num: number | null;
   input_notes_commitment: string | null;
+  output_notes_commitment: string | null;
 }
 
 interface NoteData {
@@ -57,14 +58,7 @@ export interface DecodedBlock {
   txCount: number;
   noteCount: number;
   nullifierCount: number;
-  transactions: Array<{
-    txId: Buffer;
-    accountId: Buffer;
-    initState: Buffer;
-    finalState: Buffer;
-    expirationBlockNum: number | null;
-    inputNotesCommitment: Buffer | null;
-  }>;
+  transactions: DecodedTx[];
   notes: Array<{
     noteId: Buffer;
     batchIndex: number;
@@ -80,6 +74,16 @@ export interface DecodedBlock {
     finalState: Buffer;
     isPrivate: boolean;
   }>;
+}
+
+export interface DecodedTx {
+  txId: Buffer;
+  accountId: Buffer;
+  initState: Buffer;
+  finalState: Buffer;
+  expirationBlockNum: number | null;
+  inputNotesCommitment: Buffer | null;
+  outputNotesCommitment: Buffer | null;
 }
 
 // ── hex helpers ───────────────────────────────────────────────────────────────
@@ -149,6 +153,9 @@ export async function decodeBlockBytes(
       finalState: hexToBuffer(t.final_state),
       expirationBlockNum: t.expiration_block_num,
       inputNotesCommitment: t.input_notes_commitment ? hexToBuffer(t.input_notes_commitment) : null,
+      outputNotesCommitment: t.output_notes_commitment
+        ? hexToBuffer(t.output_notes_commitment)
+        : null,
     })),
     notes: json.notes.map((n) => ({
       noteId: hexToBuffer(n.note_id),

@@ -74,6 +74,19 @@ Every change must satisfy:
 6. **Account storage-mode decoding.** Docs state storage mode is encoded in the 3rd/4th most significant bits of account ID; implement and test decoding with official SDK examples before schema constraints or UI labels depend on it.
 7. **Public account exhaustive indexing limits.** `GetAccount`, `SyncAccountVault`, and `SyncAccountStorageMaps` have thresholds/pagination and near-tip restrictions; future agents must test live RPC limits and decide backfill policy for large public accounts.
 
+## Protocol limitations — do not implement until unblocked
+
+These are hard limitations of `miden-node 0.13.4` and the binary format
+decoded by `sidecar/src/decode.rs`. Do not add stub columns or fake values.
+See `docs/future.md` section 0 for full rationale and unblocking conditions.
+
+| Field | Entity | Reason blocked |
+|---|---|---|
+| `expiration_block_num` | transactions | Not in `TransactionHeader` in block body; only on `ProvenTransaction` |
+| `nonce`, `code_commitment`, `storage_commitment`, `vault_root` | accounts | Not in `BlockAccountUpdate`; only in `GetAccount` current-state RPC |
+| Note payload / script / inputs | notes | Not in block body `OutputNote`; only via `GetNotesByIds` for public notes |
+| Per-tx fees | transactions | No per-tx fee field in v0.13.4 protocol |
+
 ## Pointers
 
 - `docs/api.md` — live-verified public gRPC surface for `miden-node 0.13.4`.

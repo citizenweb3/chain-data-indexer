@@ -22,7 +22,7 @@ RUN touch src/main.rs src/decode.rs && cargo build --release
 # Stage 2: minimal runtime
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/miden-decoder /usr/local/bin/miden-decoder

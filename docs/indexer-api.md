@@ -49,6 +49,7 @@ type Transaction = {
   tx_id: Hex;
   block_num: BlockNumber;
   account_id: Hex;
+  account_id_bech32: string | null;
   init_account_state: Hex | null;
   final_account_state: Hex | null;
   input_notes_commitment: Hex | null;
@@ -89,6 +90,7 @@ type Nullifier = {
 
 type Account = {
   account_id: Hex;
+  account_id_bech32: string | null;
   is_public: boolean;
   last_block_num: BlockNumber;
   account_commitment: Hex;
@@ -154,6 +156,7 @@ Response:
   total_nullifiers: number;
   total_accounts: number;
   latest_block_timestamp: Timestamp | null;
+  tps: number;
 }
 ```
 
