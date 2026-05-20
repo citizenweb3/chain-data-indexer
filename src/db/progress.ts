@@ -21,7 +21,7 @@ export async function getProgress(poolOrClient: Pool | PoolClient, id: string): 
 /**
  * Inserts or updates the last processed block height for the given indexer ID.
  *
- * If a record for the provided ID exists, it updates the `last_height` and sets `updated_at` to now.
+ * If a record for the provided ID exists, it only moves `last_height` forward and sets `updated_at` to now.
  * Otherwise, it creates a new record.
  *
  * @param client - PostgreSQL client to execute the upsert query.
@@ -33,7 +33,7 @@ export async function upsertProgress(client: PoolClient, id: string, lastHeight:
     INSERT INTO core.indexer_progress (id, last_height)
     VALUES ($1, $2)
     ON CONFLICT (id)
-    DO UPDATE SET last_height = EXCLUDED.last_height, updated_at = now()
+    DO UPDATE SET last_height = GREATEST(core.indexer_progress.last_height, EXCLUDED.last_height), updated_at = now()
   `;
   await client.query(sql, [id, lastHeight]);
 }
