@@ -89,7 +89,7 @@ docker compose up --build -d
 docker compose logs -f api
 ```
 
-Docker Compose maps `127.0.0.1:${PORT:-3080}` on the host to port `3000` inside the container.
+Docker Compose maps `${HOST_BIND_IP:-127.0.0.1}:${PORT:-3080}` on the host to port `3000` inside the container.
 
 ## AtomOne deployment bootstrap
 
@@ -113,6 +113,7 @@ docker network create atomone-indexer-net || true
 At runtime the API should use:
 
 - `DATABASE_URL=postgres://atomone_api_ro:<password>@atomoneindexer:5432/atomone_indexer_db`
+- `HOST_BIND_IP=127.0.0.1` for local-only access, or `HOST_BIND_IP=192.168.5.217` when nginx on `192.168.5.12` must reach it directly
 - `PORT=3080`
 - a long random `API_KEY`
 

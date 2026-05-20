@@ -14,7 +14,7 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "127.0.0.1:${PORT:-3080}:3000"
+      - "${HOST_BIND_IP:-127.0.0.1}:${PORT:-3080}:3000"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       API_KEY: ${API_KEY}
