@@ -12,6 +12,7 @@ companion services, such as API wrappers, live in dedicated branches next to the
 | Network            | Branch                                                                                      | Status         | Purpose                                                                                         |
 | ------------------ | ------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
 | **Cosmos Hub**     | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main)                       | ✅ Production  | Cosmos Hub indexer with Protobuf decoding, transaction parsing, PostgreSQL storage, and metrics |
+| **AtomOne**        | [`atomone-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/atomone-indexer) | ✅ Production  | AtomOne mainnet indexer with governance, IBC packets, staking, and PostgreSQL storage           |
 | **Aztec Protocol** | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec)                     | ✅ Production  | Aztec indexer stack for explorer and analytics workloads                                        |
 | **Logos**          | [`logos-indexer-v0.1.2`](https://github.com/citizenweb3/chain-data-indexer/tree/logos-indexer-v0.1.2) | 🚧 Development | Logos testnet indexer with canonical-chain, finality, transaction, and explorer API data        |
 | **Monero**         | [`monero-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/monero-indexer)   | 🚧 Development | Monero indexer for blocks, transactions, supply checkpoints, health, metrics, and explorer APIs |
@@ -22,6 +23,7 @@ companion services, such as API wrappers, live in dedicated branches next to the
 | Component            | Branch                                                                                              | Status      | Purpose                                                              |
 | -------------------- | --------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------- |
 | **Cosmos Indexer API** | [`cosmos-indexer-api`](https://github.com/citizenweb3/chain-data-indexer/tree/cosmos-indexer-api) | API wrapper | Read-only Next.js API over the Cosmos Hub indexer PostgreSQL database |
+| **AtomOne Indexer API** | [`atomone-indexer-api`](https://github.com/citizenweb3/chain-data-indexer/tree/atomone-indexer-api) | API wrapper | Read-only Next.js API over the AtomOne indexer PostgreSQL database |
 
 > Each branch contains network-specific configuration, schemas, and documentation. The instructions below are for the
 > **Cosmos Hub indexer** in `main`.
@@ -55,7 +57,7 @@ DeFi dashboards, compliance tools, and research projects.
 
 - 🧭 **Primary Use Case:** Powering block explorers with rich, searchable blockchain data.
 - 🌌 **Extensible:** Suitable for analytics, compliance, DeFi, R&D, and more.
-- 🌐 **Multi-Network:** CDI also includes separate branches for Aztec, Logos, Monero, and Polygon Miden indexers.
+- 🌐 **Multi-Network:** CDI also includes separate branches for AtomOne, Aztec, Logos, Monero, and Polygon Miden indexers.
 
 ---
 
