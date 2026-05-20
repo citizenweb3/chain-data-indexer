@@ -3,15 +3,28 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: cosmos-indexer-api
+    container_name: atomone-indexer-api
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
-      - "${PORT:-3000}:3000"
+      - "127.0.0.1:${PORT:-3080}:3000"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       API_KEY: ${API_KEY}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
+    networks:
+      - atomone-indexer-net
+
+networks:
+  atomone-indexer-net:
+    external: true
+    name: atomone-indexer-net

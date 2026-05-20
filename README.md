@@ -1,18 +1,19 @@
-# Cosmos Indexer API
+# AtomOne Indexer API
 
-Read-only HTTP API wrapper for the Cosmos Hub Chain Data Indexer PostgreSQL database.
+Read-only HTTP API wrapper for the AtomOne Chain Data Indexer PostgreSQL database.
 
-This branch does not run the indexer itself. It exposes indexed Cosmos Hub data through a Next.js API service with
+This branch does not run the indexer itself. It exposes indexed AtomOne data through a Next.js API service with
 API-key authentication, OpenAPI documentation, and a small operational surface for deployments.
 
 ## Relationship to Chain Data Indexer
 
-The Cosmos Hub indexer lives in the [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) branch. Run
-that indexer first so it can populate PostgreSQL, then point this API at the same database with `DATABASE_URL`.
+The AtomOne indexer lives in the
+[`atomone-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/atomone-indexer) branch. Run that indexer
+first so it can populate PostgreSQL, then point this API at the same database with `DATABASE_URL`.
 
 Recommended deployment shape:
 
-1. Cosmos Hub indexer writes blockchain data to PostgreSQL.
+1. AtomOne indexer writes blockchain data to PostgreSQL.
 2. This API connects to PostgreSQL with a read-only database role.
 3. ValidatorInfo or another frontend calls this API with an `x-api-key` header.
 
@@ -32,7 +33,7 @@ Recommended deployment shape:
 Data endpoints require the configured API key:
 
 ```bash
-curl -H "x-api-key: $API_KEY" http://localhost:3000/api/v1/blocks
+curl -H "x-api-key: $API_KEY" http://localhost:3080/api/v1/blocks
 ```
 
 | Method | Path | Auth | Description |
@@ -59,9 +60,9 @@ yarn dev
 
 Then open:
 
-- `http://localhost:3000/docs` for API documentation.
-- `http://localhost:3000/api/openapi.json` for the OpenAPI document.
-- `http://localhost:3000/api/v1/health` for a database health check.
+- `http://localhost:3080/docs` for API documentation.
+- `http://localhost:3080/api/openapi.json` for the OpenAPI document.
+- `http://localhost:3080/api/v1/health` for a database health check.
 
 ## Configuration
 
@@ -69,15 +70,15 @@ Copy `.env.example` to `.env` and configure:
 
 | Variable | Required | Default | Description |
 |---|---:|---|---|
-| `DATABASE_URL` | Yes | unset | PostgreSQL connection URL for the Cosmos indexer database. |
+| `DATABASE_URL` | Yes | unset | PostgreSQL connection URL for the AtomOne indexer database. |
 | `API_KEY` | Yes | unset | Single expected value for the `x-api-key` request header. |
 | `LOG_LEVEL` | No | `info` | `trace`, `debug`, `info`, `warn`, `error`, or `fatal`. |
-| `PORT` | No | `3000` | Public port for local Next.js or Docker Compose. |
-| `NODE_ENV` | No | `development` | `development`, `test`, or `production`. |
+| `PORT` | No | `3080` | Host port bound to the container's internal port `3000`. |
+| `NODE_ENV` | No | `production` | `development`, `test`, or `production`. |
 
-The sample `.env.example` targets a Docker deployment where the API container reaches the host through
-`host.docker.internal`. For local `yarn dev` on the host, replace `host.docker.internal` with `localhost` if PostgreSQL
-is bound to the host.
+The sample `.env.example` targets the production-style deployment used on the AtomOne indexer host:
+the API joins `atomone-indexer-net` and reaches PostgreSQL at `atomoneindexer:5432`. For local `yarn dev` on the host,
+replace `atomoneindexer:5432` with `localhost:2433`.
 
 ## Docker
 
@@ -88,7 +89,39 @@ docker compose up --build -d
 docker compose logs -f api
 ```
 
-Docker Compose maps `${PORT:-3000}` on the host to port `3000` inside the container.
+Docker Compose maps `127.0.0.1:${PORT:-3080}` on the host to port `3000` inside the container.
+
+## AtomOne deployment bootstrap
+
+The dedicated AtomOne deployment uses a separate worktree and a read-only PostgreSQL role.
+
+```bash
+cd /pool0/atomone-indexer
+git worktree add /pool0/atomone-indexer-api atomone-indexer-api
+
+RO_PASSWORD=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)
+docker cp docs/010-readonly-api-role.sql atomoneindexer:/tmp/010.sql
+docker exec -e PGPASSWORD="$PG_PASSWORD" atomoneindexer \
+  psql -U atomone_indexer_user -d atomone_indexer_db -v ON_ERROR_STOP=1 \
+       -v api_ro_password="$RO_PASSWORD" -f /tmp/010.sql
+docker exec atomoneindexer rm /tmp/010.sql
+printf '%s' "$RO_PASSWORD" | install -m 600 /dev/stdin /pool0/atomone-indexer-api/.api-ro.password
+
+docker network create atomone-indexer-net || true
+```
+
+At runtime the API should use:
+
+- `DATABASE_URL=postgres://atomone_api_ro:<password>@atomoneindexer:5432/atomone_indexer_db`
+- `PORT=3080`
+- a long random `API_KEY`
+
+If you harden `pg_hba.conf`, place these rules above any `trust` line and reload PostgreSQL:
+
+```text
+host    atomone_indexer_db   atomone_api_ro   172.26.0.0/16   scram-sha-256
+host    all                  atomone_api_ro   all             reject
+```
 
 ## Development commands
 
@@ -107,9 +140,10 @@ Docker Compose maps `${PORT:-3000}` on the host to port `3000` inside the contai
 - `/api/v1/health` checks database reachability and intentionally does not require an API key.
 - Most data routes return `401` when the `x-api-key` header is missing or invalid.
 - The OpenAPI document is generated from `src/lib/openapi.ts`; update it when adding or changing routes.
+- This AtomOne branch assumes the API lives in `/pool0/atomone-indexer-api`, separate from the indexer checkout.
 
 ## Related CDI branches
 
 | Component | Branch | Status |
 |---|---|---|
-| Cosmos Hub indexer | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) | Production |
+| AtomOne indexer | [`atomone-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/atomone-indexer) | Production |

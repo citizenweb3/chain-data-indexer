@@ -1,8 +1,8 @@
-# cosmos-indexer-api
+# atomone-indexer-api
 
-Read-only JSON API over the chain-data-indexer Postgres database. Next.js 16 App Router, deployed as standalone Docker container that connects to the indexer's published Postgres port via `host.docker.internal`.
+Read-only JSON API over the AtomOne chain-data-indexer Postgres database. Next.js 16 App Router, deployed as a standalone Docker container in `/pool0/atomone-indexer-api` and attached to `atomone-indexer-net`.
 
-> **Branch:** `cosmos-indexer-api` is an orphan branch. The `main` branch holds the indexer itself (separate codebase). Do not merge.
+> **Branch:** `atomone-indexer-api` is a dedicated API branch derived from `cosmos-indexer-api`. The AtomOne indexer itself lives in branch `atomone-indexer`. Keep deployments in separate directories/worktrees.
 
 ## Stack
 
@@ -40,10 +40,10 @@ Required (`src/env.ts`):
 
 Optional:
 - `LOG_LEVEL` (default `info`)
-- `PORT` (default 3000)
-- `NODE_ENV` (default `development`)
+- `PORT` (default `3080`)
+- `NODE_ENV` (default `production`)
 
-See `.env.example`. Default targets docker-compose (`host.docker.internal:2432`); for `yarn dev` swap host to `localhost`.
+See `.env.example`. Default targets docker-compose on `atomone-indexer-net` (`atomoneindexer:5432`); for `yarn dev` swap host to `localhost:2433`.
 
 ## Commands
 
@@ -61,9 +61,9 @@ See `.env.example`. Default targets docker-compose (`host.docker.internal:2432`)
 ## Deploy
 
 `docker-compose.yaml`:
-- `extra_hosts: host.docker.internal:host-gateway` — reaches indexer Postgres via host's published port (no shared docker network).
-- Indexer compose project (`chain-data-indexer-main_default`) runs separately; this service does NOT depend on it via `depends_on`.
-- Pattern matches `validatorinfo/agents-infrastructure`.
+- Joins the external `atomone-indexer-net` network and reaches Postgres at `atomoneindexer:5432`.
+- Binds the API only to `127.0.0.1:${PORT}` on the host.
+- Uses `read_only`, `tmpfs`, `cap_drop: [ALL]`, and `no-new-privileges:true` as defence-in-depth.
 
 ## API contract notes
 
@@ -87,4 +87,5 @@ For row counts on partitioned tables, `pg_class.reltuples` on the parent is alwa
 ## See also
 
 - `src/app/api/v1/AGENTS.md` — endpoint catalog
-- `docs/plans/2026-02-20-cosmos-indexer-bugfix-design.md` — historical
+- `docs/010-readonly-api-role.sql` — AtomOne read-only role bootstrap
+- `docs/plans/2026-05-04-cosmos-indexer-api-design.md` — historical source design

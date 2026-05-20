@@ -386,9 +386,9 @@ export function generateOpenApiDocument() {
   return generator.generateDocument({
     openapi: '3.1.0',
     info: {
-      title: 'Cosmos Indexer API',
+      title: 'AtomOne Indexer API',
       version: '1.0.0',
-      description: 'Read-only JSON API over the Cosmos chain data indexed by chain-data-indexer.',
+      description: 'Read-only JSON API over the AtomOne chain data indexed by chain-data-indexer.',
     },
     servers: [{ url: '/api/v1', description: 'API v1' }],
   });
