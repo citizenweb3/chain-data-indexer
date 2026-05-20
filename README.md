@@ -17,6 +17,11 @@ Recommended deployment shape:
 2. This API connects to PostgreSQL with a read-only database role.
 3. ValidatorInfo or another frontend calls this API with an `x-api-key` header.
 
+## Live deployment
+
+- Public docs UI: <https://indexer.atomone.citizenweb3.com/docs> (available without whitelist access)
+- Main API: <https://indexer.atomone.citizenweb3.com> (whitelist / API key required)
+
 ## Features
 
 - Next.js route handlers for blocks, transactions, stats, health, OpenAPI, and docs.
