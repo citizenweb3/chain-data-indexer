@@ -1,263 +1,123 @@
-# Chain Data Indexer: CDI
+# atomone-indexer
 
-> built by [Citizen Web3](https://www.citizenweb3.com/) for [ValidatorInfo](https://validatorinfo.com/)
+Production AtomOne mainnet indexer for [ValidatorInfo](https://validatorinfo.com/).
 
-## Chains
+It follows an AtomOne RPC endpoint, decodes blocks and transactions, and stores explorer-facing data in PostgreSQL.
+This branch covers core chain data plus banking, staking, governance, IBC, wasm, authz/feegrant, groups, token flows,
+health checks, and Prometheus metrics.
 
-- [Cosmos Hub](https://github.com/citizenweb3/chain-data-indexer/tree/main) - Development 🚧
-- [Aztec Protocol](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) - Production ✅
+**Supported:** AtomOne mainnet (`atomone-1`)  
+**Branch status:** Production
 
----
+## CDI repository context
 
-## 📚 Table of Contents
+This branch is part of the [`citizenweb3/chain-data-indexer`](https://github.com/citizenweb3/chain-data-indexer)
+branch family. The repository map lives in
+[`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main).
 
-- [Overview](#overview)
-- [Supported Networks](#supported-networks)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Makefile Shortcuts](#makefile-shortcuts)
-- [Troubleshooting](#troubleshooting)
-- [Development Notes](#development-notes)
-- [Contributing](#contributing)
-- [License](#license)
+The public AtomOne API wrapper lives in
+[`atomone-indexer-api`](https://github.com/citizenweb3/chain-data-indexer/tree/atomone-indexer-api).
+Its public docs are available at <https://indexer.atomone.citizenweb3.com/docs>; main API access is whitelist/token protected.
 
----
+| Related indexer | Branch | Status |
+|---|---|---|
+| Cosmos Hub | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main) | Production |
+| Aztec Protocol | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | Production |
+| Logos | [`logos-indexer-v0.1.2`](https://github.com/citizenweb3/chain-data-indexer/tree/logos-indexer-v0.1.2) | Development |
+| Monero | [`monero-indexer`](https://github.com/citizenweb3/chain-data-indexer/tree/monero-indexer) | Development |
+| Polygon Miden | [`miden-indexer-v0.13.4`](https://github.com/citizenweb3/chain-data-indexer/tree/miden-indexer-v0.13.4) | Development |
 
-## Overview
+## What it indexes
 
-**Chain Data Indexer (CDI)** is a high-performance, modular blockchain data indexer designed for powering block explorers, analytics platforms, DeFi dashboards, compliance tools, and research projects.  
-It extracts, processes, and stores blockchain data from various networks into a PostgreSQL database, enabling fast and flexible querying.
-
-- 🧭 **Primary Use Case:** Powering block explorers with rich, searchable blockchain data.
-- 🌌 **Extensible:** Suitable for analytics, compliance, DeFi, R&D, and more.
-- 🌐 **Multi-Network:** This is a monorepo with indexers for multiple blockchain networks.
-
----
-
-## Supported Networks
-
-CDI supports multiple blockchain networks. Each network has its own dedicated branch with specialized implementation:
-
-| Network            | Branch                                                                  | Status         | Description                                                                                                    |
-| ------------------ | ----------------------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Cosmos Hub**     | [`main`](https://github.com/citizenweb3/chain-data-indexer/tree/main)   | ✅ Production  | Full indexer for cosmoshub-4 with Protobuf decoding, transaction parsing, and PostgreSQL storage               |
-| **Aztec Protocol** | [`aztec`](https://github.com/citizenweb3/chain-data-indexer/tree/aztec) | 🚧 Development | High-performance L2 indexer with REST API, Kafka streaming, and parallel block processing (270-280 blocks/sec) |
-
-### Switching Networks
-
-To work with a specific network indexer, switch to the corresponding branch:
-
-```bash
-# For Cosmos Hub indexer (this branch)
-git checkout main
-
-# For Aztec Protocol indexer
-git checkout aztec
-```
-
-> 💡 **Note:** Each branch contains network-specific configuration, schemas, and documentation. Make sure to read the branch-specific README for detailed setup instructions.
-
----
+| Data | Table / schema |
+|---|---|
+| Canonical blocks, validator set snapshots, missed blocks, and chain params | `core.*` |
+| Transactions, decoded messages, events, and event attributes | `core.transactions`, `core.messages`, `core.events`, `core.event_attrs` |
+| Bank transfers and balance deltas/current balances | `bank.*` |
+| Delegation and reward-distribution events/current staking state | `stake.*` |
+| Governance proposals, deposits, and votes | `gov.*` |
+| IBC channels, packet lifecycle rows, and denom traces | `ibc.*` |
+| Wasm code/contracts/executions/events/state and CW20 transfers/balances | `wasm.*`, `tokens.*` |
+| Authz grants, fee grants, and group module objects | `authz_feegrant.*`, `groups.*` |
+| Daily analytics rollups | `analytics.*` |
+| Resume position | `core.indexer_progress` |
 
 ## Features
 
-> **Note:** The features below are specific to the **Cosmos Hub** indexer. For other networks, please refer to the respective branch documentation.
+- Resumable backfills and follow mode against AtomOne RPC.
+- Parallel transaction decoding with worker threads.
+- PostgreSQL partitioning and optional bulk ingest mode for large backfills.
+- Health endpoint on `HEALTH_PORT` and Prometheus metrics on `/metrics`.
+- Structured logging with `LOG_FORMAT=pretty|json`.
+- Docker Compose workflow for Postgres + indexer, plus host-run dev mode.
+- Separate companion API branch for explorer/consumer access.
 
-- 🚀 **High Performance:** Efficiently processes large volumes of blocks and transactions.
-- 🔄 **Resumable Indexing:** Smart resumption from the last indexed block to prevent data loss.
-- 🐳 **Dockerized:** Simple deployment with Docker Compose.
-- 🗄️ **PostgreSQL Integration:** Robust, scalable storage with partitioning and indexing.
-- 📊 **Advanced Decoding:** Supports rich message/transaction type extraction.
-- ⚡ **Real-time Capable:** Block-by-block processing with adjustable concurrency.
-- 🔌 **Modular Branches:** Each supported network can be developed and maintained independently.
+## Quick start
 
----
-
-## Architecture
-
-- **RPC Client:** Interfaces with blockchain RPC endpoints.
-- **Message Decoder:** Dynamically generates message type definitions for supported chains.
-- **Database Layer:** Optimized PostgreSQL schema with automatic partitioning.
-- **Configuration System:** Environment-based, validated configuration.
-
----
-
-## Requirements
-
-- Node.js (v22+ recommended or v22.18.0 LTS for the best experience)
-- yarn
-- Docker & docker-compose
-
----
-
-## Installation
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/citizenweb3/indexer.git
-cd indexer
-```
-
-### 2. Install dependencies (for local runs)
+### Local development
 
 ```bash
 yarn install --frozen-lockfile
+cp .env.example .env
+# Edit .env for RPC_URL and Postgres access
+make up
+yarn dev
 ```
 
----
-
-## Quick Start
-
-### Using Docker (Recommended)
-
-1. Copy and configure your environment:
-
-   ```bash
-   cp .env.example .env
-   # Edit .env as needed
-   ```
-
-2. Build and start all services:
-
-   ```bash
-   docker compose --env-file .env up --build -d
-   ```
-
-3. View indexer logs:
-   ```bash
-   docker compose logs -f indexer
-   ```
-
-> By default, the indexer will resume from the last processed block (`RESUME=true`) and use Postgres as the sink.
-
-#### To reset Postgres and re-initialize the database:
+### Docker Compose
 
 ```bash
-docker compose down -v
+cp .env.example .env
+docker compose --env-file .env up --build -d
 ```
 
-```bash
-docker compose --env-file .env up -d db
-```
+Useful endpoints after startup:
 
----
+- `http://127.0.0.1:${HEALTH_PORT:-3031}/health`
+- `http://127.0.0.1:${HEALTH_PORT:-3031}/metrics`
 
 ## Configuration
 
-All configuration is managed through environment variables.  
-See `.env.example` for a complete list.
+All runtime configuration is driven by `.env.example`.
 
-| Variable                   | Description                                                                    | Example                                           |
-| -------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------- |
-| PG_HOST                    | PostgreSQL host                                                                | `localhost`                                       |
-| PG_PORT                    | PostgreSQL port                                                                | `5432`                                            |
-| PG_USER                    | PostgreSQL user                                                                | `blockchain`                                      |
-| PG_PASSWORD                | PostgreSQL password                                                            | `password`                                        |
-| PG_DATABASE                | PostgreSQL database name                                                       | `indexerdb`                                       |
-| RPC_URL                    | Blockchain RPC endpoint                                                        | `https://rpc.cosmoshub-4-archive.citizenweb3.com` |
-| SINK                       | Data sink type                                                                 | `postgres`                                        |
-| RESUME                     | Resume from last indexed block                                                 | `true`                                            |
-| PG_BULK_MODE               | Drop indexes + UNLOGGED partitions for fast backfill (auto-restored on follow) | `true`                                            |
-| HEALTH_PORT                | TCP port for `/health` and `/metrics` endpoints                                | `3000`                                            |
-| HEALTH_STALE_SECONDS       | Block-progress freshness threshold                                             | `180`                                             |
-| METRICS_ENABLED            | Expose Prometheus `/metrics` on `HEALTH_PORT`                                  | `true`                                            |
-| METRICS_SAMPLE_INTERVAL_MS | Sampler refresh interval (pg pool, decode pool, chain tip)                     | `5000`                                            |
-| LOG_FORMAT                 | `pretty` (default, human-readable) or `json` (Loki/ELK)                        | `pretty`                                          |
-| NODE_OPTIONS               | Node.js runtime options                                                        | `--max-old-space-size=24576`                      |
+| Variable | Description | Example |
+|---|---|---|
+| `RPC_URL` | AtomOne RPC endpoint | `http://192.168.5.218:26957` |
+| `FROM` / `TO` | Backfill height range | `1`, `10000`, or `latest` |
+| `RESUME` | Resume from `core.indexer_progress` | `true` / `false` |
+| `FOLLOW` / `FOLLOW_INTERVAL_MS` | Continue polling after catch-up | `true`, `5000` |
+| `CONCURRENCY` / `DECODE_WORKERS` | Fetch + decode parallelism | `16`, `40` |
+| `RPS` / `RETRIES` / `BACKOFF_MS` | RPC throttling and retry policy | `100`, `3`, `250` |
+| `SINK` | Output sink kind | `postgres` |
+| `PG_DB` / `PG_USER` / `PG_PASSWORD` / `PG_PORT` | Postgres connection settings | `atomone_indexer_db`, `atomone_indexer_user`, `2433` |
+| `PG_BULK_MODE` | Drop heavy secondary indexes for initial backfill | `true` / `false` |
+| `HEALTH_PORT` / `HEALTH_ENABLED` | Health server configuration | `3031`, `true` |
+| `METRICS_ENABLED` | Expose Prometheus metrics on `/metrics` | `true` |
+| `LOG_LEVEL` / `LOG_FORMAT` | Log verbosity and output format | `info`, `pretty` |
 
----
+## Operations notes
 
-## Usage
+- `make up`, `make down`, `make reset`, `make logs`, and `make psql` are the main local DB helpers.
+- `PG_BULK_MODE=true` is intended for large initial backfills; heavy indexes are restored automatically when the indexer transitions into follow mode.
+- Health degrades if indexed height stops advancing beyond `HEALTH_STALE_SECONDS`, unless the process is still in startup grace or maintenance.
+- Observability examples live under [`docs/observability/`](docs/observability/).
 
-### Bulk Backfill Mode
-
-For fresh bulk backfills on a new PostgreSQL volume, you can skip the heaviest
-secondary indexes during init and rebuild them after the range finishes.
-
-Start a fixed backfill window with deferred heavy indexes:
+## Development commands
 
 ```bash
-INDEXER_RESTART_POLICY=no \
-PG_DEFER_HEAVY_INDEXES=on \
-RESUME=false \
-FROM=9000000 \
-TO=9002499 \
-docker compose --env-file .env.production up --build -d
+yarn dev
+yarn start
+yarn build
+yarn typecheck
 ```
 
-After the range finishes, stop the indexer, bring the database back up if needed,
-and rebuild the skipped indexes:
+## Contributing
 
-```bash
-docker compose --env-file .env.production up -d db
-make rebuild-heavy-indexes
-```
+Read [`AGENTS.md`](AGENTS.md) before changing decoding, sink, RPC, health, metrics, or schema logic. Keep the indexer resumable, avoid breaking partition assumptions, and preserve string-safe handling for large numeric fields through the storage and API boundary.
 
-This mode does not change indexed row content. It only removes selected heavy
-secondary indexes from the write path during the backfill.
+## License
 
-### Running Locally (Without Docker)
-
-1. Install dependencies:
-
-   ```bash
-   yarn install --frozen-lockfile
-   ```
-
-2. Create a `.env` file:
-
-   ```bash
-   cp .env.example .env
-   # Edit as necessary
-   ```
-
-3. Generate runtime artifacts:
-
-   ```bash
-   npx tsx scripts/gen-known-msgs.ts
-   ```
-
-4. Run Postgres (via Docker):
-
-   ```bash
-   make up
-   ```
-
-5. Start the indexer:
-   ```bash
-   npm run start
-   ```
-
-> Need more memory?  
-> `export NODE_OPTIONS=--max-old-space-size=24576`
-
----
-
-## Makefile Shortcuts
-
-- `make up` — Start db via docker-compose
-- `make down` — Stop services
-- `make reset` — Remove volumes and re-init DB
-- `make logs` — Show DB logs (`docker compose --env-file .env logs -f db`)
-- `make psql` — Exec `psql` inside the Postgres container
-- `make psql-file FILE=path/to/script.sql` — Copy and run a SQL file inside the DB container
-- `make rebuild-heavy-indexes` — Recreate heavy secondary indexes skipped by bulk backfill mode
-
----
-
-## Troubleshooting
-
-- Indexer fails due to memory? Increase `NODE_OPTIONS`.
-- Check your `.env` for correct DB and RPC settings.
-- Use `make reset` to reinitialize your database if needed.
-- Container keeps exiting? Check `curl http://127.0.0.1:${HEALTH_PORT:-3000}/health`
-  and `docker inspect cosmos-indexer-app --format '{{.State.Health.Status}}'`.
+This branch is licensed under the MIT License. See [`LICENSE`](LICENSE).
   See the **Monitoring & Maintenance** section in [DEPLOYMENT.md](DEPLOYMENT.md).
 - Need Prometheus metrics or log shipping? `curl http://127.0.0.1:${HEALTH_PORT:-3000}/metrics`
   for the `cdi_*` series, set `LOG_FORMAT=json` for structured logs, and use
