@@ -94,6 +94,7 @@ services:
     volumes:
       - pgdata_atomoneindexer:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d:ro
+    shm_size: 8gb
     deploy:
       resources:
         limits:
