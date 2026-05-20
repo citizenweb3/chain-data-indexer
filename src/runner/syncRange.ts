@@ -196,30 +196,39 @@ export async function syncRange(
 
   const ready = new Map<number, unknown>();
   let nextToFlush = from;
+  let flushing: Promise<void> | null = null;
 
   /**
    * Flushes consecutive ready heights to the sink in order, starting from `nextToFlush`.
-   * Skips special placeholders (objects that contain `__skip` or an `error` field),
-   * but still advances progress counters so the pipeline keeps moving.
+   * A height is advanced only after the sink confirms the write. This preserves the
+   * invariant that progress never moves past a block that has not been durably accepted.
    * @param {number} h Height that triggered the flush attempt (for logging context).
    * @returns {Promise<void>}
    */
   async function tryFlush(h: number) {
+    while (flushing) await flushing;
+    const run = flushReady(h);
+    flushing = run;
+    try {
+      await run;
+    } finally {
+      if (flushing === run) flushing = null;
+    }
+  }
+
+  async function flushReady(h: number) {
     let flushed = 0;
     while (ready.has(nextToFlush)) {
       const obj = ready.get(nextToFlush)! as any;
-      ready.delete(nextToFlush);
       if (
         obj &&
         typeof obj === 'object' &&
         (obj.__skip === true || Object.prototype.hasOwnProperty.call(obj, 'error'))
       ) {
-        nextToFlush++;
-        flushed++;
-        processed++;
-        continue;
+        throw new Error(`refusing to skip height ${nextToFlush}: ${String(obj.error ?? 'unknown error')}`);
       }
       await sink.write(obj as any);
+      ready.delete(nextToFlush);
       nextToFlush++;
       flushed++;
       processed++;
@@ -236,7 +245,8 @@ export async function syncRange(
   /**
    * Fetches, decodes and assembles a single height, handling timeouts and retries.
    * On success, places the assembled object into the `ready` buffer.
-   * On repeated failures beyond `maxBlockRetries`, places a skip marker.
+   * On repeated failures beyond `maxBlockRetries`, aborts the range instead of
+   * marking the height as processed. Missing blocks are worse than stopping.
    * @param {number} h Target height to process.
    * @returns {Promise<void>}
    */
@@ -298,8 +308,7 @@ export async function syncRange(
         retryQueue.push(h);
         log.warn(`retry ${n}/${maxBlockRetries} for height ${h}: ${String(e?.message ?? e)}`);
       } else {
-        ready.set(h, { __skip: true, height: h, error: String(e?.message ?? e) });
-        log.error(`giving up height ${h}: ${String(e?.message ?? e)}`);
+        throw new Error(`exhausted ${maxBlockRetries} retries for height ${h}: ${String(e?.message ?? e)}`);
       }
     } finally {
       const sf = Date.now();
@@ -323,8 +332,17 @@ export async function syncRange(
   let nextHeight = from;
   let inFlight = 0;
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    let aborted = false;
+
+    const abort = (e: unknown) => {
+      if (aborted) return;
+      aborted = true;
+      reject(e instanceof Error ? e : new Error(String(e)));
+    };
+
     const maybeSpawn = () => {
+      if (aborted) return;
       while (inFlight < concurrency && (nextHeight <= to || retryQueue.length > 0)) {
         // Retries must always be allowed through — their heights are already counted in
         // the gap (nextHeight was incremented when first spawned), so processing them
@@ -338,14 +356,20 @@ export async function syncRange(
 
         const h = isRetry ? (retryQueue.shift() as number) : nextHeight++;
         inFlight++;
-        processHeight(h).finally(() => {
-          inFlight--;
-          if (nextHeight > to && retryQueue.length === 0 && inFlight === 0) {
-            resolve();
-          } else {
-            setImmediate(maybeSpawn);
-          }
-        });
+        processHeight(h).then(
+          () => {
+            inFlight--;
+            if (nextHeight > to && retryQueue.length === 0 && inFlight === 0) {
+              resolve();
+            } else {
+              setImmediate(maybeSpawn);
+            }
+          },
+          (e) => {
+            inFlight--;
+            abort(e);
+          },
+        );
       }
       maybeReportProgress(false, nextHeight - 1, inFlight, retryQueue.length, nextHeight);
     };

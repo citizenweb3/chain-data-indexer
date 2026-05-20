@@ -198,7 +198,8 @@ export class PostgresSink implements Sink {
   /**
    * Ingest a single assembled block line (object or JSON string).
    * Depending on the selected mode, the block is either written atomically or buffered for batch flush.
-   * Lines containing `{ error: ... }` are ignored.
+   * Lines containing `{ error: ... }` are rejected so failed heights cannot be
+   * silently counted as persisted.
    * @param {unknown} line Assembled block object or its JSON string representation.
    * @returns {Promise<void>}
    * @throws {Error} Rethrows persistence errors from underlying operations.
@@ -208,13 +209,13 @@ export class PostgresSink implements Sink {
     if (typeof line === 'string') {
       try {
         obj = JSON.parse(line);
-      } catch {
-        return;
+      } catch (e) {
+        throw new Error(`invalid JSON block line: ${e instanceof Error ? e.message : String(e)}`);
       }
     } else {
       obj = line;
     }
-    if (obj?.error) return;
+    if (obj?.error) throw new Error(`refusing to persist error block: ${String(obj.error)}`);
 
     if (this.mode === 'block-atomic') {
       await this.persistBlockAtomic(obj);
@@ -876,7 +877,6 @@ export class PostgresSink implements Sink {
       ].filter((h): h is number => Number.isFinite(h));
 
       if (heights.length === 0) {
-        client.release();
         return;
       }
 
@@ -902,18 +902,23 @@ export class PostgresSink implements Sink {
 
       const t0 = Date.now();
 
-      await flushBlocks(client, this.bufBlocks, copyOpts);
-      this.bufBlocks = [];
-      await flushTxs(client, this.bufTxs, copyOpts);
-      this.bufTxs = [];
-      await flushMsgs(client, this.bufMsgs, copyOpts);
-      this.bufMsgs = [];
-      await flushEvents(client, this.bufEvents, copyOpts);
-      this.bufEvents = [];
+      const blocksToFlush = this.bufBlocks;
+      const txsToFlush = this.bufTxs;
+      const msgsToFlush = this.bufMsgs;
+      const eventsToFlush = this.bufEvents;
+
+      await flushBlocks(client, blocksToFlush, copyOpts);
+      await flushTxs(client, txsToFlush, copyOpts);
+      await flushMsgs(client, msgsToFlush, copyOpts);
+      await flushEvents(client, eventsToFlush, copyOpts);
 
       await upsertProgress(client, this.cfg.pg?.progressId ?? 'default', maxH);
 
       await client.query('COMMIT');
+      this.bufBlocks = [];
+      this.bufTxs = [];
+      this.bufMsgs = [];
+      this.bufEvents = [];
       const tookMs = Date.now() - t0;
       observeFlush('core', tookMs / 1000, {
         blocks: snapshotCounts.blocks,
