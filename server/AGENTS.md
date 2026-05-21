@@ -81,6 +81,15 @@ Worker threads do not inherit `--import` ESM loaders from the parent (only Commo
 
 `workerData` is the only contract from parent to child. The child re-loads `dotenv/config` at top of `task-worker.ts` because worker threads do not inherit `process.env` mutations from parent (they get a snapshot at spawn time, but explicit re-load keeps the contract local).
 
+## Chain registry
+
+Chain config lives in `server/tools/chains/`:
+
+- `params.ts` — `CHAIN_PARAMS: ChainParams[]` is the single source of truth for runtime chain config. Each entry binds a slug (`name`) to its display label, on-chain `chainId`, upstream base URL (read eagerly from `<CHAIN>_INDEXER_BASE_URL` at module load — throws if missing), and the env-var name that holds its API key (`apiKeyEnv`). `getChainParams(name)` throws on unknown slugs. Module is **server-only**.
+- `chains.ts` — exports the slug list derived from `CHAIN_PARAMS` for ergonomic imports in dispatcher / job code.
+
+Adding a chain: append an entry to `CHAIN_PARAMS`, add the row to `chains` (seed + migration), supply the two env vars, restart the worker.
+
 ## Dispatcher (`task-worker.ts`)
 
 Plain `switch (taskName)`. Each case awaits a single `run*` function from `server/jobs/`. On success: `parentPort?.postMessage(...)` then `process.exit(0)`. On failure: log error and `process.exit(2)`. The parent picks up the exit code via `worker.on('exit')`, clears the watchdog, and updates `tasksRunning`.
