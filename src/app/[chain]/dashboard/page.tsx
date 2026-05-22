@@ -1,4 +1,7 @@
 import { Suspense } from 'react';
+import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+import { CHAIN_DISPLAY_NAMES, isChainName } from '@/lib/chains';
 import PeriodTabs, { type Period } from '@/components/dashboard/period-tabs';
 import DirectionToggle, { type Direction } from '@/components/dashboard/direction-toggle';
 import AsyncTimeseries from '@/components/charts/async-timeseries';
@@ -12,6 +15,10 @@ import LoadingBlock from '@/components/ui/loading-block';
 import PendingSwitch from '@/components/layout/pending-switch';
 
 export const dynamic = 'force-dynamic';
+
+interface RouteParams {
+  chain: string;
+}
 
 interface SearchParams {
   period?: string;
@@ -41,7 +48,26 @@ const isChannelSort = (v: unknown): v is ChannelSort =>
 
 const isOrder = (v: unknown): v is 'asc' | 'desc' => v === 'asc' || v === 'desc';
 
-export default async function DashboardPage({ searchParams, }: { searchParams: Promise<SearchParams>; }) {
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<RouteParams>;
+}): Promise<Metadata> {
+  const { chain } = await params;
+  if (!isChainName(chain)) return { title: 'Crosschain IBC Indexer' };
+  return { title: `${CHAIN_DISPLAY_NAMES[chain]} IBC stats` };
+}
+
+export default async function DashboardPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<RouteParams>;
+  searchParams: Promise<SearchParams>;
+}) {
+  const { chain } = await params;
+  if (!isChainName(chain)) notFound();
+
   const sp = await searchParams;
   const period: Period = isPeriod(sp.period) ? sp.period : '24h';
   const direction: Direction = isDirection(sp.direction) ? sp.direction : 'both';
@@ -55,13 +81,14 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
     if (typeof v === 'string') currentSearch.set(k, v);
   }
 
-  const k = `${period}-${direction}`;
+  const k = `${chain}-${period}-${direction}`;
+  const chainDisplayName = CHAIN_DISPLAY_NAMES[chain];
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
         <h1 className="font-handjet text-highlight text-4xl tracking-wide uppercase">
-          Cosmos Hub IBC stats
+          {chainDisplayName} IBC stats
         </h1>
       </header>
 
@@ -72,13 +99,13 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-3">
-          <Subtitle>Cosmos Hub transfers · {periodLabel[period]}</Subtitle>
+          <Subtitle>{chainDisplayName} transfers · {periodLabel[period]}</Subtitle>
           <Suspense
             key={`stat-${k}`}
             fallback={<LoadingBlock height="h-32" />}
           >
             <PendingSwitch fallback={<LoadingBlock height="h-32" />}>
-              <AsyncTopStatCard direction={direction} period={period} />
+              <AsyncTopStatCard direction={direction} period={period} chain={chain} />
             </PendingSwitch>
           </Suspense>
         </div>
@@ -87,7 +114,7 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
           <Subtitle>Last sync</Subtitle>
           <Suspense fallback={<LoadingBlock height="h-32" />}>
             <PendingSwitch fallback={<LoadingBlock height="h-32" />}>
-              <AsyncSyncCard />
+              <AsyncSyncCard chain={chain} />
             </PendingSwitch>
           </Suspense>
         </div>
@@ -111,6 +138,7 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
                 period={period}
                 direction={direction}
                 variant="full"
+                chain={chain}
               />
             </PendingSwitch>
           </Suspense>
@@ -135,6 +163,7 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
                 period={period}
                 direction={direction}
                 variant="full"
+                chain={chain}
               />
             </PendingSwitch>
           </Suspense>
@@ -150,7 +179,7 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
           <PendingSwitch
             fallback={<LoadingBlock height="h-48" label="loading assets" />}
           >
-            <AsyncTopAssets direction={direction} period={period} />
+            <AsyncTopAssets direction={direction} period={period} chain={chain} />
           </PendingSwitch>
         </Suspense>
       </div>
@@ -172,6 +201,7 @@ export default async function DashboardPage({ searchParams, }: { searchParams: P
               limit={PAGE_LIMIT}
               offset={offset}
               currentSearch={currentSearch}
+              chain={chain}
             />
           </PendingSwitch>
         </Suspense>

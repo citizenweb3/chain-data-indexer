@@ -9,6 +9,7 @@ import type {
 } from "@/components/charts/chart-config";
 import type { Period } from "@/components/dashboard/period-tabs";
 import type { Direction } from "@/components/dashboard/direction-toggle";
+import type { ChainName } from "@/lib/chains";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -26,6 +27,7 @@ interface AsyncTimeseriesProps {
   channelIdSrc?: string;
   sliceTail?: number;
   forceDaily?: boolean;
+  chain: ChainName;
 }
 
 export default async function AsyncTimeseries({
@@ -36,11 +38,12 @@ export default async function AsyncTimeseries({
   channelIdSrc,
   sliceTail,
   forceDaily = false,
+  chain,
 }: AsyncTimeseriesProps) {
   const useHourly = !forceDaily && period === "24h";
   let points;
   if (useHourly) {
-    const r = await getTimeseriesHourly({ metric, direction, channelIdSrc, chain: null });
+    const r = await getTimeseriesHourly({ metric, direction, channelIdSrc, chain });
     points = r.data;
   } else {
     const days = periodDays[period];
@@ -52,7 +55,7 @@ export default async function AsyncTimeseries({
       from,
       to,
       channelIdSrc,
-      chain: null,
+      chain,
     });
     points = r.data;
   }

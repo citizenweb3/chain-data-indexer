@@ -4,6 +4,7 @@ import Card from "@/components/ui/card";
 import type { Period } from "@/components/dashboard/period-tabs";
 import type { Direction } from "@/components/dashboard/direction-toggle";
 import { formatNative } from "@/utils/format-amount";
+import type { ChainName } from "@/lib/chains";
 
 export interface AssetBreakdownDto {
   native_denom: string;
@@ -20,6 +21,7 @@ interface TopAssetsCardProps {
   period: Period;
   direction: Direction;
   limit?: number;
+  chain: ChainName;
 }
 
 const formatCount = (n: number) =>
@@ -45,6 +47,7 @@ const TopAssetsCard: FC<TopAssetsCardProps> = ({
   period,
   direction,
   limit = 5,
+  chain,
 }) => {
   const rows = data.slice(0, limit);
   const seeAllSearch = new URLSearchParams({ period, direction });
@@ -52,7 +55,7 @@ const TopAssetsCard: FC<TopAssetsCardProps> = ({
     <Card>
       <div className="mb-3 flex items-center justify-end">
         <Link
-          href={`/assets?${seeAllSearch.toString()}`}
+          href={`/${chain}/assets?${seeAllSearch.toString()}`}
           className="font-sfpro text-xs text-white/70 underline underline-offset-4 hover:text-highlight"
         >
           See all →

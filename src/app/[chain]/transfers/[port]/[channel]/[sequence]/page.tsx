@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { getTransfer } from "@/services/transfers-service";
+import { CHAIN_DISPLAY_NAMES, isChainName } from "@/lib/chains";
 import CopyButton from "@/components/common/copy-button";
 import TxHashCell from "@/components/transfers/tx-hash-cell";
 import TransferTimeline, {
@@ -19,6 +21,7 @@ const ADDRESS_URL =
   "https://validatorinfo.com/en/networks/cosmoshub/address";
 
 interface RouteParams {
+  chain: string;
   port: string;
   channel: string;
   sequence: string;
@@ -123,12 +126,23 @@ const HeightLink = ({ height }: { height: string | null }) => {
   );
 };
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<RouteParams>;
+}): Promise<Metadata> {
+  const { chain, sequence } = await params;
+  if (!isChainName(chain)) return { title: "Crosschain IBC Indexer" };
+  return { title: `${CHAIN_DISPLAY_NAMES[chain]} · packet #${sequence}` };
+}
+
 export default async function TransferDetailPage({
   params,
 }: {
   params: Promise<RouteParams>;
 }) {
-  const { port, channel, sequence } = await params;
+  const { chain, port, channel, sequence } = await params;
+  if (!isChainName(chain)) notFound();
 
   let seqBn: bigint;
   try {
@@ -141,11 +155,12 @@ export default async function TransferDetailPage({
     port: decodeURIComponent(port),
     channel: decodeURIComponent(channel),
     sequence: seqBn,
-    chain: 'cosmoshub',
+    chain,
   });
 
   if (!transfer) notFound();
 
+  const chainDisplayName = CHAIN_DISPLAY_NAMES[chain];
   const status = transfer.status as TransferStatus;
   const badge = statusBadge(status);
   const memo = tryParseMemo(transfer.memo);
@@ -172,8 +187,8 @@ export default async function TransferDetailPage({
       : transfer.amount;
   const directionLabel =
     transfer.direction === "outgoing"
-      ? "→ Outgoing (from Cosmos Hub)"
-      : "← Incoming (to Cosmos Hub)";
+      ? `→ Outgoing (from ${chainDisplayName})`
+      : `← Incoming (to ${chainDisplayName})`;
   const eventAbs = formatAbsoluteTime(transfer.event_time);
   const eventRel = formatRelativeTime(transfer.event_time);
   const timeoutAbs = formatTimeoutTs(transfer.timeout_ts);
@@ -193,7 +208,7 @@ export default async function TransferDetailPage({
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-12">
       <Link
-        href="/transfers"
+        href={`/${chain}/transfers`}
         className="mb-4 font-sfpro text-sm uppercase tracking-wide text-white/50 hover:text-highlight"
       >
         ‹ back to transfers
@@ -302,7 +317,7 @@ export default async function TransferDetailPage({
       </InfoRow>
       <InfoRow label="Channel (src)">
         <Link
-          href={`/channels/${encodeURIComponent(transfer.channel_id_src)}`}
+          href={`/${chain}/channels/${encodeURIComponent(transfer.channel_id_src)}`}
           className="font-handjet text-lg text-white hover:text-highlight hover:underline"
         >
           {transfer.channel_id_src}

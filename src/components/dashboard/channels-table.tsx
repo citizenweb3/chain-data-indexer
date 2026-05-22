@@ -6,6 +6,7 @@ import ChannelsTableRow, {
   type ChannelDto,
 } from "@/components/dashboard/channels-table-row";
 import type { Period } from "@/components/dashboard/period-tabs";
+import type { ChainName } from "@/lib/chains";
 
 interface ChannelsTableProps {
   channels: ChannelDto[];
@@ -13,6 +14,7 @@ interface ChannelsTableProps {
   pageLength?: number;
   currentSearch?: string | URLSearchParams;
   pageParam?: string;
+  chain: ChainName;
 }
 
 const ChannelsTable: FC<ChannelsTableProps> = ({
@@ -21,6 +23,7 @@ const ChannelsTable: FC<ChannelsTableProps> = ({
   pageLength,
   currentSearch,
   pageParam = "p",
+  chain,
 }) => {
   return (
     <div className="flex flex-col gap-4">
@@ -56,6 +59,7 @@ const ChannelsTable: FC<ChannelsTableProps> = ({
                 key={`${c.port_id_src}/${c.channel_id_src}`}
                 channel={c}
                 period={period}
+                chain={chain}
               />
             ))
           )}

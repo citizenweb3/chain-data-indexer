@@ -6,6 +6,7 @@ import BaseTableRow from "@/components/common/table/base-table-row";
 import type { Period } from "@/components/dashboard/period-tabs";
 import { cn } from "@/utils/cn";
 import { formatNative } from "@/utils/format-amount";
+import { CHAIN_DISPLAY_NAMES, type ChainName } from "@/lib/chains";
 
 export interface ChannelDenom {
   display: string;
@@ -38,6 +39,7 @@ const formatChainName = (slug: string): string =>
 interface ChannelsTableRowProps {
   channel: ChannelDto;
   period: Period;
+  chain: ChainName;
 }
 
 const formatCount = (n: number) =>
@@ -92,8 +94,8 @@ const buildDenomTooltip = (denoms: ChannelDenom[]): string =>
     })
     .join("\n\n");
 
-const ChannelsTableRow: FC<ChannelsTableRowProps> = ({ channel, period }) => {
-  const link = `/channels/${encodeURIComponent(channel.channel_id_src)}`;
+const ChannelsTableRow: FC<ChannelsTableRowProps> = ({ channel, period, chain }) => {
+  const link = `/${chain}/channels/${encodeURIComponent(channel.channel_id_src)}`;
   return (
     <BaseTableRow>
       <BaseTableCell className="py-3 hover:text-highlight">
@@ -101,7 +103,7 @@ const ChannelsTableRow: FC<ChannelsTableRowProps> = ({ channel, period }) => {
           href={link}
           className="flex flex-col items-center underline-offset-4 hover:underline"
         >
-          <div className="font-handjet text-lg">Cosmos Hub</div>
+          <div className="font-handjet text-lg">{CHAIN_DISPLAY_NAMES[chain]}</div>
           <div className="font-sfpro text-xs text-white/50">
             {channel.channel_id_src}
           </div>

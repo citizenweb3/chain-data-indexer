@@ -5,12 +5,14 @@ import TablePagination from "@/components/common/table/table-pagination";
 import TransfersTableRow, {
   type TransferRowDto,
 } from "@/components/transfers/transfers-table-row";
+import type { ChainName } from "@/lib/chains";
 
 interface TransfersTableProps {
   transfers: TransferRowDto[];
   pageLength?: number;
   currentSearch?: string | URLSearchParams;
   pageParam?: string;
+  chain: ChainName;
 }
 
 const TransfersTable: FC<TransfersTableProps> = ({
@@ -18,6 +20,7 @@ const TransfersTable: FC<TransfersTableProps> = ({
   pageLength,
   currentSearch,
   pageParam = "p",
+  chain,
 }) => {
   return (
     <div className="flex flex-col gap-4">
@@ -49,6 +52,7 @@ const TransfersTable: FC<TransfersTableProps> = ({
                 <TransfersTableRow
                   key={`${t.port_id_src}/${t.channel_id_src}/${t.sequence}`}
                   transfer={t}
+                  chain={chain}
                 />
               ))
             )}

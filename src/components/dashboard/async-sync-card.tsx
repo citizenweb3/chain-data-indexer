@@ -1,9 +1,18 @@
 import { getSyncWatermarks } from "@/services/health-service";
 import Card, { CardSubtext, CardValue } from "@/components/ui/card";
+import type { ChainName } from "@/lib/chains";
 
-export default async function AsyncSyncCard() {
+interface Props {
+  chain: ChainName;
+}
+
+export default async function AsyncSyncCard({ chain }: Props) {
   const all = await getSyncWatermarks();
-  const watermark = all[0] ?? { last_synced_height: null, last_synced_at: null };
+  const watermark =
+    all.find((w) => w.chain === chain) ?? {
+      last_synced_height: null,
+      last_synced_at: null,
+    };
   return (
     <Card>
       <CardValue>
