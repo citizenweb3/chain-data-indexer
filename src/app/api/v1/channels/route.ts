@@ -19,6 +19,7 @@ export const GET = async (request: Request): Promise<Response> => {
       order: parsed.data.order,
       limit: parsed.data.limit,
       offset: parsed.data.offset,
+      chain: null,
     });
     return okJson(result, 'public, max-age=30');
   } catch (e) {

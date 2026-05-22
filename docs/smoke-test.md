@@ -76,7 +76,7 @@ No `error`/`warn`/`fail` entries in `/tmp/web.log` after startup.
 ## Acceptance (team-lead's 5 steps)
 
 1. ✅ `docker compose up -d postgres` + `yarn db:deploy` + `yarn db:seed` (seed already done by `db:deploy`)
-2. ✅ `UPSTREAM_INDEXER_BASE_URL` pointed at running upstream (cosmoshub-4.citizenweb3.com)
+2. ✅ Per-chain `<CHAIN>_INDEXER_API_KEY` set for each chain (`COSMOSHUB_INDEXER_API_KEY`, `ATOMONE_INDEXER_API_KEY`)
 3. ✅ `yarn dev:worker` — cron triggers fire on schedule
 4. ✅ `yarn dev` — RSC pages serve
 5. ✅ `/api/v1/{stats,channels,timeseries,transfers,health}` + `/api/openapi.json` + `/docs` — all 200

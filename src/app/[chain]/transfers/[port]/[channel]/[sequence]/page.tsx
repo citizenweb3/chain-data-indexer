@@ -1,8 +1,11 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { getTransfer } from "@/services/transfers-service";
+import { CHAIN_DISPLAY_NAMES, type ChainName, isChainName } from "@/lib/chains";
+import { getExplorer } from "@/lib/explorer-urls";
 import CopyButton from "@/components/common/copy-button";
 import TxHashCell from "@/components/transfers/tx-hash-cell";
 import TransferTimeline, {
@@ -14,11 +17,8 @@ import { cn } from "@/utils/cn";
 
 export const dynamic = "force-dynamic";
 
-const BLOCKS_URL = "https://validatorinfo.com/en/networks/cosmoshub/blocks";
-const ADDRESS_URL =
-  "https://validatorinfo.com/en/networks/cosmoshub/address";
-
 interface RouteParams {
+  chain: string;
   port: string;
   channel: string;
   sequence: string;
@@ -107,13 +107,13 @@ const SectionTitle = ({ children }: { children: ReactNode }) => (
   </h2>
 );
 
-const HeightLink = ({ height }: { height: string | null }) => {
+const HeightLink = ({ chain, height }: { chain: ChainName; height: string | null }) => {
   if (!height) return <span className="font-handjet text-lg text-white/40">—</span>;
   const n = Number(height);
   const label = Number.isFinite(n) ? n.toLocaleString("en-US") : height;
   return (
     <a
-      href={`${BLOCKS_URL}/${encodeURIComponent(height)}`}
+      href={getExplorer(chain).blocksUrl(height)}
       target="_blank"
       rel="noopener noreferrer"
       className="font-handjet text-lg text-white hover:text-highlight hover:underline"
@@ -123,12 +123,23 @@ const HeightLink = ({ height }: { height: string | null }) => {
   );
 };
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<RouteParams>;
+}): Promise<Metadata> {
+  const { chain, sequence } = await params;
+  if (!isChainName(chain)) return { title: "Crosschain IBC Indexer" };
+  return { title: `${CHAIN_DISPLAY_NAMES[chain]} · packet #${sequence}` };
+}
+
 export default async function TransferDetailPage({
   params,
 }: {
   params: Promise<RouteParams>;
 }) {
-  const { port, channel, sequence } = await params;
+  const { chain, port, channel, sequence } = await params;
+  if (!isChainName(chain)) notFound();
 
   let seqBn: bigint;
   try {
@@ -141,10 +152,12 @@ export default async function TransferDetailPage({
     port: decodeURIComponent(port),
     channel: decodeURIComponent(channel),
     sequence: seqBn,
+    chain,
   });
 
   if (!transfer) notFound();
 
+  const chainDisplayName = CHAIN_DISPLAY_NAMES[chain];
   const status = transfer.status as TransferStatus;
   const badge = statusBadge(status);
   const memo = tryParseMemo(transfer.memo);
@@ -171,8 +184,8 @@ export default async function TransferDetailPage({
       : transfer.amount;
   const directionLabel =
     transfer.direction === "outgoing"
-      ? "→ Outgoing (from Cosmos Hub)"
-      : "← Incoming (to Cosmos Hub)";
+      ? `→ Outgoing (from ${chainDisplayName})`
+      : `← Incoming (to ${chainDisplayName})`;
   const eventAbs = formatAbsoluteTime(transfer.event_time);
   const eventRel = formatRelativeTime(transfer.event_time);
   const timeoutAbs = formatTimeoutTs(transfer.timeout_ts);
@@ -192,7 +205,7 @@ export default async function TransferDetailPage({
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-12">
       <Link
-        href="/transfers"
+        href={`/${chain}/transfers`}
         className="mb-4 font-sfpro text-sm uppercase tracking-wide text-white/50 hover:text-highlight"
       >
         ‹ back to transfers
@@ -301,7 +314,7 @@ export default async function TransferDetailPage({
       </InfoRow>
       <InfoRow label="Channel (src)">
         <Link
-          href={`/channels/${encodeURIComponent(transfer.channel_id_src)}`}
+          href={`/${chain}/channels/${encodeURIComponent(transfer.channel_id_src)}`}
           className="font-handjet text-lg text-white hover:text-highlight hover:underline"
         >
           {transfer.channel_id_src}
@@ -321,7 +334,7 @@ export default async function TransferDetailPage({
 
       <SectionTitle>On-chain trace</SectionTitle>
       <InfoRow label="Event height">
-        <HeightLink height={transfer.event_height} />
+        <HeightLink chain={chain} height={transfer.event_height} />
       </InfoRow>
       {transfer.direction === "outgoing" ? (
         <>
@@ -344,7 +357,7 @@ export default async function TransferDetailPage({
         {transfer.relayer ? (
           <>
             <a
-              href={`${ADDRESS_URL}/${encodeURIComponent(transfer.relayer)}/passport`}
+              href={getExplorer(chain).addressUrl(transfer.relayer)}
               target="_blank"
               rel="noopener noreferrer"
               className="break-all font-handjet text-lg text-white hover:text-highlight hover:underline"

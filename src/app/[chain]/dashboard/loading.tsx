@@ -7,13 +7,13 @@ export default function DashboardLoading() {
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
         <h1 className="font-handjet text-highlight text-4xl tracking-wide uppercase">
-          Cosmos Hub IBC stats
+          IBC stats
         </h1>
       </header>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-3">
-          <Subtitle>Cosmos Hub transfers</Subtitle>
+          <Subtitle>Transfers</Subtitle>
           <LoadingBlock height="h-32" />
         </div>
         <div className="flex flex-col gap-3">

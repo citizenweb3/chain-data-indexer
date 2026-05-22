@@ -128,8 +128,8 @@ Copy `.env.example` to `.env`.
 | `POSTGRES_USER` | Yes | Postgres user |
 | `POSTGRES_PASSWORD` | Yes | Postgres password |
 | `DATABASE_URL` | Yes | Connection string for `web`, `worker`, and Prisma |
-| `UPSTREAM_INDEXER_BASE_URL` | Yes | Upstream `chain-data-indexer` API root used by the worker |
-| `UPSTREAM_INDEXER_API_KEY` | Yes | API key for upstream transfer sync |
+| `COSMOSHUB_INDEXER_API_KEY` | Yes | API key for the Cosmos Hub upstream |
+| `ATOMONE_INDEXER_API_KEY` | Yes | API key for the AtomOne upstream |
 | `COINGECKO_API_KEY` | No | Optional CoinGecko key; empty falls back to the public free tier |
 | `LOG_LEVEL` | No | Pino log level, defaults to `info` |
 | `PORT` | No | Web port, defaults to `3000` |

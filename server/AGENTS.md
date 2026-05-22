@@ -67,9 +67,11 @@ This is the classic validatorinfo pattern. Do not replace it with a queue/lock i
 
 ```ts
 new Worker(new URL('./task-worker-bootstrap.mjs', import.meta.url), {
-  workerData: { taskName },
+  workerData: { taskName, chains: CHAIN_NAMES },
 });
 ```
+
+`chains` is the frozen slug list from `server/tools/chains/chains.ts` (derived from `CHAIN_PARAMS`). Every job that touches per-chain storage (`sync-ibc-transfers`, `recompute-daily-stats`) receives this array and iterates internally with per-chain `try/catch` — one bad chain does not block the others. CoinGecko-only jobs (`prices`, `price-history`) ignore it.
 
 ```js
 // task-worker-bootstrap.mjs
@@ -80,6 +82,15 @@ await tsImport('./task-worker.ts', import.meta.url);
 Worker threads do not inherit `--import` ESM loaders from the parent (only CommonJS `-r` hooks propagate). Passing `execArgv: ['--import', 'tsx']` does work, but is fragile across Node minor versions; the `tsImport` programmatic API is the supported path on Node 22 + tsx 4. The `.mjs` extension is required because worker threads load it before any loader is in place.
 
 `workerData` is the only contract from parent to child. The child re-loads `dotenv/config` at top of `task-worker.ts` because worker threads do not inherit `process.env` mutations from parent (they get a snapshot at spawn time, but explicit re-load keeps the contract local).
+
+## Chain registry
+
+Chain config lives in `server/tools/chains/`:
+
+- `params.ts` — `CHAIN_PARAMS: ChainParams[]` is the single source of truth for runtime chain config. Each entry binds a slug (`name`) to its display label, on-chain `chainId`, upstream base URL (literal string in source — no env read at module load), and the env-var name that holds its API key (`apiKeyEnv`). `getChainParams(name)` throws on unknown slugs.
+- `chains.ts` — exports the slug list derived from `CHAIN_PARAMS` for ergonomic imports in dispatcher / job code.
+
+Adding a chain: append an entry to `CHAIN_PARAMS` (including the upstream URL literal), add the row to `chains` (seed + migration), supply the `<CHAIN>_INDEXER_API_KEY` env var, restart the worker.
 
 ## Dispatcher (`task-worker.ts`)
 

@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { getAssetsBreakdown } from "@/services/assets-service";
 import type {
   AssetsSort,
   SortOrder,
 } from "@/services/assets-service";
+import { CHAIN_DISPLAY_NAMES, isChainName } from "@/lib/chains";
 import PeriodTabs, {
   type Period,
 } from "@/components/dashboard/period-tabs";
@@ -12,6 +15,10 @@ import DirectionToggle, {
 import AssetsTable from "@/components/assets/assets-table";
 
 export const dynamic = "force-dynamic";
+
+interface RouteParams {
+  chain: string;
+}
 
 interface SearchParams {
   period?: string;
@@ -41,11 +48,26 @@ const periodLabel: Record<Period, string> = {
   "30d": "last 30 days",
 };
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<RouteParams>;
+}): Promise<Metadata> {
+  const { chain } = await params;
+  if (!isChainName(chain)) return { title: "Crosschain IBC Indexer" };
+  return { title: `${CHAIN_DISPLAY_NAMES[chain]} assets` };
+}
+
 export default async function AssetsPage({
+  params,
   searchParams,
 }: {
+  params: Promise<RouteParams>;
   searchParams: Promise<SearchParams>;
 }) {
+  const { chain } = await params;
+  if (!isChainName(chain)) notFound();
+
   const sp = await searchParams;
   const period: Period = isPeriod(sp.period) ? sp.period : "24h";
   const direction: Direction = isDirection(sp.direction)
@@ -68,6 +90,7 @@ export default async function AssetsPage({
     offset,
     sort,
     order,
+    chain,
   });
 
   const totalUsd = Number(breakdown.totals.amount_usd);
@@ -78,15 +101,10 @@ export default async function AssetsPage({
   );
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
-          Assets
-        </h1>
-        <p className="font-sfpro text-sm text-white/60">
-          Per-asset transfer counts and volume · {periodLabel[period]}
-        </p>
-      </header>
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
+      <p className="font-sfpro text-sm text-white/55">
+        Per-asset transfer counts and volume · {periodLabel[period]}
+      </p>
 
       <div className="flex flex-wrap items-center gap-3">
         <PeriodTabs defaultValue={period} />

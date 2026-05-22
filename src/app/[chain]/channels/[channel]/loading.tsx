@@ -9,7 +9,7 @@ export default function ChannelDetailLoading() {
           ‹ back to dashboard
         </span>
         <h1 className="font-handjet text-highlight text-4xl tracking-wide uppercase">
-          Cosmos Hub
+          Channel
         </h1>
         <p className="font-sfpro text-sm text-white/40">loading channel…</p>
       </header>

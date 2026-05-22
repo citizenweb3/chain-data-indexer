@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { db } from '@/db';
+import type { ChainName } from '@/lib/chains';
 import { formatNative } from '@/utils/format-amount';
 import { formatDenomDisplay } from '@/utils/format-denom';
 
@@ -25,6 +26,7 @@ export type ChannelDenom = {
 };
 
 export type ChannelDto = {
+  chain: ChainName;
   channel_id_src: string;
   port_id_src: string;
   channel_id_dst: string | null;
@@ -52,6 +54,9 @@ const directionFilter = (direction: ChannelsDirection): Prisma.Sql =>
     ? Prisma.sql`p.direction IN ('outgoing','incoming')`
     : Prisma.sql`p.direction = ${direction}`;
 
+const chainFilterP = (chain: ChainName | null): Prisma.Sql =>
+  chain ? Prisma.sql`AND p.chain = ${chain}` : Prisma.empty;
+
 const hubChannelExpr = Prisma.sql`
   CASE WHEN p.direction = 'outgoing' THEN p.channel_id_src
        WHEN p.direction = 'incoming' THEN p.channel_id_dst
@@ -59,6 +64,7 @@ const hubChannelExpr = Prisma.sql`
 `;
 
 type HubChannelRow = {
+  chain: string;
   channel_id_src: string;
   port_id_src: string;
   counterparty_channel_id: string | null;
@@ -66,19 +72,23 @@ type HubChannelRow = {
   counterparty_chain_name: string | null;
 };
 
-const queryHubChannels = async (): Promise<HubChannelRow[]> => {
+const queryHubChannels = async (chain: ChainName | null): Promise<HubChannelRow[]> => {
   return db.$queryRaw<HubChannelRow[]>(Prisma.sql`
     SELECT
+      chain,
       channel_id_src,
       port_id_src,
       counterparty_channel_id,
       counterparty_chain_id,
       counterparty_chain_name
     FROM ibc_channels
+    WHERE 1=1
+      ${chain ? Prisma.sql`AND chain = ${chain}` : Prisma.empty}
   `);
 };
 
 type ChannelMetaRow = {
+  chain: string;
   hub_channel: string | null;
   last_activity: Date | null;
   delivered_30d: bigint;
@@ -88,9 +98,11 @@ type ChannelMetaRow = {
 const queryChannelsMeta = async (
   direction: ChannelsDirection,
   thirtyDaysAgo: Date,
+  chain: ChainName | null,
 ): Promise<ChannelMetaRow[]> => {
   return db.$queryRaw<ChannelMetaRow[]>(Prisma.sql`
     SELECT
+      p.chain AS chain,
       ${hubChannelExpr} AS hub_channel,
       MAX(p.event_time) AS last_activity,
       COUNT(*) FILTER (
@@ -102,11 +114,13 @@ const queryChannelsMeta = async (
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${thirtyDaysAgo}
       AND ${directionFilter(direction)}
-    GROUP BY hub_channel
+      ${chainFilterP(chain)}
+    GROUP BY p.chain, hub_channel
   `);
 };
 
 type WindowAggRow = {
+  chain: string;
   hub_channel: string | null;
   transfers_count: bigint;
   amount_native: Prisma.Decimal | null;
@@ -116,6 +130,7 @@ type WindowAggRow = {
 const queryWindowAggregates = async (
   direction: ChannelsDirection,
   fromTime: Date,
+  chain: ChainName | null,
 ): Promise<WindowAggRow[]> => {
   const spotFrom = new Date(fromTime.getTime() - MS_PER_DAY);
   return db.$queryRaw<WindowAggRow[]>(Prisma.sql`
@@ -129,6 +144,7 @@ const queryWindowAggregates = async (
       ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
     )
     SELECT
+      p.chain AS chain,
       ${hubChannelExpr} AS hub_channel,
       COUNT(*)::bigint AS transfers_count,
       COALESCE(SUM(CASE WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM} THEN p.amount END), 0) AS amount_native,
@@ -149,11 +165,13 @@ const queryWindowAggregates = async (
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${fromTime}
       AND ${directionFilter(direction)}
-    GROUP BY hub_channel
+      ${chainFilterP(chain)}
+    GROUP BY p.chain, hub_channel
   `);
 };
 
 type ChannelDenomRow = {
+  chain: string;
   hub_channel: string | null;
   base_denom: string;
   raw_denom: string | null;
@@ -169,6 +187,7 @@ const TOP_DENOMS_PER_CHANNEL = 3;
 const queryChannelDenoms = async (
   direction: ChannelsDirection,
   thirtyDaysAgo: Date,
+  chain: ChainName | null,
 ): Promise<ChannelDenomRow[]> => {
   return db.$queryRaw<ChannelDenomRow[]>(Prisma.sql`
     WITH daily_spot_prices AS (
@@ -180,6 +199,7 @@ const queryChannelDenoms = async (
       ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
     )
     SELECT
+      p.chain AS chain,
       ${hubChannelExpr} AS hub_channel,
       resolve_base_denom(p.denom) AS base_denom,
       p.denom AS raw_denom,
@@ -205,7 +225,8 @@ const queryChannelDenoms = async (
       AND p.event_time >= ${thirtyDaysAgo}
       AND p.denom IS NOT NULL
       AND ${directionFilter(direction)}
-    GROUP BY hub_channel, resolve_base_denom(p.denom), p.denom, a.symbol, a.decimals
+      ${chainFilterP(chain)}
+    GROUP BY p.chain, hub_channel, resolve_base_denom(p.denom), p.denom, a.symbol, a.decimals
   `);
 };
 
@@ -253,6 +274,8 @@ const compareDto = (sort: ChannelsSort, order: SortOrder, period: ChannelsPeriod
   };
 };
 
+const makeKey = (chain: string, hubChannel: string): string => `${chain}::${hubChannel}`;
+
 export const listChannels = async (params: {
   direction: ChannelsDirection;
   period: ChannelsPeriod;
@@ -260,6 +283,7 @@ export const listChannels = async (params: {
   order: SortOrder;
   limit: number;
   offset: number;
+  chain: ChainName | null;
 }): Promise<ChannelsResult> => {
   const now = new Date();
   const midnight = new Date(now);
@@ -269,18 +293,18 @@ export const listChannels = async (params: {
   const window24hStart = new Date(now.getTime() - MS_PER_DAY);
 
   const [hubChannels, meta, agg24h, agg7d, agg30d, denomRows] = await Promise.all([
-    queryHubChannels(),
-    queryChannelsMeta(params.direction, thirtyDaysAgo),
-    queryWindowAggregates(params.direction, window24hStart),
-    queryWindowAggregates(params.direction, sevenDaysAgo),
-    queryWindowAggregates(params.direction, thirtyDaysAgo),
-    queryChannelDenoms(params.direction, thirtyDaysAgo),
+    queryHubChannels(params.chain),
+    queryChannelsMeta(params.direction, thirtyDaysAgo, params.chain),
+    queryWindowAggregates(params.direction, window24hStart, params.chain),
+    queryWindowAggregates(params.direction, sevenDaysAgo, params.chain),
+    queryWindowAggregates(params.direction, thirtyDaysAgo, params.chain),
+    queryChannelDenoms(params.direction, thirtyDaysAgo, params.chain),
   ]);
 
   const metaByChannel = new Map<string, ChannelMetaRow>();
   for (const m of meta) {
     if (m.hub_channel === null) continue;
-    metaByChannel.set(m.hub_channel, m);
+    metaByChannel.set(makeKey(m.chain, m.hub_channel), m);
   }
 
   const buckets = new Map<string, ChannelBuckets>();
@@ -294,15 +318,15 @@ export const listChannels = async (params: {
   };
   for (const r of agg24h) {
     if (r.hub_channel === null) continue;
-    fillBucket(getBuckets(r.hub_channel)['24h'], r);
+    fillBucket(getBuckets(makeKey(r.chain, r.hub_channel))['24h'], r);
   }
   for (const r of agg7d) {
     if (r.hub_channel === null) continue;
-    fillBucket(getBuckets(r.hub_channel)['7d'], r);
+    fillBucket(getBuckets(makeKey(r.chain, r.hub_channel))['7d'], r);
   }
   for (const r of agg30d) {
     if (r.hub_channel === null) continue;
-    fillBucket(getBuckets(r.hub_channel)['30d'], r);
+    fillBucket(getBuckets(makeKey(r.chain, r.hub_channel))['30d'], r);
   }
 
   type DenomEntry = {
@@ -316,7 +340,7 @@ export const listChannels = async (params: {
   const denomsAggByChannel = new Map<string, Map<string, DenomEntry>>();
   for (const r of denomRows) {
     if (r.hub_channel === null) continue;
-    const channelKey = r.hub_channel;
+    const channelKey = makeKey(r.chain, r.hub_channel);
     const denomKey = r.base_denom;
     const agg =
       denomsAggByChannel.get(channelKey) ?? new Map<string, DenomEntry>();
@@ -368,12 +392,14 @@ export const listChannels = async (params: {
   }
 
   const dtos: ChannelDto[] = hubChannels.map((h) => {
-    const m = metaByChannel.get(h.channel_id_src);
-    const b = buckets.get(h.channel_id_src) ?? newBuckets();
+    const key = makeKey(h.chain, h.channel_id_src);
+    const m = metaByChannel.get(key);
+    const b = buckets.get(key) ?? newBuckets();
     const delivered = m ? Number(m.delivered_30d) : 0;
     const failed = m ? Number(m.failed_30d) : 0;
     const denom = delivered + failed;
     return {
+      chain: h.chain as ChainName,
       channel_id_src: h.channel_id_src,
       port_id_src: h.port_id_src,
       channel_id_dst: h.counterparty_channel_id,
@@ -397,7 +423,7 @@ export const listChannels = async (params: {
       success_rate_30d: denom > 0 ? delivered / denom : null,
       last_activity:
         m && m.last_activity !== null ? m.last_activity.toISOString() : null,
-      denoms: denomsByChannel.get(h.channel_id_src) ?? [],
+      denoms: denomsByChannel.get(key) ?? [],
     };
   });
 

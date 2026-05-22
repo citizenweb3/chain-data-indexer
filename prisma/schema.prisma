@@ -6,7 +6,22 @@ datasource db {
   provider = "postgresql"
 }
 
+model Chain {
+  name        String   @id
+  displayName String   @map("display_name")
+  chainId     String   @unique @map("chain_id")
+  createdAt   DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  packets  IbcPacket[]
+  stats    IbcDailyStats[]
+  channels IbcChannel[]
+  cursors  SyncCursor[]
+
+  @@map("chains")
+}
+
 model IbcPacket {
+  chain         String
   channelIdSrc  String  @map("channel_id_src")
   portIdSrc     String  @map("port_id_src")
   sequence      BigInt
@@ -32,10 +47,12 @@ model IbcPacket {
 
   syncedAt DateTime @default(now()) @map("synced_at")
 
-  @@id([channelIdSrc, portIdSrc, sequence])
-  @@index([eventTime(sort: Desc)])
-  @@index([channelIdSrc, direction, eventTime(sort: Desc)])
-  @@index([denom, eventTime(sort: Desc)])
+  chainRef Chain @relation(fields: [chain], references: [name])
+
+  @@id([chain, channelIdSrc, portIdSrc, sequence])
+  @@index([chain, eventTime(sort: Desc)])
+  @@index([chain, channelIdSrc, direction, eventTime(sort: Desc)])
+  @@index([chain, denom, eventTime(sort: Desc)])
   @@map("ibc_packets")
 }
 
@@ -76,6 +93,7 @@ model PriceHistory {
 model IbcDailyStats {
   id Int @id @default(autoincrement())
 
+  chain        String
   date         DateTime @db.Date
   channelIdSrc String?  @map("channel_id_src")
   direction    String
@@ -87,12 +105,15 @@ model IbcDailyStats {
 
   recomputedAt DateTime @updatedAt @map("recomputed_at")
 
-  @@unique([date, channelIdSrc, direction, denom], map: "ibc_daily_stats_dim_uniq")
-  @@index([date])
+  chainRef Chain @relation(fields: [chain], references: [name])
+
+  @@unique([chain, date, channelIdSrc, direction, denom], map: "ibc_daily_stats_dim_uniq")
+  @@index([chain, date])
   @@map("ibc_daily_stats")
 }
 
 model IbcChannel {
+  chain                 String
   channelIdSrc          String  @map("channel_id_src")
   portIdSrc             String  @map("port_id_src")
   counterpartyChainId   String  @map("counterparty_chain_id")
@@ -104,19 +125,25 @@ model IbcChannel {
 
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@id([channelIdSrc, portIdSrc])
+  chainRef Chain @relation(fields: [chain], references: [name])
+
+  @@id([chain, channelIdSrc, portIdSrc])
   @@index([counterpartyChainId])
   @@index([counterpartyChannelId, counterpartyPortId], map: "ibc_channels_counterparty_channel_idx")
   @@map("ibc_channels")
 }
 
 model SyncCursor {
-  key             String   @id
+  chain           String
+  key             String
   lastEventHeight BigInt?  @map("last_event_height")
   lastSequence    BigInt?  @map("last_sequence")
   lastChannel     String?  @map("last_channel")
   lastPort        String?  @map("last_port")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  chainRef Chain @relation(fields: [chain], references: [name])
+
+  @@id([chain, key])
   @@map("sync_cursors")
 }

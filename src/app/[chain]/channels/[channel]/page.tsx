@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { listChannels } from "@/services/channels-service";
+import { CHAIN_DISPLAY_NAMES, isChainName } from "@/lib/chains";
 import PeriodTabs, {
   type Period,
 } from "@/components/dashboard/period-tabs";
@@ -19,6 +21,7 @@ import PendingSwitch from "@/components/layout/pending-switch";
 export const dynamic = "force-dynamic";
 
 interface RouteParams {
+  chain: string;
   channel: string;
 }
 
@@ -52,6 +55,17 @@ const formatUsd = (s: string) => {
   return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 };
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<RouteParams>;
+}): Promise<Metadata> {
+  const { chain, channel } = await params;
+  if (!isChainName(chain)) return { title: "Crosschain IBC Indexer" };
+  const decoded = decodeURIComponent(channel);
+  return { title: `${CHAIN_DISPLAY_NAMES[chain]} · ${decoded}` };
+}
+
 export default async function ChannelDetailPage({
   params,
   searchParams,
@@ -59,7 +73,8 @@ export default async function ChannelDetailPage({
   params: Promise<RouteParams>;
   searchParams: Promise<SearchParams>;
 }) {
-  const { channel } = await params;
+  const { chain, channel } = await params;
+  if (!isChainName(chain)) notFound();
   const decoded = decodeURIComponent(channel);
 
   if (!CHANNEL_RE.test(decoded)) notFound();
@@ -79,6 +94,7 @@ export default async function ChannelDetailPage({
     order: "desc",
     limit: 1000,
     offset: 0,
+    chain,
   });
 
   const channelRow = channelsResult.data.find(
@@ -95,7 +111,8 @@ export default async function ChannelDetailPage({
   if (!currentSearch.has("direction"))
     currentSearch.set("direction", direction);
 
-  const k = `${decoded}-${period}-${direction}`;
+  const k = `${chain}-${decoded}-${period}-${direction}`;
+  const chainDisplayName = CHAIN_DISPLAY_NAMES[chain];
   const counterpartyName = channelRow.counterparty_chain_name
     ? `${channelRow.counterparty_chain_name.charAt(0).toUpperCase()}${channelRow.counterparty_chain_name.slice(1)}`
     : null;
@@ -104,13 +121,13 @@ export default async function ChannelDetailPage({
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
       <header className="flex flex-col gap-2">
         <Link
-          href="/dashboard"
+          href={`/${chain}/dashboard`}
           className="font-sfpro text-xs uppercase tracking-wide text-white/50 hover:text-highlight"
         >
           ‹ back to dashboard
         </Link>
         <h1 className="font-handjet text-highlight text-4xl tracking-wide uppercase">
-          Cosmos Hub
+          {chainDisplayName}
           {counterpartyName ? ` → ${counterpartyName}` : ""}
         </h1>
         <p className="font-sfpro text-sm text-white/60">
@@ -173,6 +190,7 @@ export default async function ChannelDetailPage({
                 direction={direction}
                 channelIdSrc={decoded}
                 variant="full"
+                chain={chain}
               />
             </PendingSwitch>
           </Suspense>
@@ -198,6 +216,7 @@ export default async function ChannelDetailPage({
                 direction={direction}
                 channelIdSrc={decoded}
                 variant="full"
+                chain={chain}
               />
             </PendingSwitch>
           </Suspense>
@@ -220,6 +239,7 @@ export default async function ChannelDetailPage({
               limit={PAGE_LIMIT}
               offset={offset}
               currentSearch={currentSearch}
+              chain={chain}
             />
           </PendingSwitch>
         </Suspense>

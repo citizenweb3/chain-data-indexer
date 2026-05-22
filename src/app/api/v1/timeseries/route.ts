@@ -18,6 +18,7 @@ export const GET = async (request: Request): Promise<Response> => {
             metric: parsed.data.metric,
             direction: parsed.data.direction,
             channelIdSrc: parsed.data.channel_id_src,
+            chain: null,
           })
         : await getTimeseries({
             metric: parsed.data.metric,
@@ -25,6 +26,7 @@ export const GET = async (request: Request): Promise<Response> => {
             from: parsed.data.from,
             to: parsed.data.to,
             channelIdSrc: parsed.data.channel_id_src,
+            chain: null,
           });
     return okJson(result, 'public, max-age=60');
   } catch (e) {

@@ -10,6 +10,7 @@ const log = logger('sync-ibc-transfers');
 
 const PAGE_SIZE = 100;
 const BACKFILL_DAYS = 30;
+const CURSOR_KEY = 'sync-ibc-transfers';
 
 type PacketCursor = {
   eventHeight: bigint;
@@ -37,9 +38,9 @@ const compareCursor = (
   return 0;
 };
 
-const readLatestPacket = async (): Promise<PacketCursor | null> => {
+const readLatestPacket = async (chain: string): Promise<PacketCursor | null> => {
   const row = await db.ibcPacket.findFirst({
-    where: { eventHeight: { not: null } },
+    where: { chain, eventHeight: { not: null } },
     orderBy: [
       { eventHeight: 'desc' },
       { sequence: 'desc' },
@@ -62,9 +63,9 @@ const readLatestPacket = async (): Promise<PacketCursor | null> => {
   };
 };
 
-const readEarliestEventTime = async (): Promise<Date | null> => {
+const readEarliestEventTime = async (chain: string): Promise<Date | null> => {
   const row = await db.ibcPacket.findFirst({
-    where: { eventTime: { not: null } },
+    where: { chain, eventTime: { not: null } },
     orderBy: [{ eventTime: 'asc' }],
     select: { eventTime: true },
   });
@@ -77,7 +78,7 @@ const parseAmount = (value: string | null): string | null => {
   return value;
 };
 
-const upsertPacket = async (dto: IbcTransferDto): Promise<boolean> => {
+const upsertPacket = async (chain: string, dto: IbcTransferDto): Promise<boolean> => {
   const sequence = BigInt(dto.sequence);
   const eventHeight = dto.event_height !== null ? BigInt(dto.event_height) : null;
   const eventTime = dto.event_time !== null ? new Date(dto.event_time) : null;
@@ -110,7 +111,8 @@ const upsertPacket = async (dto: IbcTransferDto): Promise<boolean> => {
 
   const existing = await db.ibcPacket.findUnique({
     where: {
-      channelIdSrc_portIdSrc_sequence: {
+      chain_channelIdSrc_portIdSrc_sequence: {
+        chain,
         channelIdSrc: dto.channel_id_src,
         portIdSrc: dto.port_id_src,
         sequence,
@@ -122,7 +124,8 @@ const upsertPacket = async (dto: IbcTransferDto): Promise<boolean> => {
   if (existing) {
     await db.ibcPacket.update({
       where: {
-        channelIdSrc_portIdSrc_sequence: {
+        chain_channelIdSrc_portIdSrc_sequence: {
+          chain,
           channelIdSrc: dto.channel_id_src,
           portIdSrc: dto.port_id_src,
           sequence,
@@ -135,6 +138,7 @@ const upsertPacket = async (dto: IbcTransferDto): Promise<boolean> => {
 
   await db.ibcPacket.create({
     data: {
+      chain,
       channelIdSrc: dto.channel_id_src,
       portIdSrc: dto.port_id_src,
       sequence,
@@ -144,17 +148,40 @@ const upsertPacket = async (dto: IbcTransferDto): Promise<boolean> => {
   return true;
 };
 
-export const runSyncIbcTransfers = async (): Promise<void> => {
+const writeCursor = async (
+  chain: string,
+  latest: PacketCursor | null,
+): Promise<void> => {
+  await db.syncCursor.upsert({
+    where: { chain_key: { chain, key: CURSOR_KEY } },
+    create: {
+      chain,
+      key: CURSOR_KEY,
+      lastEventHeight: latest?.eventHeight ?? null,
+      lastSequence: latest?.sequence ?? null,
+      lastChannel: latest?.channel ?? null,
+      lastPort: latest?.port ?? null,
+    },
+    update: {
+      lastEventHeight: latest?.eventHeight ?? null,
+      lastSequence: latest?.sequence ?? null,
+      lastChannel: latest?.channel ?? null,
+      lastPort: latest?.port ?? null,
+    },
+  });
+};
+
+const syncOneChain = async (chain: string): Promise<void> => {
   const startedAt = Date.now();
-  log.logInfo('sync-ibc-transfers started');
+  log.logInfo(`[${chain}] sync-ibc-transfers started`);
 
   const backfillCutoff = new Date(Date.now() - BACKFILL_DAYS * 24 * 60 * 60 * 1000);
-  const latest = await readLatestPacket();
-  const earliestEventTime = await readEarliestEventTime();
+  const latest = await readLatestPacket(chain);
+  const earliestEventTime = await readEarliestEventTime(chain);
   const windowComplete =
     earliestEventTime !== null && earliestEventTime <= backfillCutoff;
 
-  log.logInfo('sync-ibc-transfers: state', {
+  log.logInfo(`[${chain}] sync-ibc-transfers: state`, {
     hasLatest: latest !== null,
     earliestEventTime: earliestEventTime?.toISOString() ?? null,
     backfillCutoff: backfillCutoff.toISOString(),
@@ -172,6 +199,7 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
   let updatedCount = 0;
   let skippedCount = 0;
   let stopped = false;
+  const discoveredChannels = new Set<string>();
 
   while (true) {
     const params: Record<string, string | number | undefined> = {
@@ -182,12 +210,12 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
       before_port: beforePort,
     };
 
-    const response = await fetchUpstream<IbcTransfersListResponse>('/ibc/transfers', params);
+    const response = await fetchUpstream<IbcTransfersListResponse>(chain, '/ibc/transfers', params);
     pagesFetched++;
 
     const items = response.data;
     if (items.length === 0) {
-      log.logInfo('upstream returned empty page', { pagesFetched });
+      log.logInfo(`[${chain}] upstream returned empty page`, { pagesFetched });
       break;
     }
 
@@ -217,9 +245,17 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
         break;
       }
 
-      const inserted = await upsertPacket(dto);
+      const inserted = await upsertPacket(chain, dto);
       if (inserted) newCount++;
       else updatedCount++;
+
+      const hubChannel =
+        dto.direction === 'incoming' ? dto.channel_id_dst : dto.channel_id_src;
+      const hubPort =
+        dto.direction === 'incoming' ? dto.port_id_dst : dto.port_id_src;
+      if (hubChannel && hubPort) {
+        discoveredChannels.add(`${hubChannel}|${hubPort}`);
+      }
     }
 
     if (stopped) break;
@@ -231,13 +267,48 @@ export const runSyncIbcTransfers = async (): Promise<void> => {
     beforePort = response.cursor.next_before_port;
   }
 
+  await writeCursor(chain, await readLatestPacket(chain));
+
+  let discoveredInserted = 0;
+  if (discoveredChannels.size > 0) {
+    const rows = [...discoveredChannels].map((key) => {
+      const [channelIdSrc, portIdSrc] = key.split('|');
+      return {
+        chain,
+        channelIdSrc,
+        portIdSrc,
+        counterpartyChainId: '__unknown__',
+        counterpartyChainName: '__unknown__',
+      };
+    });
+    const result = await db.ibcChannel.createMany({
+      data: rows,
+      skipDuplicates: true,
+    });
+    discoveredInserted = result.count;
+  }
+
   const elapsedMs = Date.now() - startedAt;
-  log.logInfo('sync-ibc-transfers finished', {
+  log.logInfo(`[${chain}] sync-ibc-transfers finished`, {
     new: newCount,
     updated: updatedCount,
     skipped: skippedCount,
+    discoveredChannels: discoveredChannels.size,
+    discoveredInserted,
     pagesFetched,
     elapsedMs,
     mode: windowComplete ? 'delta' : 'backfill',
   });
+};
+
+export const runSyncIbcTransfers = async (chains: string[]): Promise<void> => {
+  await Promise.allSettled(
+    chains.map(async (chain) => {
+      try {
+        await syncOneChain(chain);
+      } catch (err) {
+        log.logError(`[${chain}] sync-ibc-transfers failed`, err);
+      }
+    }),
+  );
 };

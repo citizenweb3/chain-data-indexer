@@ -6,6 +6,7 @@ import {
   type SortOrder,
 } from "@/services/channels-service";
 import ChannelsTable from "@/components/dashboard/channels-table";
+import type { ChainName } from "@/lib/chains";
 
 interface AsyncChannelsTableProps {
   direction: ChannelsDirection;
@@ -15,6 +16,7 @@ interface AsyncChannelsTableProps {
   limit: number;
   offset: number;
   currentSearch: URLSearchParams;
+  chain: ChainName;
 }
 
 export default async function AsyncChannelsTable({
@@ -25,6 +27,7 @@ export default async function AsyncChannelsTable({
   limit,
   offset,
   currentSearch,
+  chain,
 }: AsyncChannelsTableProps) {
   const channels = await listChannels({
     direction,
@@ -33,6 +36,7 @@ export default async function AsyncChannelsTable({
     order,
     limit,
     offset,
+    chain,
   });
   const pageLength = Math.max(1, Math.ceil(channels.page.total / limit));
   return (
@@ -41,6 +45,7 @@ export default async function AsyncChannelsTable({
       period={period}
       pageLength={pageLength}
       currentSearch={currentSearch}
+      chain={chain}
     />
   );
 }

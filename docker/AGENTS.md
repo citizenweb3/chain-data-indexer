@@ -61,14 +61,14 @@ Four services. No `version:` key — compose v2 deprecated it.
 ### `web`
 
 - Built from `Dockerfile.web`.
-- Env: `DATABASE_URL`, `LOG_LEVEL`, `PORT` (only — `UPSTREAM_*` and `COINGECKO_API_KEY` are intentionally **not** passed so the public surface never sees secrets).
+- Env: `DATABASE_URL`, `LOG_LEVEL`, `PORT` (only — the per-chain `<CHAIN>_INDEXER_*` upstream secrets and `COINGECKO_API_KEY` are intentionally **not** passed so the public surface never sees secrets).
 - Port mapping `${PORT}:3000` (defaults to `3000:3000`).
 - `depends_on`: `postgres` healthy **and** `migrations` completed successfully — won't accept traffic against a schema that hasn't caught up.
 
 ### `worker`
 
 - Built from `Dockerfile.worker`.
-- Env: everything the jobs need — `DATABASE_URL`, `UPSTREAM_INDEXER_BASE_URL`, `UPSTREAM_INDEXER_API_KEY`, `COINGECKO_API_KEY`, `LOG_LEVEL`.
+- Env: everything the jobs need — `DATABASE_URL`, the per-chain `<CHAIN>_INDEXER_API_KEY` for each chain in `server/tools/chains/params.ts` (upstream URLs are in source: `server/tools/chains/params.ts`; currently `COSMOSHUB_*` and `ATOMONE_*`), `COINGECKO_API_KEY`, `LOG_LEVEL`.
 - No published ports.
 - Same gate as `web`: healthy DB + migrations complete.
 
@@ -83,7 +83,7 @@ Keep this file in sync with the env table in the [top-level `AGENTS.md`](../AGEN
 1. Update `.env.example` with a placeholder and a one-line comment explaining purpose.
 2. Update the top-level `AGENTS.md` env table.
 3. If the var is consumed by a container, add it to the matching `environment:` block in `docker-compose.yml`.
-4. **Never** put real secrets in `.env.example`. The committed `UPSTREAM_INDEXER_API_KEY=replace-me` is intentional.
+4. **Never** put real secrets in `.env.example`. Per-chain placeholders such as `COSMOSHUB_INDEXER_API_KEY=replace-me` / `ATOMONE_INDEXER_API_KEY=replace-me` are intentional — they document the contract without leaking credentials.
 
 `.env` is gitignored; the `!.env.example` exception in `.gitignore` keeps the template tracked.
 

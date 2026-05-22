@@ -12,13 +12,14 @@ Stateless helpers shared by `server/jobs/`. Each tool is a thin, single-purpose 
 
 ## `upstream-client.ts`
 
-Single export: `fetchUpstream<T>(path, params?) → Promise<T>`. Wraps `fetch` with:
+Single export: `fetchUpstream<T>(chain, path, params?) → Promise<T>`. Wraps `fetch` with:
 
-- Base URL from `UPSTREAM_INDEXER_BASE_URL` (e.g. `https://indexer.example.com/api/v1`).
-- Auth header `x-api-key: $UPSTREAM_INDEXER_API_KEY`.
+- Base URL resolved per-chain via `getChainParams(chain).upstreamBaseUrl` — a literal string in `server/tools/chains/params.ts` — no env lookup.
+- Auth header `x-api-key: <value>` resolved per-chain from the env name declared in `ChainParams.apiKeyEnv` (e.g. `COSMOSHUB_INDEXER_API_KEY`, `ATOMONE_INDEXER_API_KEY`). Validated on first use, never logged.
 - Query params via `URL.searchParams.set` — `null` / `undefined` values are dropped.
 - 5 retry attempts × 1500 ms backoff for transient errors.
 - 60 second cooldown on HTTP 429 (does **not** consume a retry attempt — 429 is a back-pressure signal, not a failure).
+- Every log line is prefixed `[${chain}]` so multi-chain runs are auditable.
 
 Throws `UpstreamError` on non-OK responses after retries exhausted; throws the underlying network error if all 5 attempts threw.
 

@@ -6,16 +6,19 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 
 | File | Purpose |
 |------|---------|
-| `schema.prisma` | 7 models — `IbcPacket`, `Asset`, `Price`, `PriceHistory`, `IbcDailyStats`, `IbcChannel`, `SyncCursor` |
+| `schema.prisma` | 8 models — `Chain`, `IbcPacket`, `Asset`, `Price`, `PriceHistory`, `IbcDailyStats`, `IbcChannel`, `SyncCursor` |
 | `migrations/20260515075735_init/migration.sql` | Initial DDL — includes hand-patched `NULLS NOT DISTINCT` index |
 | `migrations/20260517120000_add_ibc_channels/migration.sql` | `ibc_channels` lookup table for counterparty chain metadata |
-| `seed.ts` | Idempotent upsert of ~56 assets and 80 IBC channels (see `ASSETS` + `IBC_CHANNELS` arrays) |
+| `migrations/20260521073429_add_chain_multitenancy/migration.sql` | `chains` registry + `chain` dimension on `ibc_packets`, `ibc_daily_stats`, `ibc_channels`, `sync_cursors` |
+| `seed.ts` | Idempotent upsert of 2 chains, ~57 assets, and 80 IBC channels (see `CHAINS_SEED` + `ASSETS` + `IBC_CHANNELS` arrays) |
 
 `prisma.config.ts` lives in the repo root, **not here**. Prisma 7 mandates it (replaces `datasource.url` in the schema). It loads `DATABASE_URL` via `dotenv/config` and wires the `prisma/seed.ts` runner. Touch it if migration paths or seed command change.
 
 ## Models
 
-`IbcPacket` — local mirror of upstream `/api/v1/ibc/transfers`. PK `(channelIdSrc, portIdSrc, sequence)`. Nullable `event_height` / `event_time` for transient `sent` packets that have no block yet. `amount: Decimal(80, 0)` matches upstream `NUMERIC(80,0)` — never coerce to JS `number`.
+`Chain` — registry of supported networks. Text PK on `name` (the URL slug, e.g. `cosmoshub`, `atomone`). `displayName` and `chainId` are the UI label and the on-chain network id. Every other storage table FKs to `chains.name`; the slug **is** the join key — no JOIN needed for filtering. Seeded by `seed.ts` (`CHAINS_SEED`). Adding a chain in production requires (a) appending a row to `CHAINS_SEED`, (b) adding a config entry in `server/tools/chains/params.ts`, and (c) supplying the `<CHAIN>_INDEXER_API_KEY` env var (upstream URL lives in `server/tools/chains/params.ts`).
+
+`IbcPacket` — local mirror of upstream `/api/v1/ibc/transfers`. PK `(chain, channelIdSrc, portIdSrc, sequence)`. Nullable `event_height` / `event_time` for transient `sent` packets that have no block yet. `amount: Decimal(80, 0)` matches upstream `NUMERIC(80,0)` — never coerce to JS `number`.
 
 `Asset` — coingecko-priced asset registry. `nativeDenom` is unique (used by `getAssetByDenom`). Seeded with ~56 assets — see `seed.ts` `ASSETS` constant. The seed is idempotent (upsert by `nativeDenom`), so re-running it after adding a row only inserts the new one.
 
@@ -25,9 +28,28 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 
 `IbcDailyStats` — pre-aggregated rollup for the API stats/channels/timeseries services. Pre-cube of 4 `GROUPING SETS` levels; see `server/jobs/AGENTS.md`. Schema uses a **synthetic `id` PK + a separate `@@unique(...)` on the dim tuple** — read the rationale below.
 
-`IbcChannel` — static lookup of cosmoshub-4 IBC channels to their counterparty chain (chain-registry mainnet). PK `(channelIdSrc, portIdSrc)`. Seeded from `prisma/seed.ts` `IBC_CHANNELS` array, which is generated from `github.com/cosmos/chain-registry` `_IBC/*cosmoshub*.json` — do **not** hand-edit individual rows. To regenerate the array, sparse-clone the registry, run the jq pipeline in the working notes, and replace the array verbatim. `counterpartyChainName` is the registry slug (lowercase, no separators); UI is responsible for display casing.
+`IbcChannel` — per-chain lookup of IBC channels to their counterparty chain (chain-registry mainnet). PK `(chain, channelIdSrc, portIdSrc)`. Seeded from `prisma/seed.ts` `IBC_CHANNELS` array, which is generated from `github.com/cosmos/chain-registry` `_IBC/*.json` for every supported chain — do **not** hand-edit individual rows. To regenerate the array, sparse-clone the registry, run the jq pipeline in the working notes, and replace the array verbatim. `counterpartyChainName` is the registry slug (lowercase, no separators); UI is responsible for display casing.
 
-`SyncCursor` — single-row-per-job watermark store. `key` is the job name (`ibc-transfers`). All last_* columns are nullable to allow first-run absence.
+`SyncCursor` — per-chain, per-job watermark store. PK `(chain, key)`. `key` is the job name (`sync-ibc-transfers`, `recompute-daily-stats`). All last_* columns are nullable to allow first-run absence.
+
+## Multi-chain: `(chain, ...)` PK convention
+
+All four storage tables include `chain TEXT NOT NULL REFERENCES chains(name)` as the first column of their PK / unique index:
+
+| Table | PK / UNIQUE |
+|---|---|
+| `ibc_packets` | PK `(chain, channel_id_src, port_id_src, sequence)` |
+| `ibc_daily_stats` | UNIQ `(chain, date, channel_id_src, direction, denom)` (NULLS NOT DISTINCT) |
+| `ibc_channels` | PK `(chain, channel_id_src, port_id_src)` |
+| `sync_cursors` | PK `(chain, key)` |
+
+Secondary indexes are likewise chain-prefixed (`ibc_packets_chain_event_time_idx`, etc.) so per-chain reads stay on a single B-tree subtree. The two `IbcChannel` counterparty indexes (`counterparty_chain_id`, `counterparty_channel_id+counterparty_port_id`) are deliberately **not** chain-prefixed — reverse lookups across chains for the combined view are a valid use case.
+
+When upserting from application code, the compound-key fields are nested under `chain_<...>` (e.g. `db.ibcPacket.upsert({ where: { chain_channelIdSrc_portIdSrc_sequence: { chain, channelIdSrc, portIdSrc, sequence } } })`). Forgetting the leading `chain_` is the most common Prisma-7 error after this refactor.
+
+### Migration ordering rule for new chain-aware tables
+
+The Phase 1 migration (`20260521073429_add_chain_multitenancy`) creates the `chains` table and **INSERTs the two seed rows in the same SQL file** before any `ALTER TABLE ... ADD COLUMN chain ... REFERENCES chains(name)` runs. The column is added with `DEFAULT 'cosmoshub'` to backfill existing rows, then the default is dropped immediately afterwards. Any future migration that introduces a new chain-aware storage table must follow the same order: chains-row INSERTs **before** FK column ALTERs.
 
 ## Non-obvious schema decisions
 
@@ -72,4 +94,10 @@ Singleton wiring lives in `src/db.ts`. Do not instantiate `PrismaClient` anywher
 
 ## Seed
 
-`yarn db:seed` runs `tsx prisma/seed.ts` and idempotently upserts the full asset list defined inline in that file. Add new assets to the `ASSETS` array, not via raw SQL — keeping them in one place makes the `getAllAssets()` driven cron jobs (`get-prices`, `get-price-history`) pick them up automatically on the next tick. Production deploys run seed automatically as part of the `migrations` compose service (`yarn db:deploy && yarn db:seed`).
+`yarn db:seed` runs `tsx prisma/seed.ts` and idempotently upserts three lists, in order:
+
+1. `CHAINS_SEED` — every supported chain (`name`, `displayName`, `chainId`). Upsert by `name`. Must run **before** any chain-referencing rows so the FK target exists.
+2. `ASSETS` — coingecko-priced asset registry. Add new assets here, not via raw SQL — keeping them in one place makes the `getAllAssets()` driven cron jobs (`get-prices`, `get-price-history`) pick them up automatically on the next tick.
+3. `IBC_CHANNELS` — chain-registry-derived channels, tagged with their owning `chain`. Upsert by compound key `(chain, channelIdSrc, portIdSrc)`.
+
+Re-running the seed is safe — upserts converge. Production deploys run seed automatically as part of the `migrations` compose service (`yarn db:deploy && yarn db:seed`).

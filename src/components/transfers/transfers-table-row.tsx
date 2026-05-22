@@ -6,6 +6,7 @@ import BaseTableRow from "@/components/common/table/base-table-row";
 import { cn } from "@/utils/cn";
 import { formatDenomDisplay } from "@/utils/format-denom";
 import TxHashCell from "@/components/transfers/tx-hash-cell";
+import type { ChainName } from "@/lib/chains";
 
 export interface TransferRowDto {
   port_id_src: string;
@@ -26,6 +27,7 @@ export interface TransferRowDto {
 
 interface TransfersTableRowProps {
   transfer: TransferRowDto;
+  chain: ChainName;
 }
 
 const statusColor = (status: TransferRowDto["status"]) => {
@@ -94,8 +96,8 @@ const formatRelative = (iso: string | null) => {
   return formatDistanceToNow(d, { addSuffix: true });
 };
 
-const TransfersTableRow: FC<TransfersTableRowProps> = ({ transfer }) => {
-  const href = `/transfers/${encodeURIComponent(
+const TransfersTableRow: FC<TransfersTableRowProps> = ({ transfer, chain }) => {
+  const href = `/${chain}/transfers/${encodeURIComponent(
     transfer.port_id_src,
   )}/${encodeURIComponent(transfer.channel_id_src)}/${encodeURIComponent(transfer.sequence)}`;
 

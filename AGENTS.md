@@ -53,6 +53,8 @@ Two long-running processes share the same `DATABASE_URL`:
 - **web** (`yarn dev` / `yarn start`) — Next.js standalone output. Serves RSC pages (`/dashboard`, `/channels/[channel]`, `/assets`, `/transfers`, `/transfers/[port]/[channel]/[sequence]`, `/docs`) and the JSON API under `/api/v1/*`. Never writes to the DB outside of read-only queries and OpenAPI generation.
 - **worker** (`yarn dev:worker` / `yarn worker`) — boots `server/indexer.ts`, registers cron schedules, dispatches each job into a worker thread. Owns all DB writes for `ibc_packets`, `ibc_daily_stats`, `prices`, `price_history`, `sync_cursors`.
 
+Multi-chain: the `chains` table is the source of truth for chain slugs and metadata. Adding a chain = adding a row + a config entry in `server/tools/chains/params.ts` + one env var (`<CHAIN>_INDEXER_API_KEY`); the upstream URL lives in `server/tools/chains/params.ts`.
+
 ## Layout
 
 ```
@@ -138,8 +140,8 @@ The contract is in `.env.example`. Source of truth — keep that file and this t
 |---|---|---|
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `postgres` service in compose | DB bootstrap |
 | `DATABASE_URL` | `web` + `worker` (Prisma + `pg`) | Connection string. `@postgres:5432` in compose, `@localhost:5432` on host |
-| `UPSTREAM_INDEXER_BASE_URL` | `worker` only | Upstream indexer-API root (must include `/api/v1`) |
-| `UPSTREAM_INDEXER_API_KEY` | `worker` only | Bearer-style key for upstream. **Never exposed to `web`.** |
+| `COSMOSHUB_INDEXER_API_KEY` | `worker` only | Bearer-style key for the Cosmos Hub upstream. **Never exposed to `web`.** |
+| `ATOMONE_INDEXER_API_KEY` | `worker` only | Bearer-style key for the AtomOne upstream. **Never exposed to `web`.** |
 | `COINGECKO_API_KEY` | `worker` only | Optional. Empty falls back to the public free tier |
 | `LOG_LEVEL` | `web` + `worker` | `pino` level (default `info`) |
 | `PORT` | `web` host port | Defaults to `3000` |
@@ -154,3 +156,11 @@ Never commit `.env` (gitignored). Never log API keys.
 - **Time** — `event_time` is `timestamptz`. Aggregations happen in UTC: `(event_time AT TIME ZONE 'UTC')::date`.
 - **Null denoms** — packets where ICS-20 decoding fails arrive with `denom IS NULL`. The recompute job coalesces these to `'__unknown__'` so they don't collide with rollup rows under `NULLS NOT DISTINCT` PKs.
 - **Working docs** under `docs/plans/*-design.md` and `docs/plans/*-tasks.md` are intentionally untracked. Module `AGENTS.md` files (this one and the per-module ones) are tracked.
+
+---
+
+## ClawMem — Semantic Code Memory
+
+> ⚠️ Not indexed yet. Add to `~/.config/clawmem/index.yml` to enable.
+
+**When indexed:** use `memory_retrieve` MCP tool before code searches and `reindex` after each commit.

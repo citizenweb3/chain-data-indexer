@@ -1,7 +1,10 @@
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import {
   listTransfers,
   type TransferFilterDirection,
 } from "@/services/transfers-service";
+import { CHAIN_DISPLAY_NAMES, isChainName } from "@/lib/chains";
 import TransfersTable from "@/components/transfers/transfers-table";
 import PeriodTabs, {
   type Period,
@@ -9,6 +12,10 @@ import PeriodTabs, {
 import DirectionToggle from "@/components/dashboard/direction-toggle";
 
 export const dynamic = "force-dynamic";
+
+interface RouteParams {
+  chain: string;
+}
 
 interface SearchParams {
   period?: string;
@@ -53,11 +60,26 @@ const periodToSince = (period: Period): Date => {
   return new Date(Date.now() - ms);
 };
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<RouteParams>;
+}): Promise<Metadata> {
+  const { chain } = await params;
+  if (!isChainName(chain)) return { title: "Crosschain IBC Indexer" };
+  return { title: `${CHAIN_DISPLAY_NAMES[chain]} transfers` };
+}
+
 export default async function TransfersPage({
+  params,
   searchParams,
 }: {
+  params: Promise<RouteParams>;
   searchParams: Promise<SearchParams>;
 }) {
+  const { chain } = await params;
+  if (!isChainName(chain)) notFound();
+
   const sp = await searchParams;
 
   const period: Period = isPeriod(sp.period) ? sp.period : "24h";
@@ -81,6 +103,7 @@ export default async function TransfersPage({
     denomBase,
     since,
     offset,
+    chain,
   });
 
   const totalRows = Number(result.total);
@@ -97,15 +120,10 @@ export default async function TransfersPage({
   if (!currentSearch.has("direction")) currentSearch.set("direction", direction);
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
-          IBC Transfers
-        </h1>
-        <p className="font-sfpro text-sm text-white/60">
-          {result.total} total · {periodLabel[period]} · page {pageNum} of {pageLength}
-        </p>
-      </header>
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
+      <p className="font-sfpro text-sm text-white/55">
+        {result.total} total · {periodLabel[period]} · page {pageNum} of {pageLength}
+      </p>
 
       <div className="flex flex-wrap items-center gap-3">
         <PeriodTabs defaultValue={period} />
@@ -120,6 +138,7 @@ export default async function TransfersPage({
           transfers={result.data}
           pageLength={pageLength}
           currentSearch={currentSearch}
+          chain={chain}
         />
       </section>
     </main>

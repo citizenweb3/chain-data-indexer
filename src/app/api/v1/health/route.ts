@@ -1,6 +1,6 @@
 import logger from '@/logger';
 import { errorResponse, okJson } from '@/lib/api-helpers';
-import { getSyncWatermark } from '@/services/health-service';
+import { getSyncWatermarks } from '@/services/health-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,12 +8,12 @@ const log = logger('api/health');
 
 export const GET = async (): Promise<Response> => {
   try {
-    const watermark = await getSyncWatermark();
+    const chains = await getSyncWatermarks();
     return okJson(
       {
         ok: true,
         db_ready: true,
-        ...watermark,
+        chains,
       },
       'no-store',
     );

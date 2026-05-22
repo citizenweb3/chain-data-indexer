@@ -8,42 +8,45 @@ const log = logger('recompute-daily-stats');
 const RECOMPUTE_DAYS = 3;
 const HEARTBEAT_KEY = 'recompute-daily-stats';
 
+type RecomputeMode = 'bootstrap' | 'incremental' | 'noop';
+
 const todayUtcMidnight = (): Date => {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
   return d;
 };
 
-const readEarliestPacketDate = async (): Promise<Date | null> => {
+const readEarliestPacketDate = async (chain: string): Promise<Date | null> => {
   const rows = await db.$queryRaw<{ d: Date | null }[]>(Prisma.sql`
     SELECT MIN((event_time AT TIME ZONE 'UTC')::date) AS d
     FROM ibc_packets
     WHERE event_time IS NOT NULL
+      AND chain = ${chain}
   `);
   return rows[0]?.d ?? null;
 };
 
-const readEarliestDailyDate = async (): Promise<Date | null> => {
+const readEarliestDailyDate = async (chain: string): Promise<Date | null> => {
   const rows = await db.$queryRaw<{ d: Date | null }[]>(Prisma.sql`
     SELECT MIN(date) AS d FROM ibc_daily_stats
+    WHERE chain = ${chain}
   `);
   return rows[0]?.d ?? null;
 };
 
-const resolveRecomputeFromDate = async (): Promise<{
-  fromDate: Date | null;
-  mode: 'bootstrap' | 'incremental' | 'noop';
-}> => {
+const resolveRecomputeFromDate = async (
+  chain: string,
+): Promise<{ fromDate: Date | null; mode: RecomputeMode }> => {
   const today = todayUtcMidnight();
   const incrementalFrom = new Date(today);
   incrementalFrom.setUTCDate(incrementalFrom.getUTCDate() - (RECOMPUTE_DAYS - 1));
 
-  const earliestPacket = await readEarliestPacketDate();
+  const earliestPacket = await readEarliestPacketDate(chain);
   if (earliestPacket === null) {
     return { fromDate: null, mode: 'noop' };
   }
 
-  const earliestDaily = await readEarliestDailyDate();
+  const earliestDaily = await readEarliestDailyDate(chain);
   const dailyCoversPacketSpan =
     earliestDaily !== null && earliestDaily.getTime() <= earliestPacket.getTime();
 
@@ -53,17 +56,16 @@ const resolveRecomputeFromDate = async (): Promise<{
   return { fromDate: incrementalFrom, mode: 'incremental' };
 };
 
-export const runRecomputeDailyStats = async (): Promise<void> => {
+const recomputeOneChain = async (chain: string): Promise<void> => {
   const startedAt = Date.now();
-
-  const { fromDate, mode } = await resolveRecomputeFromDate();
-  log.logInfo('recompute-daily-stats started', {
+  const { fromDate, mode } = await resolveRecomputeFromDate(chain);
+  log.logInfo(`[${chain}] recompute-daily-stats started`, {
     mode,
     fromDate: fromDate?.toISOString() ?? null,
   });
 
   if (fromDate === null) {
-    log.logInfo('recompute-daily-stats noop: no packets to aggregate');
+    log.logInfo(`[${chain}] recompute-daily-stats noop: no packets to aggregate`);
     return;
   }
 
@@ -71,6 +73,7 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
     const rowsAffected = await db.$executeRaw(Prisma.sql`
       WITH base AS (
         SELECT
+          p.chain AS chain,
           (p.event_time AT TIME ZONE 'UTC')::date AS date,
           p.channel_id_src,
           p.direction,
@@ -79,6 +82,7 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
         FROM ibc_packets p
         WHERE p.event_time IS NOT NULL
           AND p.event_time >= ${fromDate}
+          AND p.chain = ${chain}
       ),
       daily_spot_prices AS (
         SELECT DISTINCT ON (asset_id, date)
@@ -90,6 +94,7 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
       ),
       agg AS (
         SELECT
+          b.chain AS chain,
           b.date AS date,
           b.channel_id_src AS channel_id_src,
           b.direction AS direction,
@@ -106,21 +111,21 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
         LEFT JOIN price_history ph ON ph.asset_id = a.id AND ph.date = b.date
         LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id AND dsp.date = b.date
         GROUP BY GROUPING SETS (
-          (b.date, b.channel_id_src, b.direction, b.denom),
-          (b.date, b.channel_id_src, b.direction),
-          (b.date, b.direction, b.denom),
-          (b.date, b.direction)
+          (b.chain, b.date, b.channel_id_src, b.direction, b.denom),
+          (b.chain, b.date, b.channel_id_src, b.direction),
+          (b.chain, b.date, b.direction, b.denom),
+          (b.chain, b.date, b.direction)
         )
       )
       INSERT INTO ibc_daily_stats (
-        date, channel_id_src, direction, denom,
+        chain, date, channel_id_src, direction, denom,
         transfers_count, amount_native, amount_usd, recomputed_at
       )
       SELECT
-        date, channel_id_src, direction, denom,
+        chain, date, channel_id_src, direction, denom,
         transfers_count, amount_native, amount_usd, NOW()
       FROM agg
-      ON CONFLICT (date, channel_id_src, direction, denom)
+      ON CONFLICT (chain, date, channel_id_src, direction, denom)
       DO UPDATE SET
         transfers_count = EXCLUDED.transfers_count,
         amount_native   = EXCLUDED.amount_native,
@@ -129,17 +134,29 @@ export const runRecomputeDailyStats = async (): Promise<void> => {
     `);
 
     await db.syncCursor.upsert({
-      where: { key: HEARTBEAT_KEY },
-      create: { key: HEARTBEAT_KEY },
+      where: { chain_key: { chain, key: HEARTBEAT_KEY } },
+      create: { chain, key: HEARTBEAT_KEY },
       update: {},
     });
 
     const elapsedMs = Date.now() - startedAt;
-    log.logInfo('recompute-daily-stats finished', { mode, rowsAffected, elapsedMs });
+    log.logInfo(`[${chain}] recompute-daily-stats finished`, { mode, rowsAffected, elapsedMs });
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
-    log.logError('recompute-daily-stats failed', e);
-    log.logInfo('recompute-daily-stats aborted', { elapsedMs });
+    log.logError(`[${chain}] recompute-daily-stats failed`, e);
+    log.logInfo(`[${chain}] recompute-daily-stats aborted`, { elapsedMs });
     throw e;
   }
+};
+
+export const runRecomputeDailyStats = async (chains: string[]): Promise<void> => {
+  await Promise.allSettled(
+    chains.map(async (chain) => {
+      try {
+        await recomputeOneChain(chain);
+      } catch (err) {
+        log.logError(`[${chain}] recompute-daily-stats failed`, err);
+      }
+    }),
+  );
 };
