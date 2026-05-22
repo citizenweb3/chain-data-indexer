@@ -9,18 +9,18 @@ import { runSyncIbcTransfers } from './jobs/sync-ibc-transfers';
 
 type TaskName = 'sync-ibc-transfers' | 'recompute-daily-stats' | 'prices' | 'price-history';
 
-const { taskName } = workerData as { taskName: TaskName };
+const { taskName, chains } = workerData as { taskName: TaskName; chains: string[] };
 const log = logger(taskName);
 
 const runTask = async (): Promise<void> => {
-  log.logInfo(`running task ${taskName}`);
+  log.logInfo(`running task ${taskName}`, { chains });
   try {
     switch (taskName) {
       case 'sync-ibc-transfers':
-        await runSyncIbcTransfers();
+        await runSyncIbcTransfers(chains);
         break;
       case 'recompute-daily-stats':
-        await runRecomputeDailyStats();
+        await runRecomputeDailyStats(chains);
         break;
       case 'prices':
         await runGetPrices();

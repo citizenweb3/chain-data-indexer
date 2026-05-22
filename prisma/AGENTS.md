@@ -16,7 +16,7 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 
 ## Models
 
-`Chain` — registry of supported networks. Text PK on `name` (the URL slug, e.g. `cosmoshub`, `atomone`). `displayName` and `chainId` are the UI label and the on-chain network id. Every other storage table FKs to `chains.name`; the slug **is** the join key — no JOIN needed for filtering. Seeded by `seed.ts` (`CHAINS_SEED`). Adding a chain in production requires (a) appending a row to `CHAINS_SEED`, (b) adding a config entry in `server/tools/chains/params.ts`, and (c) supplying `<CHAIN>_INDEXER_BASE_URL` / `_API_KEY` env vars.
+`Chain` — registry of supported networks. Text PK on `name` (the URL slug, e.g. `cosmoshub`, `atomone`). `displayName` and `chainId` are the UI label and the on-chain network id. Every other storage table FKs to `chains.name`; the slug **is** the join key — no JOIN needed for filtering. Seeded by `seed.ts` (`CHAINS_SEED`). Adding a chain in production requires (a) appending a row to `CHAINS_SEED`, (b) adding a config entry in `server/tools/chains/params.ts`, and (c) supplying the `<CHAIN>_INDEXER_API_KEY` env var (upstream URL lives in `server/tools/chains/params.ts`).
 
 `IbcPacket` — local mirror of upstream `/api/v1/ibc/transfers`. PK `(chain, channelIdSrc, portIdSrc, sequence)`. Nullable `event_height` / `event_time` for transient `sent` packets that have no block yet. `amount: Decimal(80, 0)` matches upstream `NUMERIC(80,0)` — never coerce to JS `number`.
 

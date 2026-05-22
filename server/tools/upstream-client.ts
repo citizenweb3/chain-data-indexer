@@ -1,4 +1,5 @@
 import logger from '../logger';
+import { getChainParams, requireEnv } from './chains/params';
 
 const log = logger('upstream-client');
 
@@ -41,15 +42,14 @@ const buildUrl = (baseUrl: string, path: string, params?: Record<string, string 
 };
 
 export const fetchUpstream = async <T>(
+  chain: string,
   path: string,
   params?: Record<string, string | number | undefined | null>,
 ): Promise<T> => {
-  const baseUrl = process.env.UPSTREAM_INDEXER_BASE_URL;
-  const apiKey = process.env.UPSTREAM_INDEXER_API_KEY;
-  if (!baseUrl) throw new Error('UPSTREAM_INDEXER_BASE_URL is not set');
-  if (!apiKey) throw new Error('UPSTREAM_INDEXER_API_KEY is not set');
+  const chainParams = getChainParams(chain);
+  const apiKey = requireEnv(chainParams.apiKeyEnv);
 
-  const url = buildUrl(baseUrl, path, params);
+  const url = buildUrl(chainParams.upstreamBaseUrl, path, params);
 
   let lastError: unknown = null;
 
@@ -65,7 +65,7 @@ export const fetchUpstream = async <T>(
       });
 
       if (response.status === 429) {
-        log.logWarn(`upstream 429 on ${path}, sleeping ${RATE_LIMIT_COOLDOWN_MS}ms`, { attempt });
+        log.logWarn(`[${chain}] upstream 429 on ${path}, sleeping ${RATE_LIMIT_COOLDOWN_MS}ms`, { attempt });
         await sleep(RATE_LIMIT_COOLDOWN_MS);
         continue;
       }
@@ -74,7 +74,7 @@ export const fetchUpstream = async <T>(
         const body = await response.text().catch(() => null);
         const retryable = isRetryableStatus(response.status);
         throw new UpstreamError(
-          `upstream ${response.status} on ${path}`,
+          `[${chain}] upstream ${response.status} on ${path}`,
           response.status,
           body,
           retryable,
@@ -85,11 +85,11 @@ export const fetchUpstream = async <T>(
     } catch (err) {
       lastError = err;
       if (err instanceof UpstreamError && !err.retryable) {
-        log.logError(`upstream fetch ${path} permanent ${err.status}, not retrying`, err);
+        log.logError(`[${chain}] upstream fetch ${path} permanent ${err.status}, not retrying`, err);
         throw err;
       }
       if (attempt < MAX_ATTEMPTS) {
-        log.logWarn(`upstream fetch ${path} failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying in ${RETRY_DELAY_MS}ms`, {
+        log.logWarn(`[${chain}] upstream fetch ${path} failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying in ${RETRY_DELAY_MS}ms`, {
           error: err instanceof Error ? err.message : String(err),
         });
         await sleep(RETRY_DELAY_MS);
@@ -97,8 +97,8 @@ export const fetchUpstream = async <T>(
     }
   }
 
-  log.logError(`upstream fetch ${path} exhausted ${MAX_ATTEMPTS} attempts`, lastError);
-  throw lastError instanceof Error ? lastError : new Error(`upstream fetch ${path} failed`);
+  log.logError(`[${chain}] upstream fetch ${path} exhausted ${MAX_ATTEMPTS} attempts`, lastError);
+  throw lastError instanceof Error ? lastError : new Error(`[${chain}] upstream fetch ${path} failed`);
 };
 
 export { UpstreamError };

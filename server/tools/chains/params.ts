@@ -1,4 +1,4 @@
-// SERVER ONLY — uses process.env at module load.
+// Pure metadata + a server-only env reader. Safe to import from any layer; `requireEnv` only fires when called.
 
 export type ChainParams = {
   name: string;
@@ -8,7 +8,7 @@ export type ChainParams = {
   apiKeyEnv: string;
 };
 
-const requireEnv = (name: string): string => {
+export const requireEnv = (name: string): string => {
   const v = process.env[name];
   if (!v || v.trim() === '') {
     throw new Error(`Missing required env var: ${name}`);
@@ -21,14 +21,14 @@ export const CHAIN_PARAMS: ChainParams[] = [
     name: 'cosmoshub',
     displayName: 'Cosmos Hub',
     chainId: 'cosmoshub-4',
-    upstreamBaseUrl: requireEnv('COSMOSHUB_INDEXER_BASE_URL'),
+    upstreamBaseUrl: 'https://indexer.cosmoshub-4.citizenweb3.com/api/v1',
     apiKeyEnv: 'COSMOSHUB_INDEXER_API_KEY',
   },
   {
     name: 'atomone',
     displayName: 'AtomOne',
     chainId: 'atomone-1',
-    upstreamBaseUrl: requireEnv('ATOMONE_INDEXER_BASE_URL'),
+    upstreamBaseUrl: 'https://indexer.atomone.citizenweb3.com/api/v1',
     apiKeyEnv: 'ATOMONE_INDEXER_API_KEY',
   },
 ];

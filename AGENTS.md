@@ -53,7 +53,7 @@ Two long-running processes share the same `DATABASE_URL`:
 - **web** (`yarn dev` / `yarn start`) — Next.js standalone output. Serves RSC pages (`/dashboard`, `/channels/[channel]`, `/assets`, `/transfers`, `/transfers/[port]/[channel]/[sequence]`, `/docs`) and the JSON API under `/api/v1/*`. Never writes to the DB outside of read-only queries and OpenAPI generation.
 - **worker** (`yarn dev:worker` / `yarn worker`) — boots `server/indexer.ts`, registers cron schedules, dispatches each job into a worker thread. Owns all DB writes for `ibc_packets`, `ibc_daily_stats`, `prices`, `price_history`, `sync_cursors`.
 
-Multi-chain: the `chains` table is the source of truth for chain slugs and metadata. Adding a chain = adding a row + a config entry in `server/tools/chains/params.ts` + two env vars (`<CHAIN>_INDEXER_BASE_URL`, `<CHAIN>_INDEXER_API_KEY`).
+Multi-chain: the `chains` table is the source of truth for chain slugs and metadata. Adding a chain = adding a row + a config entry in `server/tools/chains/params.ts` + one env var (`<CHAIN>_INDEXER_API_KEY`); the upstream URL lives in `server/tools/chains/params.ts`.
 
 ## Layout
 
@@ -140,9 +140,7 @@ The contract is in `.env.example`. Source of truth — keep that file and this t
 |---|---|---|
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `postgres` service in compose | DB bootstrap |
 | `DATABASE_URL` | `web` + `worker` (Prisma + `pg`) | Connection string. `@postgres:5432` in compose, `@localhost:5432` on host |
-| `COSMOSHUB_INDEXER_BASE_URL` | `worker` only | Cosmos Hub upstream indexer-API root (must include `/api/v1`) |
 | `COSMOSHUB_INDEXER_API_KEY` | `worker` only | Bearer-style key for the Cosmos Hub upstream. **Never exposed to `web`.** |
-| `ATOMONE_INDEXER_BASE_URL` | `worker` only | AtomOne upstream indexer-API root (must include `/api/v1`) |
 | `ATOMONE_INDEXER_API_KEY` | `worker` only | Bearer-style key for the AtomOne upstream. **Never exposed to `web`.** |
 | `COINGECKO_API_KEY` | `worker` only | Optional. Empty falls back to the public free tier |
 | `LOG_LEVEL` | `web` + `worker` | `pino` level (default `info`) |
