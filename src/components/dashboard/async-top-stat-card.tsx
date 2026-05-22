@@ -13,7 +13,7 @@ const formatUsd = (s: string) => {
 interface Props {
   direction: Direction;
   period: Period;
-  chain: ChainName;
+  chain: ChainName | null;
 }
 
 export default async function AsyncTopStatCard({ direction, period, chain }: Props) {

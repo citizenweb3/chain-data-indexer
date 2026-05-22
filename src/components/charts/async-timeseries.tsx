@@ -27,7 +27,7 @@ interface AsyncTimeseriesProps {
   channelIdSrc?: string;
   sliceTail?: number;
   forceDaily?: boolean;
-  chain: ChainName;
+  chain: ChainName | null;
 }
 
 export default async function AsyncTimeseries({

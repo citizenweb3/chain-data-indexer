@@ -85,13 +85,7 @@ export default async function DashboardPage({
   const chainDisplayName = CHAIN_DISPLAY_NAMES[chain];
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="font-handjet text-highlight text-4xl tracking-wide uppercase">
-          {chainDisplayName} IBC stats
-        </h1>
-      </header>
-
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
       <div className="flex flex-wrap items-center gap-3">
         <PeriodTabs defaultValue={period} />
         <DirectionToggle defaultValue={direction} />

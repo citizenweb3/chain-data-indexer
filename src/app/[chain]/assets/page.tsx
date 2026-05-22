@@ -101,15 +101,10 @@ export default async function AssetsPage({
   );
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
-          {CHAIN_DISPLAY_NAMES[chain]} assets
-        </h1>
-        <p className="font-sfpro text-sm text-white/60">
-          Per-asset transfer counts and volume · {periodLabel[period]}
-        </p>
-      </header>
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
+      <p className="font-sfpro text-sm text-white/55">
+        Per-asset transfer counts and volume · {periodLabel[period]}
+      </p>
 
       <div className="flex flex-wrap items-center gap-3">
         <PeriodTabs defaultValue={period} />

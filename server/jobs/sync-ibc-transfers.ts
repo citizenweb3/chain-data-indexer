@@ -249,7 +249,13 @@ const syncOneChain = async (chain: string): Promise<void> => {
       if (inserted) newCount++;
       else updatedCount++;
 
-      discoveredChannels.add(`${dto.channel_id_src}|${dto.port_id_src}`);
+      const hubChannel =
+        dto.direction === 'incoming' ? dto.channel_id_dst : dto.channel_id_src;
+      const hubPort =
+        dto.direction === 'incoming' ? dto.port_id_dst : dto.port_id_src;
+      if (hubChannel && hubPort) {
+        discoveredChannels.add(`${hubChannel}|${hubPort}`);
+      }
     }
 
     if (stopped) break;
@@ -296,11 +302,13 @@ const syncOneChain = async (chain: string): Promise<void> => {
 };
 
 export const runSyncIbcTransfers = async (chains: string[]): Promise<void> => {
-  for (const chain of chains) {
-    try {
-      await syncOneChain(chain);
-    } catch (err) {
-      log.logError(`[${chain}] sync-ibc-transfers failed`, err);
-    }
-  }
+  await Promise.allSettled(
+    chains.map(async (chain) => {
+      try {
+        await syncOneChain(chain);
+      } catch (err) {
+        log.logError(`[${chain}] sync-ibc-transfers failed`, err);
+      }
+    }),
+  );
 };

@@ -156,3 +156,11 @@ Never commit `.env` (gitignored). Never log API keys.
 - **Time** — `event_time` is `timestamptz`. Aggregations happen in UTC: `(event_time AT TIME ZONE 'UTC')::date`.
 - **Null denoms** — packets where ICS-20 decoding fails arrive with `denom IS NULL`. The recompute job coalesces these to `'__unknown__'` so they don't collide with rollup rows under `NULLS NOT DISTINCT` PKs.
 - **Working docs** under `docs/plans/*-design.md` and `docs/plans/*-tasks.md` are intentionally untracked. Module `AGENTS.md` files (this one and the per-module ones) are tracked.
+
+---
+
+## ClawMem — Semantic Code Memory
+
+> ⚠️ Not indexed yet. Add to `~/.config/clawmem/index.yml` to enable.
+
+**When indexed:** use `memory_retrieve` MCP tool before code searches and `reindex` after each commit.

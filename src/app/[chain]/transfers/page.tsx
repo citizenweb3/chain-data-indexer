@@ -120,15 +120,10 @@ export default async function TransfersPage({
   if (!currentSearch.has("direction")) currentSearch.set("direction", direction);
 
   return (
-    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col gap-2">
-        <h1 className="font-handjet text-4xl uppercase tracking-wide text-highlight">
-          {CHAIN_DISPLAY_NAMES[chain]} IBC transfers
-        </h1>
-        <p className="font-sfpro text-sm text-white/60">
-          {result.total} total · {periodLabel[period]} · page {pageNum} of {pageLength}
-        </p>
-      </header>
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-8 px-6 py-10">
+      <p className="font-sfpro text-sm text-white/55">
+        {result.total} total · {periodLabel[period]} · page {pageNum} of {pageLength}
+      </p>
 
       <div className="flex flex-wrap items-center gap-3">
         <PeriodTabs defaultValue={period} />

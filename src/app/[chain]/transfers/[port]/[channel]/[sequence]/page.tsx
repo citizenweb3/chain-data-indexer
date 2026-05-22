@@ -4,7 +4,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { getTransfer } from "@/services/transfers-service";
-import { CHAIN_DISPLAY_NAMES, isChainName } from "@/lib/chains";
+import { CHAIN_DISPLAY_NAMES, type ChainName, isChainName } from "@/lib/chains";
+import { getExplorer } from "@/lib/explorer-urls";
 import CopyButton from "@/components/common/copy-button";
 import TxHashCell from "@/components/transfers/tx-hash-cell";
 import TransferTimeline, {
@@ -15,10 +16,6 @@ import { formatDenomDisplay } from "@/utils/format-denom";
 import { cn } from "@/utils/cn";
 
 export const dynamic = "force-dynamic";
-
-const BLOCKS_URL = "https://validatorinfo.com/en/networks/cosmoshub/blocks";
-const ADDRESS_URL =
-  "https://validatorinfo.com/en/networks/cosmoshub/address";
 
 interface RouteParams {
   chain: string;
@@ -110,13 +107,13 @@ const SectionTitle = ({ children }: { children: ReactNode }) => (
   </h2>
 );
 
-const HeightLink = ({ height }: { height: string | null }) => {
+const HeightLink = ({ chain, height }: { chain: ChainName; height: string | null }) => {
   if (!height) return <span className="font-handjet text-lg text-white/40">—</span>;
   const n = Number(height);
   const label = Number.isFinite(n) ? n.toLocaleString("en-US") : height;
   return (
     <a
-      href={`${BLOCKS_URL}/${encodeURIComponent(height)}`}
+      href={getExplorer(chain).blocksUrl(height)}
       target="_blank"
       rel="noopener noreferrer"
       className="font-handjet text-lg text-white hover:text-highlight hover:underline"
@@ -337,7 +334,7 @@ export default async function TransferDetailPage({
 
       <SectionTitle>On-chain trace</SectionTitle>
       <InfoRow label="Event height">
-        <HeightLink height={transfer.event_height} />
+        <HeightLink chain={chain} height={transfer.event_height} />
       </InfoRow>
       {transfer.direction === "outgoing" ? (
         <>
@@ -360,7 +357,7 @@ export default async function TransferDetailPage({
         {transfer.relayer ? (
           <>
             <a
-              href={`${ADDRESS_URL}/${encodeURIComponent(transfer.relayer)}/passport`}
+              href={getExplorer(chain).addressUrl(transfer.relayer)}
               target="_blank"
               rel="noopener noreferrer"
               className="break-all font-handjet text-lg text-white hover:text-highlight hover:underline"

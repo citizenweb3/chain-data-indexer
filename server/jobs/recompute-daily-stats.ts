@@ -8,44 +8,45 @@ const log = logger('recompute-daily-stats');
 const RECOMPUTE_DAYS = 3;
 const HEARTBEAT_KEY = 'recompute-daily-stats';
 
+type RecomputeMode = 'bootstrap' | 'incremental' | 'noop';
+
 const todayUtcMidnight = (): Date => {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
   return d;
 };
 
-const readEarliestPacketDate = async (chains: string[]): Promise<Date | null> => {
+const readEarliestPacketDate = async (chain: string): Promise<Date | null> => {
   const rows = await db.$queryRaw<{ d: Date | null }[]>(Prisma.sql`
     SELECT MIN((event_time AT TIME ZONE 'UTC')::date) AS d
     FROM ibc_packets
     WHERE event_time IS NOT NULL
-      AND chain = ANY(${chains}::text[])
+      AND chain = ${chain}
   `);
   return rows[0]?.d ?? null;
 };
 
-const readEarliestDailyDate = async (chains: string[]): Promise<Date | null> => {
+const readEarliestDailyDate = async (chain: string): Promise<Date | null> => {
   const rows = await db.$queryRaw<{ d: Date | null }[]>(Prisma.sql`
     SELECT MIN(date) AS d FROM ibc_daily_stats
-    WHERE chain = ANY(${chains}::text[])
+    WHERE chain = ${chain}
   `);
   return rows[0]?.d ?? null;
 };
 
-const resolveRecomputeFromDate = async (chains: string[]): Promise<{
-  fromDate: Date | null;
-  mode: 'bootstrap' | 'incremental' | 'noop';
-}> => {
+const resolveRecomputeFromDate = async (
+  chain: string,
+): Promise<{ fromDate: Date | null; mode: RecomputeMode }> => {
   const today = todayUtcMidnight();
   const incrementalFrom = new Date(today);
   incrementalFrom.setUTCDate(incrementalFrom.getUTCDate() - (RECOMPUTE_DAYS - 1));
 
-  const earliestPacket = await readEarliestPacketDate(chains);
+  const earliestPacket = await readEarliestPacketDate(chain);
   if (earliestPacket === null) {
     return { fromDate: null, mode: 'noop' };
   }
 
-  const earliestDaily = await readEarliestDailyDate(chains);
+  const earliestDaily = await readEarliestDailyDate(chain);
   const dailyCoversPacketSpan =
     earliestDaily !== null && earliestDaily.getTime() <= earliestPacket.getTime();
 
@@ -55,18 +56,16 @@ const resolveRecomputeFromDate = async (chains: string[]): Promise<{
   return { fromDate: incrementalFrom, mode: 'incremental' };
 };
 
-export const runRecomputeDailyStats = async (chains: string[]): Promise<void> => {
+const recomputeOneChain = async (chain: string): Promise<void> => {
   const startedAt = Date.now();
-
-  const { fromDate, mode } = await resolveRecomputeFromDate(chains);
-  log.logInfo('recompute-daily-stats started', {
+  const { fromDate, mode } = await resolveRecomputeFromDate(chain);
+  log.logInfo(`[${chain}] recompute-daily-stats started`, {
     mode,
-    chains,
     fromDate: fromDate?.toISOString() ?? null,
   });
 
   if (fromDate === null) {
-    log.logInfo('recompute-daily-stats noop: no packets to aggregate');
+    log.logInfo(`[${chain}] recompute-daily-stats noop: no packets to aggregate`);
     return;
   }
 
@@ -83,7 +82,7 @@ export const runRecomputeDailyStats = async (chains: string[]): Promise<void> =>
         FROM ibc_packets p
         WHERE p.event_time IS NOT NULL
           AND p.event_time >= ${fromDate}
-          AND p.chain = ANY(${chains}::text[])
+          AND p.chain = ${chain}
       ),
       daily_spot_prices AS (
         SELECT DISTINCT ON (asset_id, date)
@@ -134,20 +133,30 @@ export const runRecomputeDailyStats = async (chains: string[]): Promise<void> =>
         recomputed_at   = EXCLUDED.recomputed_at
     `);
 
-    for (const chain of chains) {
-      await db.syncCursor.upsert({
-        where: { chain_key: { chain, key: HEARTBEAT_KEY } },
-        create: { chain, key: HEARTBEAT_KEY },
-        update: {},
-      });
-    }
+    await db.syncCursor.upsert({
+      where: { chain_key: { chain, key: HEARTBEAT_KEY } },
+      create: { chain, key: HEARTBEAT_KEY },
+      update: {},
+    });
 
     const elapsedMs = Date.now() - startedAt;
-    log.logInfo('recompute-daily-stats finished', { mode, rowsAffected, elapsedMs });
+    log.logInfo(`[${chain}] recompute-daily-stats finished`, { mode, rowsAffected, elapsedMs });
   } catch (e) {
     const elapsedMs = Date.now() - startedAt;
-    log.logError('recompute-daily-stats failed', e);
-    log.logInfo('recompute-daily-stats aborted', { elapsedMs });
+    log.logError(`[${chain}] recompute-daily-stats failed`, e);
+    log.logInfo(`[${chain}] recompute-daily-stats aborted`, { elapsedMs });
     throw e;
   }
+};
+
+export const runRecomputeDailyStats = async (chains: string[]): Promise<void> => {
+  await Promise.allSettled(
+    chains.map(async (chain) => {
+      try {
+        await recomputeOneChain(chain);
+      } catch (err) {
+        log.logError(`[${chain}] recompute-daily-stats failed`, err);
+      }
+    }),
+  );
 };

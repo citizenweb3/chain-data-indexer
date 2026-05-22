@@ -86,6 +86,7 @@ const ASSETS: AssetSeed[] = [
   { symbol: 'BLD',     coingeckoId: 'agoric',                  decimals: 6,  nativeDenom: 'ubld' },
   { symbol: 'stkATOM', coingeckoId: 'stkatom',                 decimals: 6,  nativeDenom: 'stk/uatom' },
   { symbol: 'ATONE',   coingeckoId: 'atomone',                 decimals: 6,  nativeDenom: 'uatone' },
+  { symbol: 'PHOTON',  coingeckoId: 'photon-2',                decimals: 6,  nativeDenom: 'uphoton' },
 ];
 
 type IbcChannelSeed = {
@@ -99,12 +100,12 @@ type IbcChannelSeed = {
   status?: string | null;
 };
 
-// Generated from cosmos/chain-registry `_IBC/*cosmoshub*.json` (mainnet only).
-// One row per ICS-20 transfer channel on cosmoshub-4. `counterpartyChainName`
-// is the registry slug (lowercase); UI is responsible for display formatting.
-// Regenerate by sparse-cloning chain-registry and re-running the jq pipeline
-// captured in the working notes — never hand-edit individual rows.
-const IBC_CHANNELS: IbcChannelSeed[] = [
+// Generated from cosmos/chain-registry `_IBC/<chain>-*.json` (mainnet only).
+// One row per ICS-20 transfer channel. `counterpartyChainName` is the registry
+// slug (lowercase); UI is responsible for display formatting. Regenerate by
+// sparse-cloning chain-registry and re-running the jq pipeline captured in the
+// working notes — never hand-edit individual rows.
+const IBC_CHANNELS_COSMOSHUB: IbcChannelSeed[] = [
   { channelIdSrc: "channel-457", portIdSrc: "transfer", counterpartyChainId: "acre_9052-1", counterpartyChainName: "acrechain", counterpartyChannelId: "channel-8", counterpartyPortId: "transfer", clientId: "07-tendermint-1002", status: "ACTIVE" },
   { channelIdSrc: "channel-405", portIdSrc: "transfer", counterpartyChainId: "agoric-3", counterpartyChainName: "agoric", counterpartyChannelId: "channel-5", counterpartyPortId: "transfer", clientId: "07-tendermint-927", status: "ACTIVE" },
   { channelIdSrc: "channel-567", portIdSrc: "transfer", counterpartyChainId: "aioz_168-1", counterpartyChainName: "aioz", counterpartyChannelId: "channel-0", counterpartyPortId: "transfer", clientId: "07-tendermint-1121", status: "ACTIVE" },
@@ -187,6 +188,19 @@ const IBC_CHANNELS: IbcChannelSeed[] = [
   { channelIdSrc: "channel-1555", portIdSrc: "transfer", counterpartyChainId: "zigchain-1", counterpartyChainName: "zigchain", counterpartyChannelId: "channel-4", counterpartyPortId: "transfer", clientId: "07-tendermint-1439", status: "ACTIVE" },
 ];
 
+const IBC_CHANNELS_ATOMONE: IbcChannelSeed[] = [
+  { channelIdSrc: "channel-1",  portIdSrc: "transfer", counterpartyChainId: "beezee-1",     counterpartyChainName: "beezee",   counterpartyChannelId: "channel-6",     counterpartyPortId: "transfer", clientId: "07-tendermint-1",  status: "ACTIVE" },
+  { channelIdSrc: "channel-2",  portIdSrc: "transfer", counterpartyChainId: "osmosis-1",    counterpartyChainName: "osmosis",  counterpartyChannelId: "channel-94814", counterpartyPortId: "transfer", clientId: "07-tendermint-2",  status: "ACTIVE" },
+  { channelIdSrc: "channel-3",  portIdSrc: "transfer", counterpartyChainId: "stargaze-1",   counterpartyChainName: "stargaze", counterpartyChannelId: "channel-448",   counterpartyPortId: "transfer", clientId: "07-tendermint-6",  status: "ACTIVE" },
+  { channelIdSrc: "channel-9",  portIdSrc: "transfer", counterpartyChainId: "dungeon-1",    counterpartyChainName: "dungeon",  counterpartyChannelId: "channel-5310",  counterpartyPortId: "transfer", clientId: "07-tendermint-37", status: "ACTIVE" },
+  { channelIdSrc: "channel-10", portIdSrc: "transfer", counterpartyChainId: "axelar-dojo-1", counterpartyChainName: "axelar",  counterpartyChannelId: "channel-190",   counterpartyPortId: "transfer", clientId: "07-tendermint-38", status: "ACTIVE" },
+];
+
+const IBC_CHANNELS_BY_CHAIN: Record<string, IbcChannelSeed[]> = {
+  cosmoshub: IBC_CHANNELS_COSMOSHUB,
+  atomone: IBC_CHANNELS_ATOMONE,
+};
+
 async function main() {
   for (const c of CHAINS_SEED) {
     await db.chain.upsert({
@@ -210,44 +224,46 @@ async function main() {
   }
   console.log(`seeded ${ASSETS.length} assets`);
 
-  const seen = new Set<string>();
   let channelInserts = 0;
-  for (const ch of IBC_CHANNELS) {
-    const key = `${ch.channelIdSrc}|${ch.portIdSrc}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    // IBC_CHANNELS — chain-registry-derived seed for every supported chain.
-    // The worker's sync-ibc-transfers job will ON CONFLICT DO NOTHING for any
-    // channels it discovers in packets but not in this list (Task 2.6).
-    await db.ibcChannel.upsert({
-      where: {
-        chain_channelIdSrc_portIdSrc: {
-          chain: 'cosmoshub',
+  for (const [chain, channels] of Object.entries(IBC_CHANNELS_BY_CHAIN)) {
+    const seen = new Set<string>();
+    for (const ch of channels) {
+      const key = `${ch.channelIdSrc}|${ch.portIdSrc}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // IBC_CHANNELS_BY_CHAIN — chain-registry-derived seed for every supported chain.
+      // The worker's sync-ibc-transfers job will ON CONFLICT DO NOTHING for any
+      // channels it discovers in packets but not in this list (Task 2.6).
+      await db.ibcChannel.upsert({
+        where: {
+          chain_channelIdSrc_portIdSrc: {
+            chain,
+            channelIdSrc: ch.channelIdSrc,
+            portIdSrc: ch.portIdSrc,
+          },
+        },
+        update: {
+          counterpartyChainId: ch.counterpartyChainId,
+          counterpartyChainName: ch.counterpartyChainName,
+          counterpartyChannelId: ch.counterpartyChannelId ?? null,
+          counterpartyPortId: ch.counterpartyPortId ?? null,
+          clientId: ch.clientId ?? null,
+          status: ch.status ?? null,
+        },
+        create: {
+          chain,
           channelIdSrc: ch.channelIdSrc,
           portIdSrc: ch.portIdSrc,
+          counterpartyChainId: ch.counterpartyChainId,
+          counterpartyChainName: ch.counterpartyChainName,
+          counterpartyChannelId: ch.counterpartyChannelId ?? null,
+          counterpartyPortId: ch.counterpartyPortId ?? null,
+          clientId: ch.clientId ?? null,
+          status: ch.status ?? null,
         },
-      },
-      update: {
-        counterpartyChainId: ch.counterpartyChainId,
-        counterpartyChainName: ch.counterpartyChainName,
-        counterpartyChannelId: ch.counterpartyChannelId ?? null,
-        counterpartyPortId: ch.counterpartyPortId ?? null,
-        clientId: ch.clientId ?? null,
-        status: ch.status ?? null,
-      },
-      create: {
-        chain: 'cosmoshub',
-        channelIdSrc: ch.channelIdSrc,
-        portIdSrc: ch.portIdSrc,
-        counterpartyChainId: ch.counterpartyChainId,
-        counterpartyChainName: ch.counterpartyChainName,
-        counterpartyChannelId: ch.counterpartyChannelId ?? null,
-        counterpartyPortId: ch.counterpartyPortId ?? null,
-        clientId: ch.clientId ?? null,
-        status: ch.status ?? null,
-      },
-    });
-    channelInserts += 1;
+      });
+      channelInserts += 1;
+    }
   }
   console.log(`seeded ${channelInserts} ibc channels`);
 }
