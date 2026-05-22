@@ -8,6 +8,7 @@ Base URL: `http://<host>:<INDEXER_HTTP_PORT>`. All explorer endpoints are read-o
 - Hex path/query parameters must contain only hex characters and have the exact expected byte length. Invalid values return `400 { "error": "invalid hex", "code": "INVALID_HEX" }`.
 - Most `BIGINT` columns are returned as JSON strings to avoid JavaScript 53-bit precision loss. Block lineage fields backed by Miden `fixed32`/bounded block numbers (`block_num`, `last_block`, `expiration_block_num`, `last_block_num`, `chain_length`) are returned as JSON numbers so explorer consumers can sort them numerically without client-side coercion.
 - Timestamps are JSON strings produced from PostgreSQL `TIMESTAMPTZ` values.
+- **Block `timestamp` semantics:** `BlockHeader.timestamp` is a `fixed32` Unix timestamp set by the Miden block producer. It reflects the block producer's wall clock at the time the block was created. The indexer stores and forwards this value verbatim — any discrepancy between `timestamp` and real wall time is a chain-side condition (e.g., block producer NTP drift). `inserted_at` is the indexer's own write time and should not be used as an on-chain production time. `block_timestamp` on transaction objects is the parent block's `timestamp`, copied server-side for convenience.
 - List endpoints use `limit`/`offset` pagination and return `{ data, total, limit, offset }`. `limit` defaults to `20` and is clamped to `1..100`; `offset` defaults to `0`, must be non-negative, and is capped at `100000` (a `400 OFFSET_TOO_LARGE` is returned above the cap — narrow the filter or page from the other end). `total` is computed via `COUNT(*)` and cached for ~5 s per (table, filter) combination.
 - Errors never include stack traces. Stable error bodies are `{ error: string, code: string }`.
 
@@ -48,6 +49,7 @@ type Block = BlockSummary & { raw_block_bytes: Hex | null };
 type Transaction = {
   tx_id: Hex;
   block_num: BlockNumber;
+  block_timestamp: Timestamp | null;
   account_id: Hex;
   account_id_bech32: string | null;
   init_account_state: Hex | null;

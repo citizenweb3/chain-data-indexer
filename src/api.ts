@@ -129,6 +129,7 @@ interface TransactionRow {
   expiration_block_num: string | null;
   input_nullifiers: TextArray;
   output_note_ids: TextArray;
+  block_timestamp: Date | null;
   inserted_at: Date;
 }
 
@@ -325,6 +326,7 @@ function transactionResponse(row: TransactionRow): Record<string, unknown> {
     account_id_bech32: accountIdToBech32(row.account_id),
     block_num: parseSafeApiInteger(row.block_num, 'block_num'),
     expiration_block_num: parseOptionalSafeApiInteger(row.expiration_block_num, 'expiration_block_num'),
+    block_timestamp: row.block_timestamp ?? null,
   };
 }
 
@@ -387,7 +389,7 @@ const blockSummaryColumns = `
 
 const transactionColumns = `
   encode(tx_id, 'hex') AS tx_id,
-  block_num::text,
+  miden_transactions.block_num::text,
   encode(account_id, 'hex') AS account_id,
   encode(init_account_state, 'hex') AS init_account_state,
   encode(final_account_state, 'hex') AS final_account_state,
@@ -396,7 +398,10 @@ const transactionColumns = `
   expiration_block_num::text,
   CASE WHEN input_nullifiers IS NULL THEN NULL ELSE ARRAY(SELECT encode(x, 'hex') FROM unnest(input_nullifiers) AS x) END AS input_nullifiers,
   CASE WHEN output_note_ids IS NULL THEN NULL ELSE ARRAY(SELECT encode(x, 'hex') FROM unnest(output_note_ids) AS x) END AS output_note_ids,
-  inserted_at`;
+  b.timestamp AS block_timestamp,
+  miden_transactions.inserted_at`;
+
+const transactionJoin = `LEFT JOIN miden_blocks b ON miden_transactions.block_num = b.block_num`;
 
 const noteColumns = `
   encode(note_id, 'hex') AS note_id,
@@ -563,7 +568,8 @@ async function handleBlockTransactions(blockNumStr: string, url: URL, res: http.
     getPool().query<TransactionRow>(
       `SELECT ${transactionColumns}
        FROM miden_transactions
-       WHERE block_num = $1
+       ${transactionJoin}
+       WHERE miden_transactions.block_num = $1
        ORDER BY tx_id ASC
        LIMIT $2 OFFSET $3`,
       [blockNum, page.limit, page.offset],
@@ -592,6 +598,7 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
     getPool().query<TransactionRow>(
       `SELECT ${transactionColumns}
        FROM miden_transactions
+       ${transactionJoin}
        ${filters.where}
        ORDER BY miden_transactions.block_num DESC, tx_id ASC
         LIMIT $${limitParam} OFFSET $${offsetParam}`,
@@ -605,7 +612,10 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
 async function handleTransaction(hex: string, res: http.ServerResponse): Promise<void> {
   const txId = parseHexParam(hex, 32);
   const { rows } = await getPool().query<TransactionRow>(
-     `SELECT ${transactionColumns} FROM miden_transactions WHERE tx_id = $1`,
+     `SELECT ${transactionColumns}
+      FROM miden_transactions
+      ${transactionJoin}
+      WHERE tx_id = $1`,
      [txId],
    );
   if (rows.length === 0) throw new HttpError(404, 'not found', 'NOT_FOUND');
@@ -754,6 +764,7 @@ async function handleAccountTransactions(accountIdHex: string, url: URL, res: ht
     getPool().query<TransactionRow>(
       `SELECT ${transactionColumns}
        FROM miden_transactions
+       ${transactionJoin}
        WHERE account_id = $1
        ORDER BY miden_transactions.block_num DESC, tx_id ASC
        LIMIT $2 OFFSET $3`,
@@ -841,6 +852,7 @@ async function handleSearch(url: URL, res: http.ServerResponse): Promise<void> {
     getPool().query<TransactionRow>(
       `SELECT ${transactionColumns}
        FROM miden_transactions
+       ${transactionJoin}
        WHERE tx_id = $1`,
       [hex],
     ),
