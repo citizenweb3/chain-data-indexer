@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { db } from '@/db';
+import type { ChainName } from '@/lib/chains';
 import { formatNative } from '@/utils/format-amount';
 
 export type TimeseriesMetric = 'transfers' | 'volume_atom' | 'volume_usd';
@@ -20,12 +21,16 @@ const queryHourly = async (params: {
   direction: TimeseriesDirection;
   from: Date;
   channelIdSrc?: string;
+  chain: ChainName | null;
 }): Promise<HourlyRow[]> => {
   const spotFrom = new Date(params.from.getTime() - 2 * MS_PER_DAY);
   const channelClause =
     params.channelIdSrc !== undefined
       ? Prisma.sql`p.channel_id_src = ${params.channelIdSrc}`
       : Prisma.sql`TRUE`;
+  const chainClause = params.chain
+    ? Prisma.sql`AND p.chain = ${params.chain}`
+    : Prisma.empty;
 
   if (params.metric === 'transfers') {
     return db.$queryRaw<HourlyRow[]>(Prisma.sql`
@@ -36,6 +41,7 @@ const queryHourly = async (params: {
         AND p.event_time >= ${params.from}
         AND ${channelClause}
         AND ${directionFilter(params.direction)}
+        ${chainClause}
       GROUP BY hour
       ORDER BY hour ASC
     `);
@@ -51,6 +57,7 @@ const queryHourly = async (params: {
         AND resolve_base_denom(p.denom) = ${ATOM_DENOM}
         AND ${channelClause}
         AND ${directionFilter(params.direction)}
+        ${chainClause}
       GROUP BY hour
       ORDER BY hour ASC
     `);
@@ -83,6 +90,7 @@ const queryHourly = async (params: {
       AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
       AND ${channelClause}
       AND ${directionFilter(params.direction)}
+      ${chainClause}
     GROUP BY hour
     ORDER BY hour ASC
   `);
@@ -92,6 +100,7 @@ export const getTimeseriesHourly = async (params: {
   metric: TimeseriesMetric;
   direction: TimeseriesDirection;
   channelIdSrc?: string;
+  chain: ChainName | null;
 }): Promise<TimeseriesResult> => {
   const now = new Date();
   const currentHour = new Date(now);
@@ -105,6 +114,7 @@ export const getTimeseriesHourly = async (params: {
     direction: params.direction,
     from,
     channelIdSrc: params.channelIdSrc,
+    chain: params.chain,
   });
 
   const byHour = new Map<string, Prisma.Decimal | bigint>();
@@ -150,11 +160,15 @@ const queryDailyStats = async (params: {
   from: Date;
   toExclusive: Date;
   channelIdSrc?: string;
+  chain: ChainName | null;
 }): Promise<RawRow[]> => {
   const channelClause =
     params.channelIdSrc !== undefined
       ? Prisma.sql`channel_id_src = ${params.channelIdSrc}`
       : Prisma.sql`channel_id_src IS NULL`;
+  const chainClause = params.chain
+    ? Prisma.sql`AND chain = ${params.chain}`
+    : Prisma.empty;
 
   if (params.metric === 'transfers') {
     return db.$queryRaw<RawRow[]>(Prisma.sql`
@@ -165,6 +179,7 @@ const queryDailyStats = async (params: {
         AND date >= ${params.from}
         AND date < ${params.toExclusive}
         AND ${directionFilter(params.direction)}
+        ${chainClause}
       GROUP BY date
       ORDER BY date ASC
     `);
@@ -188,6 +203,7 @@ const queryDailyStats = async (params: {
       AND date >= ${params.from}
       AND date < ${params.toExclusive}
       AND ${directionFilter(params.direction)}
+      ${chainClause}
     GROUP BY date
     ORDER BY date ASC
   `);
@@ -200,11 +216,15 @@ const queryToday = async (params: {
   direction: TimeseriesDirection;
   midnight: Date;
   channelIdSrc?: string;
+  chain: ChainName | null;
 }): Promise<Prisma.Decimal | bigint> => {
   const channelClause =
     params.channelIdSrc !== undefined
       ? Prisma.sql`p.channel_id_src = ${params.channelIdSrc}`
       : Prisma.sql`TRUE`;
+  const chainClause = params.chain
+    ? Prisma.sql`AND p.chain = ${params.chain}`
+    : Prisma.empty;
 
   if (params.metric === 'transfers') {
     const rows = await db.$queryRaw<TodayRow[]>(Prisma.sql`
@@ -214,6 +234,7 @@ const queryToday = async (params: {
         AND p.event_time >= ${params.midnight}
         AND ${channelClause}
         AND ${directionFilter(params.direction)}
+        ${chainClause}
     `);
     return rows[0]?.value ?? BigInt(0);
   }
@@ -227,6 +248,7 @@ const queryToday = async (params: {
         AND resolve_base_denom(p.denom) = ${ATOM_DENOM}
         AND ${channelClause}
         AND ${directionFilter(params.direction)}
+        ${chainClause}
     `);
     return rows[0]?.value ?? new Prisma.Decimal(0);
   }
@@ -258,6 +280,7 @@ const queryToday = async (params: {
       AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
       AND ${channelClause}
       AND ${directionFilter(params.direction)}
+      ${chainClause}
   `);
   return rows[0]?.value ?? new Prisma.Decimal(0);
 };
@@ -280,6 +303,7 @@ export const getTimeseries = async (params: {
   from?: Date;
   to?: Date;
   channelIdSrc?: string;
+  chain: ChainName | null;
 }): Promise<TimeseriesResult> => {
   const now = new Date();
   const midnight = toUtcDate(now);
@@ -302,6 +326,7 @@ export const getTimeseries = async (params: {
     from: fromBoundary,
     toExclusive,
     channelIdSrc: params.channelIdSrc,
+    chain: params.chain,
   });
 
   const byDate = new Map<string, Prisma.Decimal | bigint>();
@@ -317,6 +342,7 @@ export const getTimeseries = async (params: {
       direction: params.direction,
       midnight,
       channelIdSrc: params.channelIdSrc,
+      chain: params.chain,
     });
     byDate.set(todayKey, todayValue);
   }

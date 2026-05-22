@@ -15,7 +15,7 @@ interface Props {
 }
 
 export default async function AsyncTopStatCard({ direction, period }: Props) {
-  const stats = await getStats({ direction });
+  const stats = await getStats({ direction, chain: null });
   return (
     <Card>
       <CardValue>${formatUsd(stats.volume_usd[period])}</CardValue>

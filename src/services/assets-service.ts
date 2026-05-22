@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { db } from '@/db';
+import type { ChainName } from '@/lib/chains';
 import { formatDenomDisplay } from '@/utils/format-denom';
 
 export type AssetsDirection = 'outgoing' | 'incoming' | 'both';
@@ -47,6 +48,7 @@ type BreakdownRow = {
 const queryPacketsBreakdown = async (
   direction: AssetsDirection,
   fromTime: Date,
+  chain: ChainName | null,
 ): Promise<BreakdownRow[]> => {
   return db.$queryRaw<BreakdownRow[]>(Prisma.sql`
     WITH daily_spot_prices AS (
@@ -81,6 +83,7 @@ const queryPacketsBreakdown = async (
       AND p.event_time >= ${fromTime}
       AND p.denom IS NOT NULL
       AND ${directionFilter(direction)}
+      ${chain ? Prisma.sql`AND p.chain = ${chain}` : Prisma.empty}
     GROUP BY resolve_base_denom(p.denom), a.symbol, a.decimals
   `);
 };
@@ -89,6 +92,7 @@ const queryDailyBreakdown = async (
   direction: AssetsDirection,
   fromDate: Date,
   toDateExclusive: Date,
+  chain: ChainName | null,
 ): Promise<BreakdownRow[]> => {
   return db.$queryRaw<BreakdownRow[]>(Prisma.sql`
     SELECT
@@ -105,6 +109,7 @@ const queryDailyBreakdown = async (
       AND d.date >= ${fromDate}::date
       AND d.date < ${toDateExclusive}::date
       AND ${directionFilter(direction)}
+      ${chain ? Prisma.sql`AND d.chain = ${chain}` : Prisma.empty}
     GROUP BY d.denom, a.symbol, a.decimals
   `);
 };
@@ -152,6 +157,7 @@ export const getAssetsBreakdown = async (params: {
   offset?: number;
   sort?: AssetsSort;
   order?: SortOrder;
+  chain: ChainName | null;
 }): Promise<AssetsBreakdownResult> => {
   const now = new Date();
   const midnight = new Date(now);
@@ -160,13 +166,13 @@ export const getAssetsBreakdown = async (params: {
   let rowsets: BreakdownRow[][];
   if (params.period === '24h') {
     const fromTime = new Date(now.getTime() - MS_PER_DAY);
-    rowsets = [await queryPacketsBreakdown(params.direction, fromTime)];
+    rowsets = [await queryPacketsBreakdown(params.direction, fromTime, params.chain)];
   } else {
     const days = params.period === '7d' ? 6 : 29;
     const fromDate = new Date(midnight.getTime() - days * MS_PER_DAY);
     const [daily, today] = await Promise.all([
-      queryDailyBreakdown(params.direction, fromDate, midnight),
-      queryPacketsBreakdown(params.direction, midnight),
+      queryDailyBreakdown(params.direction, fromDate, midnight, params.chain),
+      queryPacketsBreakdown(params.direction, midnight, params.chain),
     ]);
     rowsets = [daily, today];
   }

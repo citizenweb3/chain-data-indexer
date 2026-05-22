@@ -35,6 +35,7 @@ export default async function AsyncChannelTransfers({
     channelOnHub: channelIdSrc,
     direction,
     since: periodToSince(period),
+    chain: 'cosmoshub',
   });
 
   const totalRows = Number(result.total);

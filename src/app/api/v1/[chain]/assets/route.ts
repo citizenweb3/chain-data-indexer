@@ -1,13 +1,20 @@
 import logger from '@/logger';
 import { errorResponse, okJson, parseSearchParams } from '@/lib/api-helpers';
+import { isChainName } from '@/lib/chains';
 import { AssetsBreakdownQuerySchema } from '@/schemas/assets';
 import { getAssetsBreakdown } from '@/services/assets-service';
 
 export const dynamic = 'force-dynamic';
 
-const log = logger('api/assets');
+const log = logger('api/[chain]/assets');
 
-export const GET = async (request: Request): Promise<Response> => {
+export const GET = async (
+  request: Request,
+  ctx: { params: Promise<{ chain: string }> },
+): Promise<Response> => {
+  const { chain } = await ctx.params;
+  if (!isChainName(chain)) return errorResponse('not_found', 404);
+
   const parsed = parseSearchParams(AssetsBreakdownQuerySchema, request);
   if (!parsed.ok) return parsed.response;
 
@@ -19,11 +26,11 @@ export const GET = async (request: Request): Promise<Response> => {
       offset: parsed.data.offset,
       sort: parsed.data.sort,
       order: parsed.data.order,
-      chain: null,
+      chain,
     });
     return okJson(result, 'public, max-age=30');
   } catch (e) {
-    log.logError('assets failed', { error: (e as Error).message });
+    log.logError('assets failed', { chain, error: (e as Error).message });
     return errorResponse('internal_error', 500);
   }
 };

@@ -1,6 +1,6 @@
 import { z } from '@/lib/openapi-zod';
 
-import { DirectionEnum, PeriodEnum } from '@/schemas/common';
+import { ChainParam, DirectionEnum, PeriodEnum } from '@/schemas/common';
 
 export const ChannelsSortEnum = z.enum([
   'transfers',
@@ -45,6 +45,7 @@ const ChannelDenomSchema = z.object({
 });
 
 export const ChannelDtoSchema = z.object({
+  chain: ChainParam,
   channel_id_src: z.string(),
   port_id_src: z.string(),
   channel_id_dst: z.string().nullable(),

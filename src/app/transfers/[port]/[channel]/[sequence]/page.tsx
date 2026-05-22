@@ -141,6 +141,7 @@ export default async function TransferDetailPage({
     port: decodeURIComponent(port),
     channel: decodeURIComponent(channel),
     sequence: seqBn,
+    chain: 'cosmoshub',
   });
 
   if (!transfer) notFound();

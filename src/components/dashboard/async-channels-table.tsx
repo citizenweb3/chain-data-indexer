@@ -33,6 +33,7 @@ export default async function AsyncChannelsTable({
     order,
     limit,
     offset,
+    chain: null,
   });
   const pageLength = Math.max(1, Math.ceil(channels.page.total / limit));
   return (

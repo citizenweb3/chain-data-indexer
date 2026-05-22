@@ -81,6 +81,7 @@ export default async function TransfersPage({
     denomBase,
     since,
     offset,
+    chain: 'cosmoshub',
   });
 
   const totalRows = Number(result.total);

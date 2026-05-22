@@ -1,5 +1,12 @@
 import { z } from '@/lib/openapi-zod';
 
+import { CHAIN_NAMES } from '@/lib/chains';
+
+export const ChainParam = z.enum(CHAIN_NAMES).openapi({
+  description: 'Chain slug — one of the registered chains in the chains table.',
+  example: 'cosmoshub',
+});
+
 export const DirectionEnum = z.enum(['outgoing', 'incoming', 'both']);
 export type Direction = z.infer<typeof DirectionEnum>;
 

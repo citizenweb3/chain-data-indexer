@@ -68,6 +68,7 @@ export default async function AssetsPage({
     offset,
     sort,
     order,
+    chain: null,
   });
 
   const totalUsd = Number(breakdown.totals.amount_usd);

@@ -14,7 +14,7 @@ export default async function AsyncTopAssets({
   period,
   limit = 5,
 }: Props) {
-  const breakdown = await getAssetsBreakdown({ direction, period, limit });
+  const breakdown = await getAssetsBreakdown({ direction, period, limit, chain: null });
   return (
     <TopAssetsCard
       data={breakdown.data}

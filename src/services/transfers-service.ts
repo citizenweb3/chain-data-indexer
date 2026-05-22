@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { db } from '@/db';
+import type { ChainName } from '@/lib/chains';
 import type {
   IbcTransferDirection,
   IbcTransferDto,
@@ -23,6 +24,7 @@ export type ListTransfersParams = {
   denomBase?: string;
   since?: Date;
   offset?: number;
+  chain: ChainName;
 };
 
 export type TransfersListCursor = {
@@ -94,7 +96,10 @@ const toDto = (row: PacketRow): IbcTransferDto => ({
 });
 
 const buildFilterConditions = (params: ListTransfersParams): Prisma.Sql[] => {
-  const conditions: Prisma.Sql[] = [Prisma.sql`event_height IS NOT NULL`];
+  const conditions: Prisma.Sql[] = [
+    Prisma.sql`event_height IS NOT NULL`,
+    Prisma.sql`chain = ${params.chain}`,
+  ];
 
   if (params.channelIdSrc !== undefined) {
     conditions.push(Prisma.sql`channel_id_src = ${params.channelIdSrc}`);
@@ -245,6 +250,7 @@ export const getTransfer = async (params: {
   port: string;
   channel: string;
   sequence: bigint;
+  chain: ChainName;
 }): Promise<TransferDetailDto | null> => {
   const rows = await db.$queryRaw<DetailRow[]>(Prisma.sql`
     WITH daily_spot_prices AS (
@@ -294,7 +300,8 @@ export const getTransfer = async (params: {
       AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
     LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
       AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
-    WHERE p.channel_id_src = ${params.channel}
+    WHERE p.chain = ${params.chain}
+      AND p.channel_id_src = ${params.channel}
       AND p.port_id_src = ${params.port}
       AND p.sequence = ${params.sequence}
     LIMIT 1

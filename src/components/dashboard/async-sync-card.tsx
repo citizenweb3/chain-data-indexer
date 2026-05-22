@@ -1,8 +1,9 @@
-import { getSyncWatermark } from "@/services/health-service";
+import { getSyncWatermarks } from "@/services/health-service";
 import Card, { CardSubtext, CardValue } from "@/components/ui/card";
 
 export default async function AsyncSyncCard() {
-  const watermark = await getSyncWatermark();
+  const all = await getSyncWatermarks();
+  const watermark = all[0] ?? { last_synced_height: null, last_synced_at: null };
   return (
     <Card>
       <CardValue>

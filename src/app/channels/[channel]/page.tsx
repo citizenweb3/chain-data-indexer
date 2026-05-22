@@ -79,6 +79,7 @@ export default async function ChannelDetailPage({
     order: "desc",
     limit: 1000,
     offset: 0,
+    chain: null,
   });
 
   const channelRow = channelsResult.data.find(
