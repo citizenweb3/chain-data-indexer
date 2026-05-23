@@ -11,6 +11,37 @@ const formatTime = (iso: string | null): string =>
 
 const formatHeight = (h: string | null): string => (h ? `#${h}` : "—");
 
+const formatRelative = (iso: string | null): string => {
+  if (!iso) return "—";
+  const diffSec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (diffSec < 60) return `${Math.round(diffSec)}s ago`;
+  const m = Math.round(diffSec / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+};
+
+const HEARTBEAT_STALE_MINUTES = 2;
+const isHeartbeatStale = (iso: string | null): boolean => {
+  if (!iso) return true;
+  return (Date.now() - new Date(iso).getTime()) / 60000 > HEARTBEAT_STALE_MINUTES;
+};
+
+const HeartbeatDot = ({ stale }: { stale: boolean }) => (
+  <span
+    aria-hidden
+    title={
+      stale ? "Worker heartbeat is stale (>2 min)" : "Worker is healthy"
+    }
+    className={
+      stale
+        ? "bg-highlight inline-block h-1.5 w-1.5 rounded-full"
+        : "bg-secondary inline-block h-1.5 w-1.5 rounded-full"
+    }
+  />
+);
+
 export default async function AsyncSyncCard({ chain }: Props) {
   const all = await getSyncWatermarks();
 
@@ -18,11 +49,16 @@ export default async function AsyncSyncCard({ chain }: Props) {
     const w = all.find((x) => x.chain === chain) ?? {
       last_synced_height: null,
       last_synced_at: null,
+      last_sync_attempt_at: null,
     };
     return (
       <Card>
         <CardValue>{formatHeight(w.last_synced_height)}</CardValue>
-        <CardSubtext>{formatTime(w.last_synced_at)}</CardSubtext>
+        <CardSubtext>last activity: {formatTime(w.last_synced_at)}</CardSubtext>
+        <div className="mt-2 flex items-center gap-2 font-sfpro text-xs text-white/60">
+          <HeartbeatDot stale={isHeartbeatStale(w.last_sync_attempt_at)} />
+          worker synced {formatRelative(w.last_sync_attempt_at)}
+        </div>
       </Card>
     );
   }
@@ -39,7 +75,11 @@ export default async function AsyncSyncCard({ chain }: Props) {
               {formatHeight(w.last_synced_height)}
             </span>
             <span className="font-sfpro text-xs text-white/60">
-              {formatTime(w.last_synced_at)}
+              last pkt {formatRelative(w.last_synced_at)}
+            </span>
+            <span className="flex items-center gap-1.5 font-sfpro text-xs text-white/60">
+              <HeartbeatDot stale={isHeartbeatStale(w.last_sync_attempt_at)} />
+              {formatRelative(w.last_sync_attempt_at)}
             </span>
           </li>
         ))}

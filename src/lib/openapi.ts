@@ -26,6 +26,7 @@ const ChainSyncWatermarkSchema = z
     chain: ChainParam,
     last_synced_at: z.string().nullable(),
     last_synced_height: z.string().nullable(),
+    last_sync_attempt_at: z.string().nullable(),
   })
   .openapi('ChainSyncWatermark');
 
