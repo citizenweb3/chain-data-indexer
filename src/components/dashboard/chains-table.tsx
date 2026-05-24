@@ -31,10 +31,10 @@ const formatRelative = (iso: string | null): string => {
   return formatDistanceToNow(d, { addSuffix: true });
 };
 
-const SYNC_STALE_MINUTES = 5;
-const isStale = (iso: string | null): boolean => {
+const HEARTBEAT_STALE_MINUTES = 2;
+const isHeartbeatStale = (iso: string | null): boolean => {
   if (!iso) return true;
-  return (Date.now() - new Date(iso).getTime()) / 60000 > SYNC_STALE_MINUTES;
+  return (Date.now() - new Date(iso).getTime()) / 60000 > HEARTBEAT_STALE_MINUTES;
 };
 
 export default async function ChainsTable({ direction, period }: Props) {
@@ -52,7 +52,8 @@ export default async function ChainsTable({ direction, period }: Props) {
         displayName: CHAIN_DISPLAY_NAMES[r.chain] ?? r.chain,
         transfers: r.transfers_count[period],
         volume: r.volume_usd[period],
-        lastSync: w?.last_synced_at ?? null,
+        lastActivity: w?.last_synced_at ?? null,
+        lastSyncAttempt: w?.last_sync_attempt_at ?? null,
       };
     })
     .sort((a, b) => {
@@ -69,14 +70,15 @@ export default async function ChainsTable({ direction, period }: Props) {
           <TableHeaderItem label="Chain" />
           <TableHeaderItem label="Transfers" />
           <TableHeaderItem label="Volume (USD)" />
-          <TableHeaderItem label="Last sync" />
+          <TableHeaderItem label="Last activity" />
+          <TableHeaderItem label="Sync" />
         </tr>
       </thead>
       <tbody>
         {rows.length === 0 ? (
           <tr>
             <td
-              colSpan={5}
+              colSpan={6}
               className="bg-table_row py-8 text-center font-sfpro text-sm text-white/50"
             >
               No data.
@@ -85,7 +87,7 @@ export default async function ChainsTable({ direction, period }: Props) {
         ) : (
           rows.map((r, i) => {
             const link = `/${r.chain}/dashboard`;
-            const stale = isStale(r.lastSync);
+            const heartbeatStale = isHeartbeatStale(r.lastSyncAttempt);
             return (
               <BaseTableRow key={r.chain}>
                 <BaseTableCell className="py-3">
@@ -119,16 +121,28 @@ export default async function ChainsTable({ direction, period }: Props) {
                 </BaseTableCell>
                 <BaseTableCell className="py-3">
                   <Link href={link} className="block">
+                    <div className="text-center font-sfpro text-sm text-white/70">
+                      {formatRelative(r.lastActivity)}
+                    </div>
+                  </Link>
+                </BaseTableCell>
+                <BaseTableCell className="py-3">
+                  <Link href={link} className="block">
                     <div className="flex items-center justify-center gap-2 font-sfpro text-sm text-white/70">
                       <span
                         aria-hidden
+                        title={
+                          heartbeatStale
+                            ? "Worker heartbeat is stale (>2 min)"
+                            : "Worker is healthy"
+                        }
                         className={
-                          stale
+                          heartbeatStale
                             ? "bg-highlight inline-block h-1.5 w-1.5 rounded-full"
                             : "bg-secondary inline-block h-1.5 w-1.5 rounded-full"
                         }
                       />
-                      {formatRelative(r.lastSync)}
+                      {formatRelative(r.lastSyncAttempt)}
                     </div>
                   </Link>
                 </BaseTableCell>

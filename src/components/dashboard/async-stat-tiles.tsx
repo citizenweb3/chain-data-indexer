@@ -65,8 +65,11 @@ export default async function AsyncStatTiles({ direction, period }: Props) {
   const totalChains = CHAIN_NAMES.length;
   const liveChains = watermarks.filter((w) => w.last_synced_at !== null).length;
 
+  // "Last sync" = worker heartbeat (sync_cursors.updated_at), not last packet event_time.
+  // Upstream lag would freeze event_time while the worker is healthy; the heartbeat
+  // proves the worker is alive and polling.
   const latestSyncTimestamp = watermarks
-    .map((w) => (w.last_synced_at ? new Date(w.last_synced_at).getTime() : 0))
+    .map((w) => (w.last_sync_attempt_at ? new Date(w.last_sync_attempt_at).getTime() : 0))
     .reduce((a, b) => Math.max(a, b), 0);
   const latestSyncIso =
     latestSyncTimestamp > 0 ? new Date(latestSyncTimestamp).toISOString() : null;
