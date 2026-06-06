@@ -16,6 +16,7 @@ Next.js App Router Route Handlers. Each `route.ts` exports `GET` (no other verbs
 | `GET /api/v1/txs/stats` | `txs/stats/route.ts` | yes | — |
 | `GET /api/v1/ibc/transfers` | `ibc/transfers/route.ts` | yes | query: `IbcTransfersQuerySchema` |
 | `GET /api/v1/ibc/transfers/{port}/{channel}/{sequence}` | `ibc/transfers/[port]/[channel]/[sequence]/route.ts` | yes | param: `IbcTransferParamSchema` |
+| `GET /api/v1/gov/votes` | `gov/votes/route.ts` | yes | query: `GovVotesQuerySchema` |
 
 ## Standard handler shape
 
@@ -51,7 +52,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ x: strin
 
 ## OpenAPI
 
-Every new route MUST be registered in `src/lib/openapi.ts` via `registry.registerPath`. The Scalar UI at `/docs` reads from `/api/openapi.json` (8 paths registered).
+Every new route MUST be registered in `src/lib/openapi.ts` via `registry.registerPath`. The Scalar UI at `/docs` reads from `/api/openapi.json` (11 paths registered).
 
 ## Adding a new endpoint
 

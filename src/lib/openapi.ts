@@ -381,6 +381,58 @@ registry.registerPath({
   security: [{ apiKey: [] }],
 });
 
+const GovVote = registry.register(
+  'GovVote',
+  z.object({
+    proposal_id: z.string().describe('Governance proposal id (uint64 as decimal string)'),
+    option: z.enum(['YES', 'NO', 'ABSTAIN', 'VETO', 'UNSPECIFIED']),
+    weight: z
+      .string()
+      .nullable()
+      .describe('Weighted-vote weight for the option, or null for simple votes'),
+    height: z.string().describe('Block height of the final vote (uint64 as decimal string)'),
+    tx_hash: z.string(),
+  }),
+);
+
+const GovVotesCursor = registry.register(
+  'GovVotesCursor',
+  z.object({ next_before_proposal_id: z.string() }).nullable(),
+);
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/gov/votes',
+  summary: "List an account's final governance votes (newest proposal first, keyset cursor)",
+  tags: ['gov'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    query: z.object({
+      voter: z.string().describe('Voter account bech32 address (e.g. cosmos1...)'),
+      limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
+      before_proposal_id: z.string().max(20).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Paginated list of the account's final vote per proposal",
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.array(GovVote),
+            cursor: GovVotesCursor,
+            has_more: z.boolean(),
+            total: z.string(),
+          }),
+        },
+      },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
 export function generateOpenApiDocument() {
   const generator = new OpenApiGeneratorV31(registry.definitions);
   return generator.generateDocument({
