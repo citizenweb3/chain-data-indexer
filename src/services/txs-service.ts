@@ -3,9 +3,12 @@ import {
   queryTxEvents,
   queryTxMessages,
   queryTxRaw,
+  queryTxsByAddress,
+  queryTxsByAddressTotal,
   queryTxsList,
   queryTxsStats,
   queryTxsTotal,
+  type TxSummaryRow,
 } from '@/queries/txs-queries';
 
 const TXS_STATS_TTL_MS = 60_000;
@@ -50,15 +53,11 @@ function parseFee(raw: unknown): Fee | null {
   };
 }
 
-export async function listTxs(params: {
-  limit: number;
-  beforeHeight?: bigint;
-  beforeIndex?: number;
-}) {
-  const [rows, total] = await Promise.all([queryTxsList(params), queryTxsTotal()]);
-
-  const hasMore = rows.length > params.limit;
-  const page = hasMore ? rows.slice(0, params.limit) : rows;
+// Shared list-envelope builder: strip the limit+1 probe row, map BigInt→string, build the
+// keyset cursor from the last page row. `total` is always a decimal string.
+function buildTxsResult(rows: TxSummaryRow[], limit: number, total: bigint) {
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
 
   const data = page.map((r) => ({
     tx_hash: r.tx_hash,
@@ -77,6 +76,30 @@ export async function listTxs(params: {
       : null;
 
   return { data, cursor, has_more: hasMore, total: total.toString() };
+}
+
+export async function listTxs(params: {
+  limit: number;
+  beforeHeight?: bigint;
+  beforeIndex?: number;
+}) {
+  const [rows, total] = await Promise.all([queryTxsList(params), queryTxsTotal()]);
+  return buildTxsResult(rows, params.limit, total);
+}
+
+// Transactions involving an address. Same envelope as listTxs, but the total is an exact
+// per-address COUNT (cheap, narrow GIN set) rather than the global reltuples estimate.
+export async function listTxsByAddress(params: {
+  address: string;
+  limit: number;
+  beforeHeight?: bigint;
+  beforeIndex?: number;
+}) {
+  const [rows, total] = await Promise.all([
+    queryTxsByAddress(params),
+    queryTxsByAddressTotal(params.address),
+  ]);
+  return buildTxsResult(rows, params.limit, total);
 }
 
 export async function getTxDetail(hash: string) {

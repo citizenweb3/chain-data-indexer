@@ -1,5 +1,22 @@
 import { z } from 'zod';
 
+import { Bech32AddressSchema } from '@/schemas/common';
+import { BigIntStringSchema } from '@/schemas/pagination';
+
+// Query for GET /api/v1/txs/by-address — txs the address is involved in (signers grab-bag).
+// Cursor is atomic: before_height and before_index must be provided together or not at all.
+export const TxsByAddressQuerySchema = z
+  .object({
+    address: Bech32AddressSchema,
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    before_height: BigIntStringSchema.optional(),
+    before_index: z.coerce.number().int().min(0).optional(),
+  })
+  .refine((d) => (d.before_height === undefined) === (d.before_index === undefined), {
+    message: 'before_height and before_index must be provided together',
+    path: ['before_height'],
+  });
+
 export const TxSummarySchema = z.object({
   tx_hash: z.string(),
   height: z.string(),
