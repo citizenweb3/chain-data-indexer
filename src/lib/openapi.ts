@@ -433,6 +433,39 @@ registry.registerPath({
   security: [{ apiKey: [] }],
 });
 
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/txs/by-address',
+  summary: 'List transactions involving an address (newest first, keyset cursor)',
+  tags: ['transactions'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    query: z.object({
+      address: z
+        .string()
+        .describe(
+          'Account bech32 address (e.g. cosmos1...). Returns txs the address is involved in (signer/sender/delegator/validator/granter/grantee).',
+        ),
+      limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
+      before_height: z.string().max(20).optional(),
+      before_index: z.coerce.number().int().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of transactions involving the address',
+      content: {
+        'application/json': {
+          schema: z.object({ data: z.array(TxSummary), cursor: TxCursor, has_more: z.boolean(), total: z.string() }),
+        },
+      },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
 export function generateOpenApiDocument() {
   const generator = new OpenApiGeneratorV31(registry.definitions);
   return generator.generateDocument({

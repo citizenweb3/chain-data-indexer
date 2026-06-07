@@ -90,6 +90,71 @@ export async function queryTxsList(params: {
   `;
 }
 
+// Transactions involving an address (the indexer's `signers` is a grab-bag of actor fields:
+// signer/from_address/delegator_address/validator_address/granter/grantee). `@>` uses the GIN
+// index idx_txs_signers_gin; `= ANY` would NOT, so keep `@>`. The ::text[] cast is required so
+// porsager binds a text array. Two static variants (cursor / no-cursor) — no string concat.
+export async function queryTxsByAddress(params: {
+  address: string;
+  limit: number;
+  beforeHeight?: bigint;
+  beforeIndex?: number;
+}): Promise<TxSummaryRow[]> {
+  const { address, limit, beforeHeight, beforeIndex } = params;
+  const fetch = limit + 1;
+
+  if (beforeHeight !== undefined && beforeIndex !== undefined) {
+    return db<TxSummaryRow[]>`
+      SELECT
+        t.tx_hash,
+        t.height,
+        t.tx_index,
+        t.time,
+        t.code,
+        t.fee->'amount'->0->>'amount' AS fee_amount,
+        t.fee->'amount'->0->>'denom'  AS fee_denom,
+        m.type_url AS first_msg_type
+      FROM core.transactions t
+      LEFT JOIN core.messages m
+        ON m.height = t.height AND m.tx_hash = t.tx_hash AND m.msg_index = 0
+      WHERE t.signers @> ARRAY[${address}]::text[]
+        AND (t.height, t.tx_index) < (${beforeHeight}, ${beforeIndex})
+      ORDER BY t.height DESC, t.tx_index DESC
+      LIMIT ${fetch}
+    `;
+  }
+
+  return db<TxSummaryRow[]>`
+    SELECT
+      t.tx_hash,
+      t.height,
+      t.tx_index,
+      t.time,
+      t.code,
+      t.fee->'amount'->0->>'amount' AS fee_amount,
+      t.fee->'amount'->0->>'denom'  AS fee_denom,
+      m.type_url AS first_msg_type
+    FROM core.transactions t
+    LEFT JOIN core.messages m
+      ON m.height = t.height AND m.tx_hash = t.tx_hash AND m.msg_index = 0
+    WHERE t.signers @> ARRAY[${address}]::text[]
+    ORDER BY t.height DESC, t.tx_index DESC
+    LIMIT ${fetch}
+  `;
+}
+
+// Exact per-address total. A single address's involved-tx set is narrow (the GIN bitmap returns
+// few rows), so this COUNT is cheap — unlike the global table count (which uses the reltuples
+// estimate in queryTxsTotal). Always returns a number; serialized as a string by the service.
+export async function queryTxsByAddressTotal(address: string): Promise<bigint> {
+  const rows = await db<[{ total: bigint }]>`
+    SELECT COUNT(*)::bigint AS total
+    FROM core.transactions
+    WHERE signers @> ARRAY[${address}]::text[]
+  `;
+  return rows[0]?.total ?? BigInt(0);
+}
+
 export async function queryTxsStats(): Promise<{ total_txs: bigint; last_height: bigint }> {
   const rows = await db<[{ total: bigint | null; last_height: bigint | null }]>`
     SELECT COUNT(*)::bigint AS total, MAX(height) AS last_height FROM core.transactions
