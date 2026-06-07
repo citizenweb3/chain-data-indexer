@@ -25,21 +25,28 @@ export interface GovVotesByVoterResult {
   total: string;
 }
 
-// gov.votes.option may arrive as the proto enum (VOTE_OPTION_YES) or the codec short form
-// (Yes), depending on the decode path. Normalize to a stable domain. Idempotent through VI's
-// unifyVotes (which lowercases yes/no/abstain/veto). VETO never occurs on chains without the
-// NoWithVeto option (e.g. AtomOne) — harmless.
+// gov.votes.option is stored as the cosmos VoteOption enum serialized as text ('1'..'4'): the
+// producer sink writes String(m.value.option) where option is the decoded numeric proto enum
+// (normalize/gov.ts). The proto/codec string forms (VOTE_OPTION_YES / Yes) are also handled
+// defensively in case a future decode path emits them. Cosmos VoteOption: 1=YES, 2=ABSTAIN,
+// 3=NO, 4=NO_WITH_VETO ('0'/UNKNOWN/null → UNSPECIFIED) — note the 2/3 (ABSTAIN/NO) ordering.
+// Normalize to a stable domain. Idempotent through VI's unifyVotes (which lowercases
+// yes/no/abstain/veto). VETO never occurs on chains without the NoWithVeto option (e.g. AtomOne).
 function normalizeOption(raw: string): GovVoteOption {
   switch (raw) {
+    case '1':
     case 'Yes':
     case 'VOTE_OPTION_YES':
       return 'YES';
+    case '3':
     case 'No':
     case 'VOTE_OPTION_NO':
       return 'NO';
+    case '2':
     case 'Abstain':
     case 'VOTE_OPTION_ABSTAIN':
       return 'ABSTAIN';
+    case '4':
     case 'NoWithVeto':
     case 'VOTE_OPTION_NO_WITH_VETO':
       return 'VETO';
