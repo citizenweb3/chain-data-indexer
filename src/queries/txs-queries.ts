@@ -90,17 +90,18 @@ export async function queryTxsList(params: {
   `;
 }
 
-// Transactions involving an address (the indexer's `signers` is a grab-bag of actor fields:
-// signer/from_address/delegator_address/validator_address/granter/grantee). `@>` uses the GIN
-// index idx_txs_signers_gin; `= ANY` would NOT, so keep `@>`. The ::text[] cast is required so
-// porsager binds a text array. Two static variants (cursor / no-cursor) — no string concat.
+// Transactions involving one or more addresses (the indexer's `signers` is a grab-bag of actor
+// fields: signer/from_address/delegator_address/validator_address/granter/grantee). `&&` (array
+// overlap = "contains ANY of") uses the GIN index idx_txs_signers_gin; `= ANY` would NOT. Pass
+// db.array(addresses) — a bare JS string[] is NOT array-serialized by porsager (it would become a
+// comma-joined scalar). Two static variants (cursor / no-cursor) — no string concat.
 export async function queryTxsByAddress(params: {
-  address: string;
+  addresses: string[];
   limit: number;
   beforeHeight?: bigint;
   beforeIndex?: number;
 }): Promise<TxSummaryRow[]> {
-  const { address, limit, beforeHeight, beforeIndex } = params;
+  const { addresses, limit, beforeHeight, beforeIndex } = params;
   const fetch = limit + 1;
 
   if (beforeHeight !== undefined && beforeIndex !== undefined) {
@@ -117,7 +118,7 @@ export async function queryTxsByAddress(params: {
       FROM core.transactions t
       LEFT JOIN core.messages m
         ON m.height = t.height AND m.tx_hash = t.tx_hash AND m.msg_index = 0
-      WHERE t.signers @> ARRAY[${address}]::text[]
+      WHERE t.signers && ${db.array(addresses)}
         AND (t.height, t.tx_index) < (${beforeHeight}, ${beforeIndex})
       ORDER BY t.height DESC, t.tx_index DESC
       LIMIT ${fetch}
@@ -137,20 +138,21 @@ export async function queryTxsByAddress(params: {
     FROM core.transactions t
     LEFT JOIN core.messages m
       ON m.height = t.height AND m.tx_hash = t.tx_hash AND m.msg_index = 0
-    WHERE t.signers @> ARRAY[${address}]::text[]
+    WHERE t.signers && ${db.array(addresses)}
     ORDER BY t.height DESC, t.tx_index DESC
     LIMIT ${fetch}
   `;
 }
 
-// Exact per-address total. A single address's involved-tx set is narrow (the GIN bitmap returns
+// Exact total over the address(es). An address's involved-tx set is narrow (the GIN bitmap returns
 // few rows), so this COUNT is cheap — unlike the global table count (which uses the reltuples
-// estimate in queryTxsTotal). Always returns a number; serialized as a string by the service.
-export async function queryTxsByAddressTotal(address: string): Promise<bigint> {
+// estimate in queryTxsTotal). `&&` matches the list predicate so the count agrees with the page; a
+// tx matching several of the addresses is counted once (natural dedup).
+export async function queryTxsByAddressTotal(addresses: string[]): Promise<bigint> {
   const rows = await db<[{ total: bigint }]>`
     SELECT COUNT(*)::bigint AS total
     FROM core.transactions
-    WHERE signers @> ARRAY[${address}]::text[]
+    WHERE signers && ${db.array(addresses)}
   `;
   return rows[0]?.total ?? BigInt(0);
 }

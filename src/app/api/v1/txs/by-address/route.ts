@@ -18,11 +18,11 @@ export async function GET(req: Request) {
     return errorResponse('invalid_params', 400, parsed.error.flatten().fieldErrors);
   }
 
-  const { address, limit, before_height, before_index } = parsed.data;
+  const { address: addresses, limit, before_height, before_index } = parsed.data;
 
   try {
     const result = await listTxsByAddress({
-      address,
+      addresses,
       limit,
       beforeHeight: before_height,
       beforeIndex: before_index,
