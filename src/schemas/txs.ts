@@ -3,11 +3,16 @@ import { z } from 'zod';
 import { Bech32AddressSchema } from '@/schemas/common';
 import { BigIntStringSchema } from '@/schemas/pagination';
 
-// Query for GET /api/v1/txs/by-address — txs the address is involved in (signers grab-bag).
-// Cursor is atomic: before_height and before_index must be provided together or not at all.
+// Query for GET /api/v1/txs/by-address — txs the address(es) are involved in (signers grab-bag).
+// `address` is a comma-separated list of 1..5 bech32 addresses (e.g. an account + its operator
+// for the validator page). trim+filter tolerates spaces and a trailing comma. Cursor is atomic:
+// before_height and before_index must be provided together or not at all.
 export const TxsByAddressQuerySchema = z
   .object({
-    address: Bech32AddressSchema,
+    address: z
+      .string()
+      .transform((s) => s.split(',').map((x) => x.trim()).filter(Boolean))
+      .pipe(z.array(Bech32AddressSchema).min(1).max(5)),
     limit: z.coerce.number().int().min(1).max(100).default(50),
     before_height: BigIntStringSchema.optional(),
     before_index: z.coerce.number().int().min(0).optional(),

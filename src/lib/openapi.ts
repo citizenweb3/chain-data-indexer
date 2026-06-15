@@ -444,7 +444,7 @@ registry.registerPath({
       address: z
         .string()
         .describe(
-          'Account bech32 address (e.g. cosmos1...). Returns txs the address is involved in (signer/sender/delegator/validator/granter/grantee).',
+          'Comma-separated list of 1-5 bech32 addresses (e.g. cosmos1... or cosmos1...,cosmosvaloper1... for a validator). Returns txs ANY of the addresses is involved in (signer/sender/delegator/validator/granter/grantee).',
         ),
       limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
       before_height: z.string().max(20).optional(),

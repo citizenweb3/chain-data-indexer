@@ -87,17 +87,17 @@ export async function listTxs(params: {
   return buildTxsResult(rows, params.limit, total);
 }
 
-// Transactions involving an address. Same envelope as listTxs, but the total is an exact
-// per-address COUNT (cheap, narrow GIN set) rather than the global reltuples estimate.
+// Transactions involving one or more addresses. Same envelope as listTxs, but the total is an
+// exact COUNT over the address set (cheap, narrow GIN set) rather than the global reltuples estimate.
 export async function listTxsByAddress(params: {
-  address: string;
+  addresses: string[];
   limit: number;
   beforeHeight?: bigint;
   beforeIndex?: number;
 }) {
   const [rows, total] = await Promise.all([
     queryTxsByAddress(params),
-    queryTxsByAddressTotal(params.address),
+    queryTxsByAddressTotal(params.addresses),
   ]);
   return buildTxsResult(rows, params.limit, total);
 }
