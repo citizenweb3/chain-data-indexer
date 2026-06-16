@@ -87,17 +87,20 @@ export async function listTxs(params: {
   return buildTxsResult(rows, params.limit, total);
 }
 
-// Transactions involving one or more addresses. Same envelope as listTxs, but the total is an
-// exact COUNT over the address set (cheap, narrow GIN set) rather than the global reltuples estimate.
+// Transactions involving one or more addresses. Same envelope as listTxs. `total` is an exact
+// COUNT over the address set — for a large set (e.g. a top validator's valoper, ~1.7M rows) that
+// COUNT alone costs 10–20s, so cursor-paginated clients that don't need `total` pass
+// includeCount=false to skip it; the rows (keyset LIMIT) query stays fast.
 export async function listTxsByAddress(params: {
   addresses: string[];
   limit: number;
   beforeHeight?: bigint;
   beforeIndex?: number;
+  includeCount?: boolean;
 }) {
   const [rows, total] = await Promise.all([
     queryTxsByAddress(params),
-    queryTxsByAddressTotal(params.addresses),
+    params.includeCount === false ? Promise.resolve(BigInt(0)) : queryTxsByAddressTotal(params.addresses),
   ]);
   return buildTxsResult(rows, params.limit, total);
 }

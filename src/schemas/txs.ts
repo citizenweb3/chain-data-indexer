@@ -16,6 +16,10 @@ export const TxsByAddressQuerySchema = z
     limit: z.coerce.number().int().min(1).max(100).default(50),
     before_height: BigIntStringSchema.optional(),
     before_index: z.coerce.number().int().min(0).optional(),
+    // Opt out of the exact COUNT(*) total. Cursor-paginated clients (ValidatorInfo) never read
+    // `total`, and the COUNT over a large `signers &&` match set (e.g. a top validator's valoper,
+    // ~1.7M rows) costs 10–20s. Default 'true' preserves the envelope contract for other consumers.
+    count: z.enum(['true', 'false']).default('true'),
   })
   .refine((d) => (d.before_height === undefined) === (d.before_index === undefined), {
     message: 'before_height and before_index must be provided together',
