@@ -449,6 +449,13 @@ registry.registerPath({
       limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
       before_height: z.string().max(20).optional(),
       before_index: z.coerce.number().int().optional(),
+      count: z
+        .enum(['true', 'false'])
+        .default('true')
+        .optional()
+        .describe(
+          "Set 'false' to skip the exact COUNT(*) `total` (returns total='0'). Cursor clients that don't use `total` should disable it — the COUNT over a large match set (e.g. a top validator) can cost 10–20s.",
+        ),
     }),
   },
   responses: {
