@@ -6,7 +6,7 @@ const JSONbig = JSONbigFactory({ storeAsString: true });
 export interface DecodedMoneroTransaction {
   format: 'safe-monero-explorer-v1';
   version: number | null;
-  unlock_time: number | null;
+  unlock_time: string | null;
   is_coinbase: boolean;
   inputs_count: number;
   outputs_count: number;
@@ -14,10 +14,20 @@ export interface DecodedMoneroTransaction {
   fee_atomic: string | null;
 }
 
+export interface DecodedMoneroSummaryInput {
+  version: number | null;
+  unlockTime: string | null;
+  isCoinbase: boolean;
+  inputsCount: number;
+  outputsCount: number;
+  extraLength: number;
+  feeAtomic: string | null;
+}
+
 export interface TransactionShape {
   hash: string | null;
   version: number | null;
-  unlockTime: number | null;
+  unlockTime: string | null;
   isCoinbase: boolean;
   inputsCount: number;
   outputsCount: number;
@@ -53,6 +63,12 @@ function coerceInteger(value: unknown): number | null {
   return null;
 }
 
+function coerceIntegerString(value: unknown): string | null {
+  if (typeof value === 'string' && /^-?\d+$/.test(value)) return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
+  return null;
+}
+
 function coerceAtomicString(value: unknown): string | null {
   if (typeof value === 'string' && /^-?\d+$/.test(value)) return value;
   if (typeof value === 'number' && Number.isFinite(value)) return String(Math.trunc(value));
@@ -74,11 +90,24 @@ function txFeeAtomic(parsed: MoneroTxJson | null): string | null {
   return null;
 }
 
+export function buildDecodedMoneroTransaction(input: DecodedMoneroSummaryInput): DecodedMoneroTransaction {
+  return {
+    format: 'safe-monero-explorer-v1',
+    version: input.version,
+    unlock_time: input.unlockTime,
+    is_coinbase: input.isCoinbase,
+    inputs_count: input.inputsCount,
+    outputs_count: input.outputsCount,
+    extra_length: input.extraLength,
+    fee_atomic: input.feeAtomic,
+  };
+}
+
 export function getTransactionShape(raw: unknown): TransactionShape {
   const record = isRecord(raw) ? raw : null;
   const parsed = parseTxJson(raw);
   const version = coerceInteger(parsed?.version);
-  const unlockTime = coerceInteger(parsed?.unlock_time);
+  const unlockTime = coerceIntegerString(parsed?.unlock_time);
   const inputsCount = Array.isArray(parsed?.vin) ? parsed.vin.length : 0;
   const outputsCount = Array.isArray(parsed?.vout) ? parsed.vout.length : 0;
   const extraLength = Array.isArray(parsed?.extra) ? parsed.extra.length : 0;
@@ -97,16 +126,15 @@ export function getTransactionShape(raw: unknown): TransactionShape {
     feeAtomic,
     sizeBytes: asHex ? Math.floor(asHex.length / 2) : null,
     decoded: parsed
-      ? {
-          format: 'safe-monero-explorer-v1',
+      ? buildDecodedMoneroTransaction({
           version,
-          unlock_time: unlockTime,
-          is_coinbase: isCoinbase,
-          inputs_count: inputsCount,
-          outputs_count: outputsCount,
-          extra_length: extraLength,
-          fee_atomic: feeAtomic,
-        }
+          unlockTime,
+          isCoinbase,
+          inputsCount,
+          outputsCount,
+          extraLength,
+          feeAtomic,
+        })
       : null,
   };
 }

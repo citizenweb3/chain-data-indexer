@@ -82,6 +82,20 @@ export function getOpenApiDocument(): Record<string, unknown> {
         },
       },
     },
+    components: {
+      schemas: {
+        Block: {
+          type: 'object',
+          properties: {
+            coinbase_extra_hex: {
+              type: 'string',
+              nullable: true,
+              description: 'Hex of coinbase (miner_tx) tx_extra; null if empty',
+            },
+          },
+        },
+      },
+    },
   };
 }
 

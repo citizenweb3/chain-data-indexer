@@ -49,13 +49,15 @@ async function insertTransactions(
   const blockHeights: number[] = [];
   const positions: number[] = [];
   const versions: number[] = [];
-  const unlockTimes: number[] = [];
+  const unlockTimes: string[] = [];
+  const coinbaseFlags: boolean[] = [];
   const inputsCounts: number[] = [];
   const outputsCounts: number[] = [];
+  const extraSizes: number[] = [];
   const feeAtomics: Array<string | null> = [];
+  const sizeBytes: Array<number | null> = [];
   const inPools: boolean[] = [];
   const confirmations: Array<number | null> = [];
-  const raws: string[] = [];
 
   for (const entry of entries) {
     const blockHash = entry.block.block_header.hash;
@@ -69,13 +71,15 @@ async function insertTransactions(
       blockHeights.push(blockHeight);
       positions.push(position);
       versions.push(shape.version ?? 0);
-      unlockTimes.push(shape.unlockTime ?? 0);
+      unlockTimes.push(shape.unlockTime ?? '0');
+      coinbaseFlags.push(shape.isCoinbase);
       inputsCounts.push(shape.inputsCount);
       outputsCounts.push(shape.outputsCount);
+      extraSizes.push(shape.extraLength);
       feeAtomics.push(shape.feeAtomic);
+      sizeBytes.push(shape.sizeBytes);
       inPools.push(tx.in_pool);
       confirmations.push(tx.confirmations ?? null);
-      raws.push(JSON.stringify(raw));
     });
   }
 
@@ -83,15 +87,31 @@ async function insertTransactions(
 
   const result = await qr.query(
     `INSERT INTO monero_transactions
-       (hash, block_hash, block_height, position, version, unlock_time, inputs_count, outputs_count,
-        fee_atomic, in_pool, confirmations, raw)
+       (hash, block_hash, block_height, position, version, unlock_time, is_coinbase, inputs_count, outputs_count,
+        extra_size, fee_atomic, size_bytes, in_pool, confirmations)
      SELECT * FROM unnest(
-       $1::text[], $2::text[], $3::bigint[], $4::integer[], $5::integer[], $6::bigint[],
-       $7::integer[], $8::integer[], $9::text[], $10::boolean[], $11::bigint[], $12::jsonb[]
-     ) AS t(hash, block_hash, block_height, position, version, unlock_time, inputs_count, outputs_count,
-            fee_atomic, in_pool, confirmations, raw)
+       $1::text[], $2::text[], $3::bigint[], $4::integer[], $5::integer[], $6::text[],
+       $7::boolean[], $8::integer[], $9::integer[], $10::integer[], $11::text[], $12::bigint[],
+       $13::boolean[], $14::bigint[]
+     ) AS t(hash, block_hash, block_height, position, version, unlock_time, is_coinbase, inputs_count, outputs_count,
+            extra_size, fee_atomic, size_bytes, in_pool, confirmations)
      ON CONFLICT DO NOTHING`,
-    [hashes, blockHashes, blockHeights, positions, versions, unlockTimes, inputsCounts, outputsCounts, feeAtomics, inPools, confirmations, raws],
+    [
+      hashes,
+      blockHashes,
+      blockHeights,
+      positions,
+      versions,
+      unlockTimes,
+      coinbaseFlags,
+      inputsCounts,
+      outputsCounts,
+      extraSizes,
+      feeAtomics,
+      sizeBytes,
+      inPools,
+      confirmations,
+    ],
   );
 
   return result.rowCount ?? 0;
@@ -121,6 +141,13 @@ export async function processBatch(entries: IndexedMoneroBlock[]): Promise<numbe
   const cumulativeDifficultyHexes = entries.map((entry) => entry.block.block_header.wide_cumulative_difficulty);
   const orphanStatuses = entries.map((entry) => entry.block.block_header.orphan_status);
   const raws = entries.map((entry) => JSON.stringify(blockRaw(entry)));
+  const coinbaseExtraHexes = entries.map((entry) => {
+    const extra = entry.parsedBlock?.miner_tx?.extra;
+    if (Array.isArray(extra) && extra.length > 0) {
+      return Buffer.from(extra).toString('hex');
+    }
+    return null;
+  });
 
   const client = await getPool().connect();
   try {
@@ -131,14 +158,14 @@ export async function processBatch(entries: IndexedMoneroBlock[]): Promise<numbe
       `INSERT INTO monero_blocks
          (hash, prev_hash, height, timestamp, major_version, minor_version, nonce,
           block_size, block_weight, long_term_weight, num_txes, miner_tx_hash,
-          reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status, raw)
+          reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status, raw, coinbase_extra_hex)
        SELECT * FROM unnest(
          $1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::integer[], $6::integer[],
          $7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[], $11::integer[], $12::text[],
-         $13::text[], $14::text[], $15::text[], $16::boolean[], $17::jsonb[]
+         $13::text[], $14::text[], $15::text[], $16::boolean[], $17::jsonb[], $18::text[]
        ) AS t(hash, prev_hash, height, timestamp, major_version, minor_version, nonce,
               block_size, block_weight, long_term_weight, num_txes, miner_tx_hash,
-              reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status, raw)
+              reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status, raw, coinbase_extra_hex)
        ON CONFLICT (hash) DO NOTHING
        RETURNING hash, height::text`,
       [
@@ -159,6 +186,7 @@ export async function processBatch(entries: IndexedMoneroBlock[]): Promise<numbe
         cumulativeDifficultyHexes,
         orphanStatuses,
         raws,
+        coinbaseExtraHexes,
       ],
     );
 

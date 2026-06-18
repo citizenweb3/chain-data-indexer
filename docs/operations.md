@@ -146,6 +146,15 @@ Do not log secrets or full raw RPC payloads at `info`.
 
 ## Troubleshooting
 
+### PostgreSQL grows much faster than monerod
+
+The indexer is designed to keep **summary/index data** in PostgreSQL and fetch
+rare heavy transaction raw detail from `monerod` on-demand.
+
+If PG starts growing at raw-archive scale, check whether the branch is
+persisting full tx payloads (`as_hex`, `as_json`, `prunable_as_hex`,
+`pruned_as_hex`, or duplicated parsed JSON) instead of compact summary fields.
+
 ### `get_coinbase_tx_sum` is slow or hangs
 
 Checks:

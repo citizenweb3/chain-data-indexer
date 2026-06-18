@@ -129,3 +129,6 @@ historical supply bootstrap and report degraded supply capability.
    expose only safe explorer summaries.
 5. If Monero adds a better bulk block RPC in a future release, document it here
    before changing ingestion.
+
+## Miner TX Extra
+We map `MoneroBlockJson.miner_tx.extra` into `coinbase_extra_hex` in our `blocks` API endpoint, converting the uint8 array into a regular hex string. If missing or empty, it yields `null`. This field is vital for tracking miner pools since pools embed identification metadata into this section.

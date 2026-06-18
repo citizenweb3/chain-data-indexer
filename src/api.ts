@@ -4,9 +4,10 @@ import { getPool } from './db/pg.js';
 import { getProgress } from './db/progress.js';
 import { metricsContentType, metricsText } from './metrics/registry.js';
 import { getOpenApiDocument, swaggerHtml } from './openapi.js';
-import { fetchInfo, fetchPruneStatus } from './rpc/client.js';
-import { getTransactionShape } from './txDecode.js';
+import { fetchInfo, fetchPruneStatus, fetchTransactions, parseMoneroJson } from './rpc/client.js';
+import { buildDecodedMoneroTransaction } from './txDecode.js';
 import { logger } from './utils/logger.js';
+import type { MoneroTxJson } from './types.js';
 
 const startedAt = Date.now();
 const DEFAULT_LIMIT = 20;
@@ -35,6 +36,7 @@ interface BlockApiRow {
   is_canonical: boolean;
   is_settled: boolean;
   indexed_at: Date;
+  coinbase_extra_hex: string | null;
   raw?: unknown;
 }
 
@@ -45,15 +47,17 @@ interface TransactionApiRow {
   position: number;
   version: number;
   unlock_time: string;
+  is_coinbase: boolean;
   inputs_count: number;
   outputs_count: number;
+  extra_size: number;
   fee_atomic: string | null;
+  size_bytes: string | null;
   in_pool: boolean;
   confirmations: string | null;
   indexed_at: Date;
   is_canonical: boolean;
   is_settled: boolean;
-  raw: unknown;
 }
 
 interface SupplyApiRow {
@@ -150,6 +154,7 @@ function blockSummary(row: BlockApiRow): Record<string, unknown> {
     reward_atomic: row.reward_atomic,
     difficulty_hex: row.difficulty_hex,
     cumulative_difficulty_hex: row.cumulative_difficulty_hex,
+    coinbase_extra_hex: row.coinbase_extra_hex,
     orphan_status: row.orphan_status,
     is_canonical: row.is_canonical,
     is_settled: row.is_settled,
@@ -157,26 +162,36 @@ function blockSummary(row: BlockApiRow): Record<string, unknown> {
   };
 }
 
-function transactionSummary(row: TransactionApiRow, includeRaw = false): Record<string, unknown> {
-  const shape = getTransactionShape(row.raw);
+function transactionSummary(row: TransactionApiRow, raw: Record<string, unknown> | null = null): Record<string, unknown> {
   const summary: Record<string, unknown> = {
     hash: row.hash,
     block_hash: row.block_hash,
     block_height: Number(row.block_height),
     position: row.position,
     version: row.version,
-    unlock_time: Number(row.unlock_time),
+    unlock_time: row.unlock_time,
+    is_coinbase: row.is_coinbase,
     inputs_count: row.inputs_count,
     outputs_count: row.outputs_count,
+    extra_size: row.extra_size,
     fee_atomic: row.fee_atomic,
+    size: toNumber(row.size_bytes),
     confirmations: toNumber(row.confirmations),
     in_pool: row.in_pool,
     is_canonical: row.is_canonical,
     is_settled: row.is_settled,
     indexed_at: row.indexed_at,
-    safe_decode: shape.decoded,
+    safe_decode: buildDecodedMoneroTransaction({
+      version: row.version,
+      unlockTime: row.unlock_time,
+      isCoinbase: row.is_coinbase,
+      inputsCount: row.inputs_count,
+      outputsCount: row.outputs_count,
+      extraLength: row.extra_size,
+      feeAtomic: row.fee_atomic,
+    }),
   };
-  if (includeRaw) summary.raw = row.raw;
+  if (raw) summary.raw = raw;
   return summary;
 }
 
@@ -352,7 +367,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
     `SELECT hash, prev_hash, height::text, timestamp::text, major_version, minor_version, nonce::text,
             block_size::text, block_weight::text, long_term_weight::text, num_txes, miner_tx_hash,
             reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status,
-            is_canonical, is_settled, indexed_at
+            is_canonical, is_settled, indexed_at, coinbase_extra_hex
        FROM monero_blocks
        ${where}
       ORDER BY height ${direction}, hash ${direction}
@@ -375,7 +390,7 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
     ? `SELECT hash, prev_hash, height::text, timestamp::text, major_version, minor_version, nonce::text,
               block_size::text, block_weight::text, long_term_weight::text, num_txes, miner_tx_hash,
               reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status,
-              is_canonical, is_settled, indexed_at, raw
+              is_canonical, is_settled, indexed_at, raw, coinbase_extra_hex
          FROM monero_blocks
         WHERE height = $1
         ORDER BY CASE WHEN is_canonical THEN 0 ELSE 1 END, hash ASC
@@ -383,7 +398,7 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
     : `SELECT hash, prev_hash, height::text, timestamp::text, major_version, minor_version, nonce::text,
               block_size::text, block_weight::text, long_term_weight::text, num_txes, miner_tx_hash,
               reward_atomic, difficulty_hex, cumulative_difficulty_hex, orphan_status,
-              is_canonical, is_settled, indexed_at, raw
+              is_canonical, is_settled, indexed_at, raw, coinbase_extra_hex
          FROM monero_blocks
         WHERE hash = $1
         LIMIT 1`;
@@ -396,8 +411,8 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
 
   const txResult = await getPool().query<TransactionApiRow>(
     `SELECT tx.hash, tx.block_hash, tx.block_height::text, tx.position, tx.version, tx.unlock_time::text,
-            tx.inputs_count, tx.outputs_count, tx.fee_atomic, tx.in_pool, tx.confirmations::text,
-            tx.indexed_at, block.is_canonical, block.is_settled, tx.raw
+            tx.is_coinbase, tx.inputs_count, tx.outputs_count, tx.extra_size, tx.fee_atomic, tx.size_bytes::text,
+            tx.in_pool, tx.confirmations::text, tx.indexed_at, block.is_canonical, block.is_settled
        FROM monero_transactions tx
        JOIN monero_blocks block ON block.hash = tx.block_hash
       WHERE tx.block_hash = $1
@@ -407,7 +422,7 @@ async function handleBlockById(id: string, res: http.ServerResponse): Promise<vo
 
   sendJson(res, 200, {
     ...blockSummary(rows[0]),
-    transactions: txResult.rows.map((row) => transactionSummary(row, false)),
+    transactions: txResult.rows.map((row) => transactionSummary(row)),
     raw: rows[0].raw,
   });
 }
@@ -443,8 +458,8 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
 
   const { rows } = await getPool().query<TransactionApiRow>(
     `SELECT tx.hash, tx.block_hash, tx.block_height::text, tx.position, tx.version, tx.unlock_time::text,
-            tx.inputs_count, tx.outputs_count, tx.fee_atomic, tx.in_pool, tx.confirmations::text,
-            tx.indexed_at, block.is_canonical, block.is_settled, tx.raw
+           tx.is_coinbase, tx.inputs_count, tx.outputs_count, tx.extra_size, tx.fee_atomic, tx.size_bytes::text,
+           tx.in_pool, tx.confirmations::text, tx.indexed_at, block.is_canonical, block.is_settled
        FROM monero_transactions tx
        JOIN monero_blocks block ON block.hash = tx.block_hash
        ${where}
@@ -465,8 +480,8 @@ async function handleTransactions(url: URL, res: http.ServerResponse): Promise<v
 async function handleTransactionById(id: string, res: http.ServerResponse): Promise<void> {
   const { rows } = await getPool().query<TransactionApiRow>(
     `SELECT tx.hash, tx.block_hash, tx.block_height::text, tx.position, tx.version, tx.unlock_time::text,
-            tx.inputs_count, tx.outputs_count, tx.fee_atomic, tx.in_pool, tx.confirmations::text,
-            tx.indexed_at, block.is_canonical, block.is_settled, tx.raw
+            tx.is_coinbase, tx.inputs_count, tx.outputs_count, tx.extra_size, tx.fee_atomic, tx.size_bytes::text,
+            tx.in_pool, tx.confirmations::text, tx.indexed_at, block.is_canonical, block.is_settled
        FROM monero_transactions tx
        JOIN monero_blocks block ON block.hash = tx.block_hash
       WHERE tx.hash = $1
@@ -480,7 +495,19 @@ async function handleTransactionById(id: string, res: http.ServerResponse): Prom
     return;
   }
 
-  sendJson(res, 200, transactionSummary(rows[0], true));
+  const fetched = await fetchTransactions([id], 60_000, 2);
+  const rpcTx = fetched.find((tx) => tx.tx_hash === id) ?? null;
+  const raw = rpcTx
+    ? {
+        ...rpcTx,
+        parsed_json: parseMoneroJson<MoneroTxJson>(rpcTx.as_json),
+      }
+    : null;
+
+  sendJson(res, 200, {
+    ...transactionSummary(rows[0], raw),
+    raw_source: raw ? 'monerod' : null,
+  });
 }
 
 async function handleSupply(url: URL, res: http.ServerResponse): Promise<void> {

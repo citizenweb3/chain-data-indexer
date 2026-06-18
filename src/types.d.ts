@@ -37,10 +37,10 @@ export interface MoneroBlockHeader {
 
 export interface MoneroTxJson {
   version?: number;
-  unlock_time?: number;
+  unlock_time?: number | string;
   vin?: unknown[];
   vout?: unknown[];
-  extra?: unknown[];
+  extra?: number[];
   signatures?: unknown[];
   rct_signatures?: Record<string, unknown>;
   fee?: number | string;
@@ -181,6 +181,7 @@ export interface BlockRow {
   is_settled: boolean;
   raw: Record<string, unknown>;
   indexed_at: Date;
+  coinbase_extra_hex: string | null;
 }
 
 export interface TransactionRow {
@@ -189,13 +190,15 @@ export interface TransactionRow {
   block_height: number;
   position: number;
   version: number;
-  unlock_time: number;
+  unlock_time: string;
+  is_coinbase: boolean;
   inputs_count: number;
   outputs_count: number;
+  extra_size: number;
   fee_atomic: string | null;
+  size_bytes: number | null;
   in_pool: boolean;
   confirmations: number | null;
-  raw: Record<string, unknown>;
   indexed_at: Date;
   is_canonical: boolean;
   is_settled: boolean;

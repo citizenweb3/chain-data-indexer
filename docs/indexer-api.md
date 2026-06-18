@@ -106,6 +106,7 @@ Each row includes:
 - `difficulty`
 - `cumulative_difficulty`
 - `block_reward_atomic`
+- `coinbase_extra_hex`
 - `is_canonical`
 - `is_settled`
 - `indexed_at`
@@ -139,9 +140,8 @@ Each row includes:
 - `hash`
 - `block_hash`
 - `height`
-- `timestamp`
 - `version`
-- `unlock_time`
+- `unlock_time` (string, because Monero may emit uint64-scale values)
 - `is_coinbase`
 - `input_count`
 - `output_count`
@@ -156,7 +156,8 @@ Each row includes:
 
 Transaction detail by tx hash.
 
-Returns the stored raw transaction JSON plus safe explorer summary fields.
+Returns summary fields from the index DB plus transaction raw fetched on-demand
+from `monerod`.
 
 This branch intentionally does **not** infer wallet ownership, sender/recipient
 identity, or balance deltas from opaque Monero transaction data.
