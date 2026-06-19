@@ -310,7 +310,7 @@ async function handleStats(res: http.ServerResponse): Promise<void> {
       `SELECT height::text, block_hash, block_timestamp::text, cumulative_emission_atomic,
               cumulative_fee_atomic, source_method, computed_at
          FROM monero_supply_checkpoints
-        ORDER BY height DESC
+        ORDER BY monero_supply_checkpoints.height DESC
         LIMIT 1`,
     ),
   ]);
@@ -370,7 +370,7 @@ async function handleBlocks(url: URL, res: http.ServerResponse): Promise<void> {
             is_canonical, is_settled, indexed_at, coinbase_extra_hex
        FROM monero_blocks
        ${where}
-      ORDER BY height ${direction}, hash ${direction}
+      ORDER BY monero_blocks.height ${direction}, hash ${direction}
       LIMIT $${limitParam} OFFSET $${offsetParam}`,
     values,
   );
@@ -520,7 +520,7 @@ async function handleSupply(url: URL, res: http.ServerResponse): Promise<void> {
     `SELECT height::text, block_hash, block_timestamp::text, cumulative_emission_atomic,
             cumulative_fee_atomic, source_method, computed_at
        FROM monero_supply_checkpoints
-      ORDER BY height ${direction}
+      ORDER BY monero_supply_checkpoints.height ${direction}
       LIMIT $1 OFFSET $2`,
     [limit + 1, offset],
   );

@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     synchronized: info.synchronized,
     busy_syncing: info.busy_syncing,
   });
-  await syncFromProgress(info.height);
+  await syncFromProgress(info.height - 1);
 
   const stopSupply = startSupplyScheduler();
 

@@ -16,7 +16,7 @@ export function followChain(): () => void {
     inFlight = true;
     try {
       const info = await fetchInfo();
-      await syncFromProgress(info.height);
+      await syncFromProgress(info.height - 1);
     } catch (err) {
       logger.warn('Monero follow tick failed', { err });
     } finally {
