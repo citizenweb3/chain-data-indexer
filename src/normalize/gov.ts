@@ -46,7 +46,12 @@ export function extractGovFromBlock(params: {
     const type = m.type_url;
 
     // Deposits
-    if (type === '/cosmos.gov.v1beta1.MsgDeposit' || type === '/cosmos.gov.v1.MsgDeposit') {
+    if (
+      type === '/cosmos.gov.v1beta1.MsgDeposit' ||
+      type === '/cosmos.gov.v1.MsgDeposit' ||
+      type === '/atomone.gov.v1beta1.MsgDeposit' ||
+      type === '/atomone.gov.v1.MsgDeposit'
+    ) {
       const pid = BigInt(m.value?.proposal_id ?? 0);
       const depositor = m.value?.depositor ?? null;
       const coins: Array<{ denom: string; amount: string }> = m.value?.amount ?? [];
@@ -65,7 +70,12 @@ export function extractGovFromBlock(params: {
     }
 
     // Votes
-    if (type === '/cosmos.gov.v1beta1.MsgVote' || type === '/cosmos.gov.v1.MsgVote') {
+    if (
+      type === '/cosmos.gov.v1beta1.MsgVote' ||
+      type === '/cosmos.gov.v1.MsgVote' ||
+      type === '/atomone.gov.v1beta1.MsgVote' ||
+      type === '/atomone.gov.v1.MsgVote'
+    ) {
       const pid = BigInt(m.value?.proposal_id ?? 0);
       const voter = m.value?.voter ?? null;
 
@@ -101,7 +111,12 @@ export function extractGovFromBlock(params: {
     }
 
     // Proposals
-    if (type === '/cosmos.gov.v1beta1.MsgSubmitProposal' || type === '/cosmos.gov.v1.MsgSubmitProposal') {
+    if (
+      type === '/cosmos.gov.v1beta1.MsgSubmitProposal' ||
+      type === '/cosmos.gov.v1.MsgSubmitProposal' ||
+      type === '/atomone.gov.v1beta1.MsgSubmitProposal' ||
+      type === '/atomone.gov.v1.MsgSubmitProposal'
+    ) {
       // Try to get proposal_id from events
       const evs = params.eventsByMsg[i] || [];
       let pid: bigint | null = null;

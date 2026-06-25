@@ -383,7 +383,12 @@ export class PostgresSink implements Sink {
           });
         }
 
-        if (t === '/cosmos.gov.v1beta1.MsgDeposit' || t === '/cosmos.gov.v1.MsgDeposit') {
+        if (
+          t === '/cosmos.gov.v1beta1.MsgDeposit' ||
+          t === '/cosmos.gov.v1.MsgDeposit' ||
+          t === '/atomone.gov.v1beta1.MsgDeposit' ||
+          t === '/atomone.gov.v1.MsgDeposit'
+        ) {
           let pid: bigint;
           try {
             pid = BigInt(m?.proposal_id ?? 0);
@@ -410,7 +415,11 @@ export class PostgresSink implements Sink {
           t === '/cosmos.gov.v1beta1.MsgVote' ||
           t === '/cosmos.gov.v1.MsgVote' ||
           t === '/cosmos.gov.v1beta1.MsgVoteWeighted' ||
-          t === '/cosmos.gov.v1.MsgVoteWeighted'
+          t === '/cosmos.gov.v1.MsgVoteWeighted' ||
+          t === '/atomone.gov.v1beta1.MsgVote' ||
+          t === '/atomone.gov.v1.MsgVote' ||
+          t === '/atomone.gov.v1beta1.MsgVoteWeighted' ||
+          t === '/atomone.gov.v1.MsgVoteWeighted'
         ) {
           let pid: bigint;
           try {
