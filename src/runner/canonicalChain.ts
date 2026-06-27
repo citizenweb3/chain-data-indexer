@@ -16,6 +16,13 @@ export interface CanonicalPoint {
 }
 
 const COMMON_ANCESTOR_PAGE_SIZE = 128;
+// A genuine Monero reorg is only ever a handful of blocks deep (checkpoints make
+// anything deeper impossible in practice). Refuse to walk back further than this:
+// a "common ancestor" hundreds of thousands of blocks down does not mean the chain
+// reorged that deep — it means our hash probes were lying (e.g. an unsynced or
+// flapping node), and rolling back that far would wipe canonical flags and trigger
+// a multi-million-block rescan.
+const MAX_REORG_DEPTH = 1_000;
 
 export async function clearCanonicalAbove(height: number): Promise<number> {
   const start = process.hrtime.bigint();
@@ -52,8 +59,22 @@ export async function findCommonAncestor(startHeight: number): Promise<Canonical
 
     for (const row of rows) {
       const height = Number(row.height);
-      const header = await fetchBlockHeaderByHeight(height, 10_000, 1).catch(() => null);
-      if (header?.hash === row.hash) {
+
+      if (startHeight - height > MAX_REORG_DEPTH) {
+        throw new Error(
+          `No common ancestor within ${MAX_REORG_DEPTH} blocks below height ${startHeight}; ` +
+            'refusing to roll back further. The node is likely unsynced/unreachable or the ' +
+            'local chain has diverged — leaving stored progress untouched for manual review.',
+        );
+      }
+
+      // Probe the node for this height. A failed RPC call MUST propagate, not be
+      // swallowed: treating "node did not answer" as "hash mismatch" is exactly what
+      // turned a 2-block tip reorg into an apparent multi-million-block divergence and
+      // triggered a full rescan from height 1M. On error we let the caller keep stored
+      // progress and retry on the next tick once the node is responsive again.
+      const header = await fetchBlockHeaderByHeight(height, 10_000, 3);
+      if (header.hash === row.hash) {
         return { height, hash: row.hash };
       }
     }
