@@ -2,6 +2,10 @@ services:
   postgres:
     image: postgres:16
     restart: unless-stopped
+    # Docker's default /dev/shm is 64MB; parallel VACUUM workers and large
+    # hash/sort queries allocate shared-memory segments there and fail with
+    # "No space left on device". Give Postgres room to breathe.
+    shm_size: 1g
     environment:
       POSTGRES_DB: monero_indexer
       POSTGRES_USER: monero
