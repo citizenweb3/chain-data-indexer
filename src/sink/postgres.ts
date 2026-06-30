@@ -43,6 +43,7 @@ import { flushStakeDistr } from './pg/flushers/stake_distr.ts';
 import { flushWasmExec } from './pg/flushers/wasm_exec.ts';
 import { flushWasmEvents } from './pg/flushers/wasm_events.ts';
 import { flushGovDeposits, flushGovVotes, upsertGovProposals } from './pg/flushers/gov.ts';
+import { govVoteRowsFromTopMsg } from '../normalize/votes.ts';
 import { flushIbcPackets } from './pg/flushers/ibc_packets.ts';
 import { extractIbcPacketRow, type IbcPacketUpsertRow } from './pg/ibcPackets.ts';
 
@@ -405,52 +406,13 @@ export class PostgresSink implements Sink {
           }
         }
 
-        if (
-          t === '/cosmos.gov.v1beta1.MsgVote' ||
-          t === '/cosmos.gov.v1.MsgVote' ||
-          t === '/cosmos.gov.v1beta1.MsgVoteWeighted' ||
-          t === '/cosmos.gov.v1.MsgVoteWeighted'
-        ) {
-          let pid: bigint;
-          try {
-            pid = BigInt(m?.proposal_id ?? 0);
-          } catch {
-            pid = 0n;
-          }
-          const voter = m?.voter ?? null;
-          const weighted: Array<{ option: string; weight: string }> | undefined = m?.options;
-          if (pid > 0n && voter) {
-            if (Array.isArray(weighted) && weighted.length > 0) {
-              for (const opt of weighted) {
-                // Cosmos SDK weight: integer format "1000000000000000000" (= 1.0 with 18 decimals) or decimal "1.000..."
-                let w = String(opt?.weight ?? '0');
-                if (/^\d+$/.test(w) && w !== '0') {
-                  // Raw integer: pad to 19 chars min, insert decimal point 18 from right
-                  const padded = w.padStart(19, '0');
-                  const intPart = padded.slice(0, padded.length - 18) || '0';
-                  const decPart = padded.slice(padded.length - 18);
-                  w = `${intPart}.${decPart}`;
-                }
-                govVotesRows.push({
-                  proposal_id: pid,
-                  voter,
-                  option: String(opt?.option ?? 'UNKNOWN'),
-                  weight: w,
-                  height,
-                  tx_hash,
-                });
-              }
-            } else {
-              govVotesRows.push({
-                proposal_id: pid,
-                voter,
-                option: String(m?.option ?? 'UNKNOWN'),
-                weight: null,
-                height,
-                tx_hash,
-              });
-            }
-          }
+        // Gov votes — direct MsgVote/MsgVoteWeighted and authz-delegated votes
+        // (MsgExec-wrapped, unwrapped one level). Both are gated on tx success inside
+        // the helper: a failed tx reverted, so no vote it carried applied — emitting
+        // one would be a phantom vote that can outrank the real vote downstream.
+        // See src/normalize/votes.ts.
+        for (const row of govVoteRowsFromTopMsg(m, code, height, tx_hash)) {
+          govVotesRows.push(row);
         }
       }
 
