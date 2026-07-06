@@ -96,6 +96,31 @@ const TxCursor = registry.register(
   z.object({ next_before_height: z.string(), next_before_index: z.number().int() }).nullable(),
 );
 
+const DelegationEvent = registry.register(
+  'DelegationEvent',
+  z.object({
+    delegator_address: z.string().describe('Delegator account address (e.g. atone1...)'),
+    amount: z.string().describe('Raw base-denom amount (numeric(80,0) as decimal string)'),
+    denom: z.string().describe('Base denom, e.g. uatone'),
+    height: z.string().describe('Block height (uint64 as decimal string)'),
+    tx_index: z.number().int(),
+    msg_index: z.number().int(),
+    tx_hash: z.string(),
+    time: z.string().datetime(),
+  }),
+);
+
+const DelegationsCursor = registry.register(
+  'DelegationsCursor',
+  z
+    .object({
+      next_before_height: z.string(),
+      next_before_index: z.number().int(),
+      next_before_msg_index: z.number().int(),
+    })
+    .nullable(),
+);
+
 const ErrorResponse = registry.register(
   'ErrorResponse',
   z.object({
@@ -464,6 +489,41 @@ registry.registerPath({
       content: {
         'application/json': {
           schema: z.object({ data: z.array(TxSummary), cursor: TxCursor, has_more: z.boolean(), total: z.string() }),
+        },
+      },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/staking/delegations',
+  summary: 'List delegation events for a validator (newest first, keyset cursor)',
+  tags: ['staking'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    query: z.object({
+      validator: z.string().describe('Validator operator bech32 address (e.g. atonevaloper1...)'),
+      limit: z.coerce.number().int().min(1).max(100).default(20).optional(),
+      before_height: z.string().max(20).optional(),
+      before_index: z.coerce.number().int().min(0).optional(),
+      before_msg_index: z.coerce.number().int().min(0).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of delegation events for the validator',
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.array(DelegationEvent),
+            cursor: DelegationsCursor,
+            has_more: z.boolean(),
+            total: z.string().describe("Always '0'; this cursor endpoint does not run COUNT(*)"),
+          }),
         },
       },
     },
