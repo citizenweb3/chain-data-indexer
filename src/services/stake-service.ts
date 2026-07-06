@@ -1,0 +1,64 @@
+import {
+  queryDelegationsByValidator,
+  type DelegationEventRow,
+} from '@/queries/stake-queries';
+
+export interface DelegationEventDto {
+  delegator_address: string;
+  amount: string;
+  denom: string;
+  height: string;
+  tx_index: number;
+  msg_index: number;
+  tx_hash: string;
+  time: string;
+}
+
+export interface DelegationsCursor {
+  next_before_height: string;
+  next_before_index: number;
+  next_before_msg_index: number;
+}
+
+export interface DelegationsResult {
+  data: DelegationEventDto[];
+  cursor: DelegationsCursor | null;
+  has_more: boolean;
+  total: '0';
+}
+
+const toDto = (row: DelegationEventRow): DelegationEventDto => ({
+  delegator_address: row.delegator_address,
+  amount: row.amount,
+  denom: row.denom,
+  height: row.height.toString(),
+  tx_index: row.tx_index,
+  msg_index: row.msg_index,
+  tx_hash: row.tx_hash,
+  time: row.time.toISOString(),
+});
+
+export async function listDelegations(params: {
+  validator: string;
+  limit: number;
+  beforeHeight?: bigint;
+  beforeIndex?: number;
+  beforeMsgIndex?: number;
+}): Promise<DelegationsResult> {
+  const rows = await queryDelegationsByValidator(params);
+  const hasMore = rows.length > params.limit;
+  const pageRows = hasMore ? rows.slice(0, params.limit) : rows;
+  const data = pageRows.map(toDto);
+
+  const last = pageRows.at(-1);
+  const cursor: DelegationsCursor | null =
+    hasMore && last !== undefined
+      ? {
+          next_before_height: last.height.toString(),
+          next_before_index: last.tx_index,
+          next_before_msg_index: last.msg_index,
+        }
+      : null;
+
+  return { data, cursor, has_more: hasMore, total: '0' };
+}
