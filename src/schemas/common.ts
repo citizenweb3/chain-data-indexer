@@ -12,3 +12,13 @@ export const Bech32AddressSchema = z
   .min(8)
   .max(128)
   .regex(/^[a-z0-9]+1[02-9ac-hj-np-z]{6,}$/);
+
+// bech32 validator operator address (e.g. cosmosvaloper1..., atonevaloper1...).
+// Keep this prefix-agnostic for Cosmos SDK chains, but reject account addresses early.
+export const ValoperAddressSchema = Bech32AddressSchema.refine(
+  (address) => {
+    const separator = address.lastIndexOf('1');
+    return separator > 0 && address.slice(0, separator).endsWith('valoper');
+  },
+  { message: 'Expected a validator operator bech32 address' },
+);
