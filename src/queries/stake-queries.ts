@@ -38,6 +38,23 @@ export async function queryDelegationsByValidator(params: {
       WHERE de.validator_dst = ${validator}
         AND de.event_type = 'delegate'
         AND t.code = 0
+        -- AtomOne raw_log can duplicate delegate events as message-level rows plus tx-level -1 rows.
+        -- Keep the message-level row when an exact sibling exists; keep -1-only rows.
+        AND NOT (
+          de.msg_index = -1
+          AND EXISTS (
+            SELECT 1
+            FROM stake.delegation_events s
+            WHERE s.height = de.height
+              AND s.tx_hash = de.tx_hash
+              AND s.event_type = 'delegate'
+              AND s.msg_index >= 0
+              AND s.validator_dst IS NOT DISTINCT FROM de.validator_dst
+              AND s.delegator_address IS NOT DISTINCT FROM de.delegator_address
+              AND s.amount IS NOT DISTINCT FROM de.amount
+              AND s.denom IS NOT DISTINCT FROM de.denom
+          )
+        )
         AND (de.height, t.tx_index, de.msg_index) < (${beforeHeight}, ${beforeIndex}, ${beforeMsgIndex})
       ORDER BY de.height DESC, t.tx_index DESC, de.msg_index DESC
       LIMIT ${fetch}
@@ -60,6 +77,23 @@ export async function queryDelegationsByValidator(params: {
     WHERE de.validator_dst = ${validator}
       AND de.event_type = 'delegate'
       AND t.code = 0
+      -- AtomOne raw_log can duplicate delegate events as message-level rows plus tx-level -1 rows.
+      -- Keep the message-level row when an exact sibling exists; keep -1-only rows.
+      AND NOT (
+        de.msg_index = -1
+        AND EXISTS (
+          SELECT 1
+          FROM stake.delegation_events s
+          WHERE s.height = de.height
+            AND s.tx_hash = de.tx_hash
+            AND s.event_type = 'delegate'
+            AND s.msg_index >= 0
+            AND s.validator_dst IS NOT DISTINCT FROM de.validator_dst
+            AND s.delegator_address IS NOT DISTINCT FROM de.delegator_address
+            AND s.amount IS NOT DISTINCT FROM de.amount
+            AND s.denom IS NOT DISTINCT FROM de.denom
+        )
+      )
     ORDER BY de.height DESC, t.tx_index DESC, de.msg_index DESC
     LIMIT ${fetch}
   `;
