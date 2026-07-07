@@ -9,7 +9,7 @@ export const DelegationsQuerySchema = z
     limit: z.coerce.number().int().min(1).max(100).default(20),
     before_height: BigIntStringSchema.optional(),
     before_index: z.coerce.number().int().min(0).optional(),
-    before_msg_index: z.coerce.number().int().min(0).optional(),
+    before_msg_index: z.coerce.number().int().min(-1).optional(),
   })
   .refine(
     (d) =>
