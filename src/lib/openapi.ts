@@ -510,7 +510,7 @@ registry.registerPath({
       limit: z.coerce.number().int().min(1).max(100).default(20).optional(),
       before_height: z.string().max(20).optional(),
       before_index: z.coerce.number().int().min(0).optional(),
-      before_msg_index: z.coerce.number().int().min(0).optional(),
+      before_msg_index: z.coerce.number().int().min(-1).optional(),
     }),
   },
   responses: {
