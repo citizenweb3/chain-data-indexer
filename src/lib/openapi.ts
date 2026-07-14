@@ -51,6 +51,20 @@ const TxSummary = registry.register(
   }),
 );
 
+const TxByAddressSummary = registry.register(
+  'TxByAddressSummary',
+  TxSummary.extend({
+    transfers: z.array(
+      z.object({
+        from_addr: z.string(),
+        to_addr: z.string(),
+        denom: z.string(),
+        amount: z.string().describe('Transfer amount in base units'),
+      }),
+    ),
+  }),
+);
+
 const TxDetail = registry.register(
   'TxDetail',
   z.object({
@@ -474,6 +488,30 @@ registry.registerPath({
       limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
       before_height: z.string().max(20).optional(),
       before_index: z.coerce.number().int().optional(),
+      msg_type: z
+        .string()
+        .optional()
+        .describe('Comma-separated list of 1-5 exact Cosmos SDK message type URLs'),
+      from_time: z.string().datetime({ offset: true }).optional().describe('Inclusive lower ISO-8601 timestamp'),
+      to_time: z.string().datetime({ offset: true }).optional().describe('Inclusive upper ISO-8601 timestamp'),
+      min_amount: z
+        .string()
+        .max(80)
+        .regex(/^\d+$/)
+        .optional()
+        .describe('Inclusive minimum transfer amount in base units; requires amount_denom'),
+      max_amount: z
+        .string()
+        .max(80)
+        .regex(/^\d+$/)
+        .optional()
+        .describe('Inclusive maximum transfer amount in base units; requires amount_denom'),
+      amount_denom: z
+        .string()
+        .min(2)
+        .max(128)
+        .optional()
+        .describe('Transfer denomination; requires min_amount or max_amount'),
       count: z
         .enum(['true', 'false'])
         .default('true')
@@ -488,7 +526,12 @@ registry.registerPath({
       description: 'Paginated list of transactions involving the address',
       content: {
         'application/json': {
-          schema: z.object({ data: z.array(TxSummary), cursor: TxCursor, has_more: z.boolean(), total: z.string() }),
+          schema: z.object({
+            data: z.array(TxByAddressSummary),
+            cursor: TxCursor,
+            has_more: z.boolean(),
+            total: z.string(),
+          }),
         },
       },
     },

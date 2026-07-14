@@ -18,7 +18,19 @@ export async function GET(req: Request) {
     return errorResponse('invalid_params', 400, parsed.error.flatten().fieldErrors);
   }
 
-  const { address: addresses, limit, before_height, before_index, count } = parsed.data;
+  const {
+    address: addresses,
+    limit,
+    before_height,
+    before_index,
+    count,
+    msg_type,
+    from_time,
+    to_time,
+    min_amount,
+    max_amount,
+    amount_denom,
+  } = parsed.data;
 
   try {
     const result = await listTxsByAddress({
@@ -27,6 +39,12 @@ export async function GET(req: Request) {
       beforeHeight: before_height,
       beforeIndex: before_index,
       includeCount: count !== 'false',
+      msgTypes: msg_type,
+      fromTime: from_time,
+      toTime: to_time,
+      minAmount: min_amount,
+      maxAmount: max_amount,
+      amountDenom: amount_denom,
     });
     return Response.json(result, {
       headers: { 'Cache-Control': 'private, max-age=6', Vary: 'x-api-key' },
