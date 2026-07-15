@@ -149,9 +149,12 @@ const buildTxsByAddressFilterFragment = (addresses: string[], filters: TxsByAddr
   }
 `;
 
-// Transactions involving one or more addresses (the indexer's `signers` is a grab-bag of actor
-// fields). `&&` uses idx_txs_signers_gin. The LATERAL probe returns only transfers involving the
-// requested addresses and applies a total order before the five-row cap.
+// Transactions involving one or more addresses. Candidate branches stay index-driven: actors use
+// idx_txs_signers_gin while outgoing/incoming transfers use idx_transfers_from/idx_transfers_to.
+// Every branch applies the same filters and cursor before its bounded top-N probe; transfer
+// branches dedupe transaction keys before LIMIT so repeated transfers cannot consume the window.
+// The LATERAL projection returns only address-relevant transfers and applies a total order before
+// the five-row summary cap.
 export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promise<TxByAddressSummaryRow[]> {
   const { addresses, limit, beforeHeight, beforeIndex, ...filters } = params;
   const fetch = limit + 1;
@@ -162,6 +165,47 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
   const filterFragment = buildTxsByAddressFilterFragment(addresses, filters);
 
   return db<TxByAddressSummaryRow[]>`
+    WITH candidates AS (
+      (
+        SELECT t.height, t.tx_hash, t.tx_index
+        FROM core.transactions t
+        WHERE t.signers && ${db.array(addresses)}
+          ${filterFragment}
+          ${cursorFragment}
+        ORDER BY t.height DESC, t.tx_index DESC
+        LIMIT ${fetch}
+      )
+      UNION
+      (
+        SELECT DISTINCT t.height, t.tx_hash, t.tx_index
+        FROM bank.transfers candidate_transfer
+        JOIN core.transactions t
+          ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+        WHERE candidate_transfer.from_addr = ANY(${db.array(addresses)})
+          ${filterFragment}
+          ${cursorFragment}
+        ORDER BY t.height DESC, t.tx_index DESC
+        LIMIT ${fetch}
+      )
+      UNION
+      (
+        SELECT DISTINCT t.height, t.tx_hash, t.tx_index
+        FROM bank.transfers candidate_transfer
+        JOIN core.transactions t
+          ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+        WHERE candidate_transfer.to_addr = ANY(${db.array(addresses)})
+          ${filterFragment}
+          ${cursorFragment}
+        ORDER BY t.height DESC, t.tx_index DESC
+        LIMIT ${fetch}
+      )
+    ),
+    page_candidates AS (
+      SELECT height, tx_hash, tx_index
+      FROM candidates
+      ORDER BY height DESC, tx_index DESC
+      LIMIT ${fetch}
+    )
     SELECT
       t.tx_hash,
       t.height,
@@ -172,7 +216,9 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
       t.fee->'amount'->0->>'denom'  AS fee_denom,
       m.type_url AS first_msg_type,
       COALESCE(tr.transfers, '[]'::jsonb) AS transfers
-    FROM core.transactions t
+    FROM page_candidates candidate
+    JOIN core.transactions t
+      ON t.height = candidate.height AND t.tx_hash = candidate.tx_hash
     LEFT JOIN core.messages m
       ON m.height = t.height AND m.tx_hash = t.tx_hash AND m.msg_index = 0
     LEFT JOIN LATERAL (
@@ -198,28 +244,40 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
         LIMIT 5
       ) transfer_row
     ) tr ON true
-    WHERE t.signers && ${db.array(addresses)}
-      ${filterFragment}
-      ${cursorFragment}
     ORDER BY t.height DESC, t.tx_index DESC
-    LIMIT ${fetch}
   `;
 }
 
-// Exact total over the address(es). An address's involved-tx set is narrow (the GIN bitmap returns
-// few rows), so this COUNT is cheap — unlike the global table count (which uses the reltuples
-// estimate in queryTxsTotal). `&&` matches the list predicate so the count agrees with the page; a
-// tx matching several of the addresses is counted once (natural dedup).
+// Exact total over the same unbounded, filtered union used by the page query. UNION deduplicates a
+// transaction that matches several addresses or actor/from/to branches, keeping count/list parity.
 export async function queryTxsByAddressTotal(
   params: Pick<TxsByAddressQueryParams, 'addresses'> & TxsByAddressFilters,
 ): Promise<bigint> {
   const { addresses, ...filters } = params;
   const filterFragment = buildTxsByAddressFilterFragment(addresses, filters);
   const rows = await db<[{ total: bigint }]>`
+    WITH candidates AS (
+      SELECT t.height, t.tx_hash
+      FROM core.transactions t
+      WHERE t.signers && ${db.array(addresses)}
+        ${filterFragment}
+      UNION
+      SELECT t.height, t.tx_hash
+      FROM bank.transfers candidate_transfer
+      JOIN core.transactions t
+        ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+      WHERE candidate_transfer.from_addr = ANY(${db.array(addresses)})
+        ${filterFragment}
+      UNION
+      SELECT t.height, t.tx_hash
+      FROM bank.transfers candidate_transfer
+      JOIN core.transactions t
+        ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+      WHERE candidate_transfer.to_addr = ANY(${db.array(addresses)})
+        ${filterFragment}
+    )
     SELECT COUNT(*)::bigint AS total
-    FROM core.transactions t
-    WHERE t.signers && ${db.array(addresses)}
-      ${filterFragment}
+    FROM candidates
   `;
   return rows[0]?.total ?? BigInt(0);
 }
