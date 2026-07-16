@@ -186,11 +186,13 @@ export const store = async (
       block.hash,
       block.height,
       block.finalizationStatus,
+      block.header.globalVariables.version,
     );
     const finalizationUpdate = await ensureL1FinalizationIsStored(
       block.hash,
       block.height,
       block.archive.root,
+      block.header.globalVariables.version,
     );
     return { finalizationUpdate };
   });
@@ -215,14 +217,27 @@ export const ensureFinalizationStatusStored = async (
   l2BlockHash: HexString,
   l2BlockNumber: bigint,
   status: ChicmozL2BlockFinalizationStatus,
+  rollupVersion: number,
 ): Promise<void> => {
   await _ensureFinalizationStatusStored(l2BlockHash, l2BlockNumber, status);
-  await ensureParentBlocksFinalizationStatusStored(l2BlockNumber, status);
+  await ensureParentBlocksFinalizationStatusStored(
+    l2BlockNumber,
+    status,
+    rollupVersion,
+  );
 };
 
+// v5 migration (S4 part 4, upstream 8478dbbe): this backfill walks
+// backwards by height only. Without the rollupVersion filter, storing a
+// v5 block would find "missing status" gaps among v4 blocks at lower
+// heights (they share the same height range 0..N) and stamp them with a
+// v5-triggered finalization status - a dead chain's blocks being mutated
+// by the live chain's ingestion. Every comparison below must stay scoped
+// to the block's own rollup version.
 const ensureParentBlocksFinalizationStatusStored = async (
   l2BlockNumber: bigint,
   status: ChicmozL2BlockFinalizationStatus,
+  rollupVersion: number,
 ): Promise<void> => {
   const parentBlockNumber = l2BlockNumber;
   await db().transaction(async (tx) => {
@@ -241,6 +256,7 @@ const ensureParentBlocksFinalizationStatusStored = async (
           lt(l2BlockFinalizationStatusTable.status, status),
           lt(l2BlockFinalizationStatusTable.l2BlockNumber, parentBlockNumber),
           isNull(l2Block.orphan_timestamp),
+          eq(l2Block.version, rollupVersion),
         ),
       );
 
@@ -259,6 +275,7 @@ const ensureParentBlocksFinalizationStatusStored = async (
           eq(l2BlockFinalizationStatusTable.status, status),
           lt(l2BlockFinalizationStatusTable.l2BlockNumber, parentBlockNumber),
           isNull(l2Block.orphan_timestamp),
+          eq(l2Block.version, rollupVersion),
         ),
       );
 

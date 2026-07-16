@@ -19,12 +19,30 @@ export const chicmozL2ContractInstanceDeployedEventSchema = z.object({
   initializationHash: frSchema,
   deployer: aztecAddressSchema,
   aztecScanNotes: aztecScanNoteSchema.optional(),
+  // v5: only `ivpkM` remains a curve point; the other master keys are now
+  // exposed as their hash digests only (see AZTEC_V5_MIGRATION.md §3.5,
+  // the "publicKeys" RESOLVED decision). This is a deliberate, sanctioned
+  // /l2/* response shape change.
+  // NULLABLE (§3.6): prod has 52 pre-existing v4 rows with no v5-shaped key
+  // data - NULL is the honest value for those. Every v5-ingested instance
+  // always populates real values (see contracts.ts / store.ts); old v4
+  // instances leave the API on the rollup-version flip anyway.
   publicKeys: z.object({
-    masterNullifierPublicKey: concatFrPointSchema,
-    masterIncomingViewingPublicKey: concatFrPointSchema,
-    masterOutgoingViewingPublicKey: concatFrPointSchema,
-    masterTaggingPublicKey: concatFrPointSchema,
+    npkMHash: frSchema.nullish(),
+    ivpkM: concatFrPointSchema.nullish(),
+    ovpkMHash: frSchema.nullish(),
+    tpkMHash: frSchema.nullish(),
+    mspkMHash: frSchema.nullish(),
+    fbpkMHash: frSchema.nullish(),
   }),
+  // v5: new required preimage field (ContractInstance address-preimage
+  // version 1->2). Stored for correctness/verification, but intentionally
+  // NOT surfaced on /l2/* responses (see chicmozL2ContractInstanceDeluxeSchema,
+  // which explicitly omits it). Nullish here for two reasons: (1) this
+  // schema is also reused internally to re-parse the already-serialized
+  // Deluxe API object, which does not carry this field, and (2) the 52
+  // pre-existing v4 rows on prod genuinely have no v5 preimage data (§3.6).
+  immutablesHash: frSchema.nullish(),
 });
 
 export type ChicmozL2ContractInstanceDeployedEvent = z.infer<

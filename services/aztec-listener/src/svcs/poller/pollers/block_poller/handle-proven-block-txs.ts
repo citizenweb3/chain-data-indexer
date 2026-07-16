@@ -43,7 +43,9 @@ export const handleProvenTransactions = async (block: L2Block) => {
 
     for (const provenTx of provenPendingTxs) {
       try {
-        const feePayerAddress = AztecAddress.fromString(provenTx.feePayer);
+        const feePayerAddress = AztecAddress.fromStringUnsafe(
+          provenTx.feePayer,
+        );
 
         const balance = await getBalanceOf(blockNumber, feePayerAddress);
 

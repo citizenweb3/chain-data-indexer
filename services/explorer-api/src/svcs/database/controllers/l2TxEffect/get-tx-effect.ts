@@ -18,6 +18,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { z } from "zod";
+import { CURRENT_ROLLUP_VERSION } from "../../../../constants/versions.js";
 import { DB_MAX_TX_EFFECTS } from "../../../../environment.js";
 import {
   body,
@@ -140,15 +141,23 @@ const _getTxEffects = async (
 
   let whereQuery;
 
+  const currentVersionFilter = eq(
+    l2Block.version,
+    parseInt(CURRENT_ROLLUP_VERSION),
+  );
+
   switch (args.getType) {
     case GetTypes.BlockHeightRange:
       if (args.from ?? args.to) {
         whereQuery = joinQuery
-          .where(generateWhereQuery(args.from, args.to))
+          .where(
+            and(generateWhereQuery(args.from, args.to), currentVersionFilter),
+          )
           .orderBy(desc(l2Block.height), desc(txEffect.index))
           .limit(DB_MAX_TX_EFFECTS);
       } else {
         whereQuery = joinQuery
+          .where(currentVersionFilter)
           .orderBy(desc(l2Block.height), desc(txEffect.index))
           .limit(DB_MAX_TX_EFFECTS);
       }
@@ -159,6 +168,7 @@ const _getTxEffects = async (
           and(
             eq(l2Block.height, args.blockHeight),
             eq(txEffect.index, args.txEffectIndex),
+            currentVersionFilter,
           ),
         )
         .limit(1);

@@ -15,6 +15,10 @@ export const verifyInstanceDeploymentPayload = async (
     instanceAddress: string;
     stringifiedArtifactJson: string;
     contractClassId: string;
+    // v5: ContractInstance preimage version 1->2 requires immutablesHash to
+    // compute the salted initialization hash / address. Sourced from our DB
+    // (never from the client-uploaded payload) and threaded through here.
+    immutablesHash: string;
   },
 ): Promise<boolean> => {
   const {
@@ -24,6 +28,7 @@ export const verifyInstanceDeploymentPayload = async (
     deployer,
     salt,
     publicKeysString,
+    immutablesHash,
   } = payload;
   const artifact = loadContractArtifact(
     JSON.parse(stringifiedArtifactJson) as unknown as NoirCompiledContract,
@@ -37,7 +42,8 @@ export const verifyInstanceDeploymentPayload = async (
   const saltedHash = await computeSaltedInitializationHash({
     initializationHash,
     salt: Fr.fromString(salt),
-    deployer: AztecAddress.fromString(deployer),
+    deployer: AztecAddress.fromStringUnsafe(deployer),
+    immutablesHash: Fr.fromString(immutablesHash),
   });
   const computedAddress = await computeContractAddressFromInstance({
     originalContractClassId: Fr.fromString(contractClassId),

@@ -40,18 +40,22 @@ export const l2ContractInstanceDeployed = pgTable(
     ).notNull(),
     initializationHash: generateFrColumn("initialization_hash").notNull(),
     deployer: generateAztecAddressColumn("deployer").notNull(),
-    masterNullifierPublicKey: generateConcatFrPointColumn(
-      "masterNullifierPublicKey",
-    ).notNull(),
-    masterIncomingViewingPublicKey: generateConcatFrPointColumn(
-      "masterIncomingViewingPublicKey",
-    ).notNull(),
-    masterOutgoingViewingPublicKey: generateConcatFrPointColumn(
-      "masterOutgoingViewingPublicKey",
-    ).notNull(),
-    masterTaggingPublicKey: generateConcatFrPointColumn(
-      "masterTaggingPublicKey",
-    ).notNull(),
+    // v5 PublicKeys shape: only ivpkM remains a curve point, the other
+    // master keys are now hash digests (see AZTEC_V5_MIGRATION.md §3.5).
+    // NULLABLE (§3.6): prod has 52 pre-existing v4 rows with none of this
+    // v5 data - NOT NULL would fail the ADD COLUMN migration against them.
+    // NULL is the honest value for those rows; every v5-ingested instance
+    // always populates real values (see contracts.ts / store.ts).
+    npkMHash: generateFrColumn("npkMHash"),
+    ivpkM: generateConcatFrPointColumn("ivpkM"),
+    ovpkMHash: generateFrColumn("ovpkMHash"),
+    tpkMHash: generateFrColumn("tpkMHash"),
+    mspkMHash: generateFrColumn("mspkMHash"),
+    fbpkMHash: generateFrColumn("fbpkMHash"),
+    // v5 ContractInstance preimage version 1->2: new required field, stored
+    // for correctness/verification but never surfaced on /l2/* responses.
+    // NULLABLE for the same pre-existing-row reason as the keys above.
+    immutablesHash: generateFrColumn("immutablesHash"),
   },
   (t) => ({
     contractClass: foreignKey({

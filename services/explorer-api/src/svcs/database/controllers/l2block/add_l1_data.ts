@@ -64,10 +64,13 @@ export const addL1L2BlockProposed = async (
     ? ChicmozL2BlockFinalizationStatus.L1_MINED_PROPOSED
     : ChicmozL2BlockFinalizationStatus.L1_SEEN_PROPOSED;
 
+  // l2BlockHash was resolved above by filtering on CURRENT_ROLLUP_VERSION,
+  // so that is the authoritative rollup version for this block.
   await ensureFinalizationStatusStored(
     l2BlockHash,
     proposedData.l2BlockNumber,
     status,
+    parseInt(CURRENT_ROLLUP_VERSION),
   );
 
   return {
@@ -80,6 +83,7 @@ export const ensureL1FinalizationIsStored = async (
   l2BlockHash: ChicmozL2Block["hash"],
   l2BlockNumber: ChicmozL2Block["height"],
   archiveRoot: string,
+  rollupVersion: number,
 ): Promise<ChicmozL2BlockFinalizationUpdateEvent | null> => {
   const proposedData = await db()
     .select({
@@ -102,7 +106,12 @@ export const ensureL1FinalizationIsStored = async (
   let status = proposedData[0].isFinalized
     ? ChicmozL2BlockFinalizationStatus.L1_MINED_PROPOSED
     : ChicmozL2BlockFinalizationStatus.L1_SEEN_PROPOSED;
-  await ensureFinalizationStatusStored(l2BlockHash, l2BlockNumber, status);
+  await ensureFinalizationStatusStored(
+    l2BlockHash,
+    l2BlockNumber,
+    status,
+    rollupVersion,
+  );
 
   const verifiedData = await db()
     .select({
@@ -131,7 +140,12 @@ export const ensureL1FinalizationIsStored = async (
     ? ChicmozL2BlockFinalizationStatus.L1_MINED_PROVEN
     : ChicmozL2BlockFinalizationStatus.L1_SEEN_PROVEN;
 
-  await ensureFinalizationStatusStored(l2BlockHash, l2BlockNumber, status);
+  await ensureFinalizationStatusStored(
+    l2BlockHash,
+    l2BlockNumber,
+    status,
+    rollupVersion,
+  );
 
   return {
     l2BlockHash,
@@ -192,10 +206,13 @@ export const addL1L2ProofVerified = async (
   const status = proofVerifiedData.isFinalized
     ? ChicmozL2BlockFinalizationStatus.L1_MINED_PROVEN
     : ChicmozL2BlockFinalizationStatus.L1_SEEN_PROVEN;
+  // l2BlockHash was resolved above by filtering on CURRENT_ROLLUP_VERSION,
+  // so that is the authoritative rollup version for this block.
   await ensureFinalizationStatusStored(
     l2BlockHash,
     proofVerifiedData.l2BlockNumber,
     status,
+    parseInt(CURRENT_ROLLUP_VERSION),
   );
 
   return {

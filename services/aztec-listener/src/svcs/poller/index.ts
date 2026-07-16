@@ -8,7 +8,10 @@ import {
   getConfigStr,
 } from "../../environment.js";
 import { onL2RpcNodeError } from "../../events/emitted/index.js";
-import { ensureInitializedBlockHeights } from "../database/heights.controller.js";
+import {
+  ensureInitializedBlockHeights,
+  setCurrentRollupVersion,
+} from "../database/heights.controller.js";
 import { init as initNetworkClient } from "./network-client/index.js";
 import * as blockPoller from "./pollers/block_poller/index.js";
 import * as chainInfoPoller from "./pollers/chain-info-poller.js";
@@ -27,7 +30,6 @@ export const init = async () => {
       data: {},
     });
   }
-  await ensureInitializedBlockHeights();
   const initResult = await initNetworkClient();
   nodeInfo = {
     nodeVersion: "unknown",
@@ -39,7 +41,17 @@ export const init = async () => {
       .protocolContractAddresses as unknown as NodeInfo["protocolContractAddresses"],
     enr: undefined,
     realProofs: false,
+    // Real value from the node's getNodeInfo() RPC response, threaded through
+    // initNetworkClient() -> getFreshInfo(). ChicmozChainInfo (packages/types,
+    // out of scope for this stage) has no txsLimits field, so it can't be read
+    // off initResult.chainInfo directly.
+    txsLimits: initResult.txsLimits,
   };
+  // v5 migration (S4 part 3): must happen before ensureInitializedBlockHeights
+  // so the initial heights row is created for the CURRENT rollup version,
+  // not left keyed by whatever was set (or unset) before.
+  setCurrentRollupVersion(nodeInfo.rollupVersion);
+  await ensureInitializedBlockHeights();
 };
 
 export const startPoller = async () => {

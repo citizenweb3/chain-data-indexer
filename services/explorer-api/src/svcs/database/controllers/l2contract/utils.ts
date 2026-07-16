@@ -18,11 +18,18 @@ export const parseDeluxe = ({
   isOrphaned,
 }: {
   contractClass: ChicmozL2ContractClassRegisteredEvent;
-  instance: Omit<ChicmozL2ContractInstanceDeployedEvent, "publicKeys"> & {
-    masterNullifierPublicKey: string;
-    masterIncomingViewingPublicKey: string;
-    masterOutgoingViewingPublicKey: string;
-    masterTaggingPublicKey: string;
+  instance: Omit<
+    ChicmozL2ContractInstanceDeployedEvent,
+    "publicKeys" | "immutablesHash"
+  > & {
+    // Nullable (§3.6): 52 pre-existing v4 rows on prod have no v5-shaped
+    // key data. Every v5-ingested instance always has real values.
+    npkMHash: string | null;
+    ivpkM: string | null;
+    ovpkMHash: string | null;
+    tpkMHash: string | null;
+    mspkMHash: string | null;
+    fbpkMHash: string | null;
   };
   deployerMetadata:
     | (Omit<
@@ -76,11 +83,15 @@ export const parseDeluxe = ({
     salt: instance.salt,
     initializationHash: instance.initializationHash,
     deployer: instance.deployer,
+    // NOTE: instance.immutablesHash (v5 preimage field) is deliberately
+    // never read here - it must not be surfaced on /l2/* responses.
     publicKeys: {
-      masterNullifierPublicKey: instance.masterNullifierPublicKey,
-      masterIncomingViewingPublicKey: instance.masterIncomingViewingPublicKey,
-      masterOutgoingViewingPublicKey: instance.masterOutgoingViewingPublicKey,
-      masterTaggingPublicKey: instance.masterTaggingPublicKey,
+      npkMHash: instance.npkMHash,
+      ivpkM: instance.ivpkM,
+      ovpkMHash: instance.ovpkMHash,
+      tpkMHash: instance.tpkMHash,
+      mspkMHash: instance.mspkMHash,
+      fbpkMHash: instance.fbpkMHash,
     },
     isOrphaned,
   };

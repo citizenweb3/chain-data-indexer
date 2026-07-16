@@ -131,7 +131,12 @@ const matchContractClass = async (
       version: l2ContractClassRegistered.version,
     })
     .from(l2ContractClassRegistered)
-    .where(eq(l2ContractClassRegistered.contractClassId, contractClassId))
+    .where(
+      and(
+        eq(l2ContractClassRegistered.contractClassId, contractClassId),
+        eq(l2ContractClassRegistered.version, parseInt(CURRENT_ROLLUP_VERSION)),
+      ),
+    )
     .execute();
   if (res.length === 0) {
     return [];
@@ -147,7 +152,12 @@ const matchContractInstance = async (
       address: l2ContractInstanceDeployed.address,
     })
     .from(l2ContractInstanceDeployed)
-    .where(eq(l2ContractInstanceDeployed.address, contractInstanceId))
+    .where(
+      and(
+        eq(l2ContractInstanceDeployed.address, contractInstanceId),
+        eq(l2ContractInstanceDeployed.version, parseInt(CURRENT_ROLLUP_VERSION)),
+      ),
+    )
     .execute();
   if (res.length === 0) {
     return [];

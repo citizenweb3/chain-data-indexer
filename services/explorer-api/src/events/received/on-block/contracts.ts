@@ -1,8 +1,4 @@
-import {
-  ContractClassPublishedEvent,
-  PrivateFunctionBroadcastedEvent,
-  UtilityFunctionBroadcastedEvent,
-} from "@aztec/protocol-contracts/class-registry";
+import { ContractClassPublishedEvent } from "@aztec/protocol-contracts/class-registry";
 import {
   ContractInstancePublishedEvent,
   ContractInstanceUpdatedEvent,
@@ -12,12 +8,8 @@ import {
   chicmozL2ContractInstanceDeployedEventSchema,
   ChicmozL2ContractInstanceUpdatedEvent,
   chicmozL2ContractInstanceUpdatedEventSchema,
-  chicmozL2PrivateFunctionBroadcastedEventSchema,
-  chicmozL2UtilityFunctionBroadcastedEventSchema,
   type ChicmozL2ContractClassRegisteredEvent,
   type ChicmozL2ContractInstanceDeployedEvent,
-  type ChicmozL2PrivateFunctionBroadcastedEvent,
-  type ChicmozL2UtilityFunctionBroadcastedEvent,
 } from "@chicmoz-pkg/types";
 import { z } from "zod";
 import { logger } from "../../../logger.js";
@@ -110,17 +102,19 @@ export const storeContracts = async (b: L2Block, blockHash: string) => {
     return [r.value];
   });
 
-  const privateFnEvents = contractClassLogs
-    .filter((log) =>
-      PrivateFunctionBroadcastedEvent.isPrivateFunctionBroadcastedEvent(log),
-    )
-    .map((log) => PrivateFunctionBroadcastedEvent.fromLog(log));
-
-  const utilityFnEvents = contractClassLogs
-    .filter((log) =>
-      UtilityFunctionBroadcastedEvent.isUtilityFunctionBroadcastedEvent(log),
-    )
-    .map((log) => UtilityFunctionBroadcastedEvent.fromLog(log));
+  // NOTE (v5 migration, S3): `PrivateFunctionBroadcastedEvent` and
+  // `UtilityFunctionBroadcastedEvent` no longer exist in
+  // `@aztec/protocol-contracts/class-registry` - v5 does not broadcast
+  // individual private/utility functions as separate on-chain events
+  // anymore (only `ContractClassPublishedEvent` remains, and
+  // `toContractClassPublic()` no longer exposes `privateFunctions`/
+  // `utilityFunctions`). This is a genuine capability removal upstream,
+  // not a rename - confirmed by diffing the package's exports, not
+  // inferred. The `l2_private_function` / `l2_utility_function` tables
+  // hold zero rows in prod (this path was never populated even on v4),
+  // so this is a clean removal of dead code, not a behavior change.
+  // The GET endpoints reading those tables (get-class-functions.ts) are
+  // left untouched; they will simply keep returning empty results.
 
   if (contractClasses.length > 0) {
     logger.info(
@@ -135,16 +129,6 @@ export const storeContracts = async (b: L2Block, blockHash: string) => {
   if (contractInstanceUpdated.length > 0) {
     logger.info(
       `⬆️ Parsing and storing ${contractInstanceUpdated.length} contract instances updated`,
-    );
-  }
-  if (privateFnEvents.length > 0) {
-    logger.info(
-      `🔒 Parsing and storing ${privateFnEvents.length} private function events`,
-    );
-  }
-  if (utilityFnEvents.length > 0) {
-    logger.info(
-      `💪 Parsing and storing ${utilityFnEvents.length} utility function events`,
     );
   }
 
@@ -181,16 +165,22 @@ export const storeContracts = async (b: L2Block, blockHash: string) => {
             contractInstance.originalContractClassId.toString(),
           initializationHash: contractInstance.initializationHash.toString(),
           deployer: contractInstance.deployer.toString(),
+          // v5 PublicKeys shape (see AZTEC_V5_MIGRATION.md §3.5 RESOLVED
+          // decision): only ivpkM remains a curve point, the rest are hash
+          // digests. Emitted as-is - the six real v5 fields, no fabricated
+          // data.
           publicKeys: {
-            masterNullifierPublicKey:
-              contractInstance.publicKeys.masterNullifierPublicKey.toString(),
-            masterIncomingViewingPublicKey:
-              contractInstance.publicKeys.masterIncomingViewingPublicKey.toString(),
-            masterOutgoingViewingPublicKey:
-              contractInstance.publicKeys.masterOutgoingViewingPublicKey.toString(),
-            masterTaggingPublicKey:
-              contractInstance.publicKeys.masterTaggingPublicKey.toString(),
+            npkMHash: contractInstance.publicKeys.npkMHash.toString(),
+            ivpkM: contractInstance.publicKeys.ivpkM.toString(),
+            ovpkMHash: contractInstance.publicKeys.ovpkMHash.toString(),
+            tpkMHash: contractInstance.publicKeys.tpkMHash.toString(),
+            mspkMHash: contractInstance.publicKeys.mspkMHash.toString(),
+            fbpkMHash: contractInstance.publicKeys.fbpkMHash.toString(),
           },
+          // v5: new required ContractInstance preimage field. Stored, but
+          // never surfaced on /l2/* responses (see l2Contract.ts /
+          // special.ts).
+          immutablesHash: contractInstance.immutablesHash.toString(),
         } as ChicmozL2ContractInstanceDeployedEvent),
     );
   const parsedContractInstanceUpdate: ChicmozL2ContractInstanceUpdatedEvent[] =
@@ -204,53 +194,6 @@ export const storeContracts = async (b: L2Block, blockHash: string) => {
         newContractClassId: contractInstance.newContractClassId.toString(),
       } as ChicmozL2ContractInstanceUpdatedEvent),
     );
-  const parsedPrivateFnEvents: ChicmozL2PrivateFunctionBroadcastedEvent[] =
-    parseObjs(blockHash, privateFnEvents, (privateFnEvent) =>
-      chicmozL2PrivateFunctionBroadcastedEventSchema.parse({
-        ...privateFnEvent,
-        blockHash,
-        contractClassId: privateFnEvent.contractClassId.toString(),
-        artifactMetadataHash: privateFnEvent.artifactMetadataHash.toString(),
-        utilityFunctionsTreeRoot:
-          privateFnEvent.utilityFunctionsTreeRoot.toString(),
-        privateFunctionTreeSiblingPath:
-          privateFnEvent.privateFunctionTreeSiblingPath.map((sibling) =>
-            sibling.toString(),
-          ),
-        artifactFunctionTreeSiblingPath:
-          privateFnEvent.artifactFunctionTreeSiblingPath.map((sibling) =>
-            sibling.toString(),
-          ),
-        privateFunction: {
-          ...privateFnEvent.privateFunction,
-          metadataHash: privateFnEvent.privateFunction.metadataHash.toString(),
-          vkHash: privateFnEvent.privateFunction.vkHash.toString(),
-        },
-      } as ChicmozL2PrivateFunctionBroadcastedEvent),
-    );
-  const parsedUtilityFnEvents: ChicmozL2UtilityFunctionBroadcastedEvent[] =
-    parseObjs(blockHash, utilityFnEvents, (utilityFnEvent) =>
-      chicmozL2UtilityFunctionBroadcastedEventSchema.parse({
-        ...utilityFnEvent,
-        blockHash,
-        artifactMetadataHash: utilityFnEvent.artifactMetadataHash.toString(),
-        artifactFunctionTreeSiblingPath:
-          utilityFnEvent.artifactFunctionTreeSiblingPath.map((sibling) =>
-            sibling.toString(),
-          ),
-        privateFunctionsArtifactTreeRoot:
-          utilityFnEvent.privateFunctionsArtifactTreeRoot.toString(),
-        contractClassId: utilityFnEvent.contractClassId.toString(),
-        utilityFunction: {
-          ...utilityFnEvent.utilityFunction,
-          selector: {
-            value: utilityFnEvent.utilityFunction.selector.value,
-          },
-          metadataHash: utilityFnEvent.utilityFunction.metadataHash.toString(),
-        },
-      } as ChicmozL2UtilityFunctionBroadcastedEvent),
-    );
-
   await storeObj(
     parsedContractClasses,
     controllers.l2Contract.storeContractClass,
@@ -269,16 +212,9 @@ export const storeContracts = async (b: L2Block, blockHash: string) => {
     "contractInstanceUpdated",
     "address",
   );
-  await storeObj(
-    parsedPrivateFnEvents,
-    controllers.l2Contract.storePrivateFunction,
-    "privateFunction",
-    "artifactMetadataHash",
-  );
-  await storeObj(
-    parsedUtilityFnEvents,
-    controllers.l2Contract.storeUtilityFunction,
-    "utilityFunction",
-    "artifactMetadataHash",
-  );
+  // NOTE (v5 migration, S3): no longer storing private/utility function
+  // broadcast events - see the comment above `contractClassLogs` parsing.
+  // `controllers.l2Contract.storePrivateFunction` / `storeUtilityFunction`
+  // are intentionally left in place (dead code, unused by this path) since
+  // the DB tables/read paths (`get-class-functions.ts`) are untouched.
 };

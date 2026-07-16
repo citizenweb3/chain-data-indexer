@@ -158,7 +158,7 @@ export const observeFlush = (
 ) => {
   flushDuration.observe({ group }, durationSec);
   for (const [table, n] of Object.entries(rowCounts)) {
-    if (n > 0) flushRows.inc({ table }, n);
+    if (n > 0) {flushRows.inc({ table }, n);}
   }
 };
 

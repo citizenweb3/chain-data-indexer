@@ -22,11 +22,18 @@ const CONTRACT_INSTANCE_DELUXE_DEFAULTS = {
   blockHash: UNKNOWN_FR,
   initializationHash: UNKNOWN_FR,
   deployer: UNKNOWN_FR,
+  // v5 PublicKeys shape (only ivpkM is a point, see l2Contract.ts). These
+  // are canonical protocol contracts (genesis-deployed, no owner keys), so
+  // the pre-existing UNKNOWN_FR sentinel pattern continues to apply here -
+  // this is unrelated to the RESOLVED "publicKeys" decision, which governs
+  // real per-instance keys parsed from chain logs, not this placeholder.
   publicKeys: {
-    masterNullifierPublicKey: UNKNOWN_FR_POINT,
-    masterIncomingViewingPublicKey: UNKNOWN_FR_POINT,
-    masterOutgoingViewingPublicKey: UNKNOWN_FR_POINT,
-    masterTaggingPublicKey: UNKNOWN_FR_POINT,
+    npkMHash: UNKNOWN_FR,
+    ivpkM: UNKNOWN_FR_POINT,
+    ovpkMHash: UNKNOWN_FR,
+    tpkMHash: UNKNOWN_FR,
+    mspkMHash: UNKNOWN_FR,
+    fbpkMHash: UNKNOWN_FR,
   },
   isOrphaned: false,
 };

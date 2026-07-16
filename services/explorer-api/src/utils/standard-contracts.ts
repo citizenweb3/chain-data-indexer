@@ -15,14 +15,20 @@ const contracts: Record<
   ContractStandardVersion,
   Record<ContractStandardName<ContractStandardVersion>, NoirCompiledContract>
 > = {
+  // v4-era artifacts (@defi-wonderland/aztec-standards@4.0.0-devnet.2-patch.1): the bundled
+  // JSON lacks the v5 `aztec_version` field NoirCompiledContract now requires, hence the
+  // `as unknown as` escape hatch below. Standard-contract identification will NOT match
+  // v5-deployed standards until aztec-standards ships a stable 5.0.0 (5.0.0-rc.2 exists but
+  // is not stable — do not pull it in). TODO: bump to that stable 5.0.0 and add a `5.0.0`
+  // ContractStandardVersion key here.
   "4.1.0-rc.2": {
     // TODO: these types are not actually checked
-    token: TokenContractJson as NoirCompiledContract,
-    dripper: DripperContractJson as NoirCompiledContract,
-    escrow: EscrowContractJson as NoirCompiledContract,
-    nft: NftContractJson as NoirCompiledContract,
-    generic_proxy: GenericProxyContractJson as NoirCompiledContract,
-    test_logic: TestLogicContractJson as NoirCompiledContract,
+    token: TokenContractJson as unknown as NoirCompiledContract,
+    dripper: DripperContractJson as unknown as NoirCompiledContract,
+    escrow: EscrowContractJson as unknown as NoirCompiledContract,
+    nft: NftContractJson as unknown as NoirCompiledContract,
+    generic_proxy: GenericProxyContractJson as unknown as NoirCompiledContract,
+    test_logic: TestLogicContractJson as unknown as NoirCompiledContract,
   },
 };
 

@@ -129,7 +129,7 @@ Blockchain Sources → Listeners → Kafka Topics → Processors → PostgreSQL
 
 - **Backend**: Node.js 18+, TypeScript 5.8, Express.js, PostgreSQL 14+, Drizzle ORM, Kafka 3.0+
 - **Frontend**: React 18, Vite, TanStack Query/Router, Tailwind CSS, Radix UI
-- **Blockchain**: @aztec/aztec.js 2.1.2, viem 2.37.9
+- **Blockchain**: @aztec/aztec.js 5.0.0, viem 2.37.9
 - **Infrastructure**: Docker, Kubernetes, Skaffold, Grafana
 
 ## Shared Packages Architecture
@@ -392,7 +392,7 @@ The listener tracks BOTH proposed and proven heights separately:
 ```typescript
 // Two independent polling loops
 await getBlockNumber(); // Latest PROPOSED block
-await getProvenBlockNumber(); // Latest PROVEN block
+await getBlockNumber("proven"); // Latest PROVEN block (v5: was getProvenBlockNumber)
 
 // Process proposed blocks first
 while (processedProposedHeight < chainProposedHeight) {
@@ -508,11 +508,18 @@ const nodes = AZTEC_RPC_URLS.map((node) => ({
 **Key Methods**:
 
 ```typescript
+// v5 SDK (5.0.0). Note the changes from v4:
 await node.getBlockNumber(); // Latest proposed block height
-await node.getProvenBlockNumber(); // Latest proven block height
-await node.getBlock(height); // Fetch L2Block with full tx data
+await node.getBlockNumber("proven"); // Latest proven height (positional STRING tag;
+//   getProvenBlockNumber() was REMOVED. Object form {tag:"proven"} is rejected by the node.)
+await node.getBlock({ number: height }, { includeTransactions: true });
+//   v5 getBlock returns a plain BlockResponse (NOT an L2Block), and body/txEffects are omitted
+//   unless includeTransactions is set. We reconstruct `new L2Block(archive, header, body,
+//   checkpointNumber, indexWithinCheckpoint)` in network-client so downstream .toBuffer() /
+//   parse-block.ts keep working. See services/aztec-listener/src/svcs/poller/network-client.
 await node.getPendingTxs(); // Mempool transactions
-await node.getNodeInfo(); // Chain metadata, rollup version, L1 addresses
+await node.getNodeInfo(); // Chain metadata, rollupVersion, txsLimits, L1 addresses
+await node.getChainTips(); // v5: replaces getL2Tips (proposed/checkpointed/proven/finalized)
 ```
 
 ### Ethereum L1 Integration (viem)
@@ -844,15 +851,47 @@ await db
 
 | Component                 | Version | Notes                     |
 | ------------------------- | ------- | ------------------------- |
-| @aztec/aztec.js           | 2.1.2   | MUST match rollup version |
-| @aztec/stdlib             | 2.1.2   | MUST match aztec.js       |
-| @aztec/protocol-contracts | 2.1.2   | MUST match aztec.js       |
+| @aztec/aztec.js           | 5.0.0   | MUST match rollup version |
+| @aztec/stdlib             | 5.0.0   | MUST match aztec.js       |
+| @aztec/protocol-contracts | 5.0.0   | MUST match aztec.js       |
 | viem                      | 2.37.9  | Ethereum client           |
 | Node.js                   | 18+     | Required for ESM modules  |
 | PostgreSQL                | 14+     | Drizzle ORM requirement   |
 | Kafka                     | 3.0+    | Message bus               |
 
 **CRITICAL**: When upgrading Aztec SDK, upgrade ALL `@aztec/*` packages in lockstep. Mixing versions causes runtime errors.
+
+## Network Upgrades & Rollup-Version Partitioning
+
+A major Aztec upgrade (e.g. v4 → v5) deploys a **new L1 rollup contract**, which means a **new
+chain that restarts block height at 0** with a new `rollupVersion`. It is NOT a continuation of
+the old chain. This has bitten the indexer and the handling is now baked in:
+
+- **Never wipe old-rollup data.** Old blocks are kept in the DB and simply filtered out of the
+  API. They are NOT recoverable from L1 after ~18 days (block bodies live in EIP-4844 blobs,
+  which Ethereum prunes), so deletion is irreversible.
+- **`CURRENT_ROLLUP_VERSION`** (`services/explorer-api/src/constants/versions.ts`) is the switch:
+  add a constant for the new version and point `CURRENT_ROLLUP_VERSION` at it. Every `/l2/*`
+  read path filters `eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION))`. **When adding a
+  query that returns block/tx/stats data, you MUST add this filter** or it will serve blocks from
+  the retired chain mixed with the live one.
+- **Listener heights are keyed by `(networkId, rollupVersion)`** so a new rollup version starts
+  its cursor at 0 instead of inheriting the old chain's processed height (which would make the
+  poller think it is caught up and silently index nothing — no error, no log).
+- **Reorg/reconcile logic is version-aware** — it keys on each block's own
+  `header.globalVariables.version`, so block #N on the old rollup is never confused with block #N
+  on the new one.
+
+Full migration write-up (with the v5 specifics) lives in `docs/AZTEC_V5_MIGRATION.md`.
+
+## API Stability Contract
+
+The `/l2/*` API is consumed by the external **validatorinfo** explorer
+(`docs/VALIDATORINFO_HANDOFF_v5.md`). Treat the response shape as **frozen**: `parse-block.ts`
+(`@chicmoz-pkg/backend-utils`) is the anti-corruption layer that maps SDK types to our own zod
+schemas (`packages/types/src/aztec/`) — **absorb SDK changes there, do not leak them into the API
+schema**. In particular, `ChicmozL2BlockFinalizationStatus` numbering is load-bearing (the
+explorer hardcodes `>= 3` = proven); never renumber it or insert a stage below `3`.
 
 ## Summary: Critical Points
 

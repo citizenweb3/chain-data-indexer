@@ -62,7 +62,13 @@ export type ChicmozL2ContractInstanceDeployerMetadata = z.infer<
 
 export const chicmozL2ContractInstanceDeluxeSchema = z.lazy(() => {
   return z.object({
-    ...chicmozL2ContractInstanceDeployedEventSchema.shape,
+    // NOTE: immutablesHash is stored internally (v5 ContractInstance
+    // preimage field) but must never be surfaced on /l2/* responses -
+    // explicitly omitted here rather than relying on it staying absent
+    // from the object we build (see AZTEC_V5_MIGRATION.md §4 S3).
+    ...chicmozL2ContractInstanceDeployedEventSchema.omit({
+      immutablesHash: true,
+    }).shape,
     ...chicmozL2ContractClassRegisteredEventSchema.shape,
     blockHeight: chicmozL2BlockSchema.shape.height.optional(),
     isOrphaned: z.boolean(),

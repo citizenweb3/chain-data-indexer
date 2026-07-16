@@ -385,7 +385,12 @@ export const getOrphanedBlocks = async (
   const orphanedBlockHashes = await db()
     .select({ hash: l2Block.hash })
     .from(l2Block)
-    .where(isNotNull(l2Block.orphan_timestamp))
+    .where(
+      and(
+        isNotNull(l2Block.orphan_timestamp),
+        eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)),
+      ),
+    )
     .orderBy(desc(l2Block.orphan_timestamp), desc(l2Block.height))
     .limit(limit)
     .execute();
@@ -427,6 +432,7 @@ export const getReorgs = async (): Promise<
       and(
         isNotNull(l2Block.orphan_timestamp),
         eq(l2Block.orphan_hasOrphanedParent, false),
+        eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)),
       ),
     )
     .orderBy(desc(l2Block.orphan_timestamp))
@@ -448,6 +454,7 @@ export const getReorgs = async (): Promise<
         and(
           eq(l2Block.orphan_timestamp, rootBlock.timestamp),
           eq(l2Block.orphan_hasOrphanedParent, true),
+          eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)),
         ),
       )
       .execute();

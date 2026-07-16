@@ -21,10 +21,17 @@ import {
 export const storeContractInstanceDeployed = async (
   instance: ChicmozL2ContractInstanceDeployedEvent,
 ): Promise<void> => {
-  const { publicKeys, ...rest } = instance;
+  const { publicKeys, immutablesHash, ...rest } = instance;
+  // immutablesHash is nullish on the shared type for two reasons: (1) that
+  // type is also reused to re-parse the (deliberately immutablesHash-less)
+  // Deluxe API object elsewhere (see l2Contract.ts), and (2) a v4-shaped
+  // instance genuinely has no v5 preimage data (§3.6). Freshly-ingested v5
+  // contract instances always carry a real value (see contracts.ts) - store
+  // whatever we got rather than throwing, since NULL is the honest value
+  // for the legacy case.
   await db()
     .insert(l2ContractInstanceDeployed)
-    .values({ ...publicKeys, ...rest });
+    .values({ ...publicKeys, ...rest, immutablesHash: immutablesHash ?? null });
 };
 
 export const storeContractInstanceUpdated = async (

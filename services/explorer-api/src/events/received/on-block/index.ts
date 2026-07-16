@@ -130,6 +130,7 @@ const storeBlock = async (parsedBlock: ChicmozL2Block, haveRetried = false) => {
             parsedBlock.hash,
             parsedBlock.height,
             parsedBlock.finalizationStatus,
+            parsedBlock.header.globalVariables.version,
           );
         },
       );
@@ -142,6 +143,7 @@ const storeBlock = async (parsedBlock: ChicmozL2Block, haveRetried = false) => {
           parsedBlock.hash,
           parsedBlock.height,
           parsedBlock.finalizationStatus,
+          parsedBlock.header.globalVariables.version,
         );
       }
     });

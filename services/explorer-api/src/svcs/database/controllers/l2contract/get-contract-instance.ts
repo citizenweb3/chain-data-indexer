@@ -1,6 +1,7 @@
 import { getDb as db } from "@chicmoz-pkg/postgres-helper";
 import { ChicmozL2ContractInstanceDeluxe, HexString } from "@chicmoz-pkg/types";
 import { and, desc, eq, getTableColumns, isNotNull } from "drizzle-orm";
+import { CURRENT_ROLLUP_VERSION } from "../../../../constants/versions.js";
 import { l2Block } from "../../schema/index.js";
 import {
   l2ContractClassRegistered,
@@ -66,7 +67,12 @@ export const getL2DeployedContractInstanceByAddress = async (
         l2ContractInstanceAztecScanNotes.address,
       ),
     )
-    .where(eq(l2ContractInstanceDeployed.address, address))
+    .where(
+      and(
+        eq(l2ContractInstanceDeployed.address, address),
+        eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)),
+      ),
+    )
     .orderBy(desc(l2ContractInstanceDeployed.version))
     .limit(1);
 
@@ -91,4 +97,24 @@ export const getL2DeployedContractInstanceByAddress = async (
     aztecScanNotes,
     isOrphaned: Boolean(isOrphaned),
   });
+};
+
+// v5 migration (S3): immutablesHash is required to verify a contract
+// instance deployment (see @chicmoz-pkg/contract-verification), but it must
+// never be surfaced on /l2/* responses (see chicmozL2ContractInstanceDeluxeSchema,
+// which explicitly omits it). This dedicated, internal-only query is the
+// sanctioned way to source it server-side, instead of round-tripping it
+// through the already-serialized (and intentionally immutablesHash-less)
+// Deluxe API object.
+export const getL2ContractInstanceImmutablesHash = async (
+  address: HexString,
+): Promise<string | null> => {
+  const result = await db()
+    .select({ immutablesHash: l2ContractInstanceDeployed.immutablesHash })
+    .from(l2ContractInstanceDeployed)
+    .where(eq(l2ContractInstanceDeployed.address, address))
+    .orderBy(desc(l2ContractInstanceDeployed.version))
+    .limit(1);
+
+  return result[0]?.immutablesHash ?? null;
 };

@@ -78,7 +78,8 @@ export const getL2DeployedContractInstancesWithAztecScanNotes = async (
         l2ContractInstanceDeployed.address,
         l2ContractInstanceDeployerMetadataTable.address,
       ),
-    );
+    )
+    .where(eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)));
 
   return result.map(
     ({
@@ -294,9 +295,12 @@ export const getL2DeployedContractInstancesByCurrentContractClassId = async (
       ),
     )
     .where(
-      eq(
-        l2ContractInstanceDeployed.currentContractClassId,
-        currentContractClassId,
+      and(
+        eq(
+          l2ContractInstanceDeployed.currentContractClassId,
+          currentContractClassId,
+        ),
+        eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)),
       ),
     )
     .orderBy(desc(l2ContractInstanceDeployed.version))
@@ -326,7 +330,10 @@ export const getL2TotalAmountDeployedContractInstancesByCurrentContractClassId =
         eq(l2Block.hash, l2ContractInstanceDeployed.blockHash),
       )
       .where(
-        eq(l2ContractInstanceDeployed.currentContractClassId, contractClassId),
+        and(
+          eq(l2ContractInstanceDeployed.currentContractClassId, contractClassId),
+          eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)),
+        ),
       );
 
     return Number(result[0].count);
@@ -343,7 +350,12 @@ export const getL2TotalAmountDeployedContractInstances =
         l2Block,
         eq(l2Block.hash, l2ContractInstanceDeployed.blockHash),
       )
-      .where(isNull(l2Block.orphan_timestamp));
+      .where(
+        and(
+          isNull(l2Block.orphan_timestamp),
+          eq(l2Block.version, parseInt(CURRENT_ROLLUP_VERSION)),
+        ),
+      );
 
     return Number(result[0].count);
   };

@@ -299,9 +299,33 @@ export const POST_L2_VERIFY_CONTRACT_INSTANCE_DEPLOYMENT = asyncHandler(
         JSON.parse(instanceData),
       );
 
-    const pubkeySplit = Object.values(dbContractInstance.publicKeys).map(
-      (key) => key.split("0x")[1],
-    );
+    // publicKeys fields are nullable on the shared type (§3.6: old v4 rows
+    // on prod genuinely carry no v5 key data). This endpoint only makes
+    // sense for real, fully-populated v5 instances, so guard defensively
+    // rather than widen the split() call below to handle null.
+    const { npkMHash, ivpkM, ovpkMHash, tpkMHash, mspkMHash, fbpkMHash } =
+      dbContractInstance.publicKeys;
+    if (
+      !npkMHash ||
+      !ivpkM ||
+      !ovpkMHash ||
+      !tpkMHash ||
+      !mspkMHash ||
+      !fbpkMHash
+    ) {
+      res
+        .status(500)
+        .send(`publicKeys missing in DB for contract instance ${address}`);
+      return;
+    }
+    const pubkeySplit = [
+      npkMHash,
+      ivpkM,
+      ovpkMHash,
+      tpkMHash,
+      mspkMHash,
+      fbpkMHash,
+    ].map((key) => key.split("0x")[1]);
     const pubKeyString = "0x".concat(pubkeySplit.join(""));
 
     if (publicKeysString && publicKeysString !== pubKeyString) {
@@ -418,6 +442,22 @@ export const POST_L2_VERIFY_CONTRACT_INSTANCE_DEPLOYMENT = asyncHandler(
       return;
     }
 
+    // v5: immutablesHash is required to verify a deployment (see
+    // computeSaltedInitializationHash), but it is never part of the
+    // serialized contract-instance object above (dbContractInstance) since
+    // that object mirrors the /l2/* response shape, which must not surface
+    // it. Fetch it directly instead.
+    const immutablesHash =
+      await db.l2Contract.getL2ContractInstanceImmutablesHash(address);
+    if (!immutablesHash) {
+      res
+        .status(500)
+        .send(
+          `immutablesHash missing in DB for contract instance ${address}`,
+        );
+      return;
+    }
+
     let isVerifiedDeploymentPayload: boolean;
     try {
       isVerifiedDeploymentPayload = await verifyInstanceDeploymentPayload({
@@ -425,6 +465,7 @@ export const POST_L2_VERIFY_CONTRACT_INSTANCE_DEPLOYMENT = asyncHandler(
         stringifiedArtifactJson: artifactString,
         instanceAddress: address,
         contractClassId: dbContractInstance.currentContractClassId,
+        immutablesHash,
       });
     } catch (error) {
       logger.error(

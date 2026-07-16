@@ -35,6 +35,7 @@ import { AztecAddress } from "@aztec/stdlib/aztec-address";
 import { Fr } from "@aztec/aztec.js/fields";
 import { ProtocolContractAddress } from "@aztec/aztec.js/protocol";
 import { BlockNumber } from "@aztec/foundation/branded-types";
+import { L2Block } from "@aztec/aztec.js/block";
 
 const offlineCauses = ["Service Unavailable", "Unauthorized", "Bad Gateway"];
 
@@ -134,12 +135,14 @@ export const init = async () => {
 export const getFreshInfo = async (): Promise<{
   chainInfo: ChicmozChainInfo;
   sequencers: ChicmozL2Sequencer[];
+  txsLimits: NodeInfo["txsLimits"];
 }> => {
   const allNodes = getAllRpcNodes();
   if (allNodes.length === 0) {
     throw new Error("No Aztec nodes available in the pool");
   }
   let chainInfo: ChicmozChainInfo | undefined = undefined;
+  let txsLimits: NodeInfo["txsLimits"] | undefined = undefined;
   const sequencers: ChicmozL2Sequencer[] = [];
   for (const node of allNodes) {
     try {
@@ -150,6 +153,7 @@ export const getFreshInfo = async (): Promise<{
         enr,
         l1ContractAddresses,
         protocolContractAddresses,
+        txsLimits: nodeTxsLimits,
       } = await callNodeFunction("getNodeInfo", undefined, node);
       const nodeInfo: NodeInfo = {
         nodeVersion,
@@ -159,6 +163,7 @@ export const getFreshInfo = async (): Promise<{
         l1ContractAddresses: l1ContractAddresses,
         protocolContractAddresses: protocolContractAddresses,
         realProofs: false,
+        txsLimits: nodeTxsLimits,
       };
       const cInfo = getChicmozChainInfoFromNodeInfo(L2_NETWORK_ID, nodeInfo);
       if (!chainInfo || chainInfo.rollupVersion < cInfo.rollupVersion) {
@@ -168,6 +173,7 @@ export const getFreshInfo = async (): Promise<{
           );
         });
         chainInfo = cInfo;
+        txsLimits = nodeTxsLimits;
       }
 
       const sequencer = getSequencerFromNodeInfo(
@@ -197,11 +203,38 @@ export const getFreshInfo = async (): Promise<{
   return {
     chainInfo,
     sequencers,
+    // Falls back to zeros only if every node's getNodeInfo() call failed to
+    // update chainInfo above (impossible given the throw right above, but
+    // typed defensively since txsLimits and chainInfo are assigned separately).
+    txsLimits: txsLimits ?? { gas: { daGas: 0, l2Gas: 0 } },
   };
 };
 
-export const getBlock = async (height: number) =>
-  callNodeFunction("getBlock", [BlockNumber(height)]);
+export const getBlock = async (height: number): Promise<L2Block> => {
+  const blockResponse = await callNodeFunction("getBlock", [
+    BlockNumber(height),
+    { includeTransactions: true },
+  ]);
+  if (!blockResponse) {
+    throw new Error(`Block ${height} not found`);
+  }
+  if (!blockResponse.body) {
+    throw new Error(
+      `Block ${height}: node response is missing body even though includeTransactions: true was requested`,
+    );
+  }
+  // v5's getBlock returns a plain BlockResponse object, not an L2Block instance.
+  // The L2Block constructor is unchanged from 4.1.1, so reconstructing it here keeps
+  // everything downstream (toBuffer() in events/emitted/index.ts, body.txEffects in
+  // parse-block.ts) working untouched.
+  return new L2Block(
+    blockResponse.archive,
+    blockResponse.header,
+    blockResponse.body,
+    blockResponse.checkpointNumber,
+    blockResponse.indexWithinCheckpoint,
+  );
+};
 
 export const getBlocks = async (fromHeight: number, toHeight: number) => {
   if (toHeight - fromHeight > MAX_BATCH_SIZE_FETCH_MISSED_BLOCKS) {
@@ -226,7 +259,10 @@ export const getLatestProposedHeight = async () => {
 };
 
 export const getLatestProvenHeight = async () => {
-  return await callNodeFunction("getProvenBlockNumber");
+  // getProvenBlockNumber was removed in v5. The node now takes a positional string
+  // tag; the object form ({ tag: "proven" }) is rejected with "Invalid input"
+  // (verified against the live node).
+  return await callNodeFunction("getBlockNumber", ["proven"]);
 };
 
 export const getPendingTxs = async () => callNodeFunction("getPendingTxs");

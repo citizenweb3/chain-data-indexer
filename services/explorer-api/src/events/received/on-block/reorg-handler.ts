@@ -24,7 +24,13 @@ export const detectReorg = async (
 export const handleReorg = async (
   parsedBlock: ChicmozL2Block,
 ): Promise<void> => {
-  const existingBlock = await getBlock(parsedBlock.height);
+  // v5 migration (S4 part 4, upstream 8478dbbe): use the authoritative
+  // per-block rollup version rather than assuming CURRENT_ROLLUP_VERSION,
+  // so a v4 block #N is never treated as the "existing" block for a v5
+  // block #N (and vice versa).
+  const existingBlock = await getBlock(parsedBlock.height, {
+    rollupVersion: parsedBlock.header.globalVariables.version,
+  });
 
   if (!existingBlock) {
     return;

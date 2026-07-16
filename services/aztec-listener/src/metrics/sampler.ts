@@ -9,7 +9,7 @@ const DEFAULT_INTERVAL_MS = 5000;
 let stop: (() => void) | undefined;
 
 export const startMetricsSampler = () => {
-  if (stop) return;
+  if (stop) {return;}
 
   const intervalMs = Number.parseInt(
     process.env.METRICS_SAMPLE_INTERVAL_MS ?? String(DEFAULT_INTERVAL_MS),
@@ -48,7 +48,7 @@ export const startMetricsSampler = () => {
 
   tick();
   const handle = setInterval(tick, intervalMs);
-  if (typeof handle.unref === "function") handle.unref();
+  if (typeof handle.unref === "function") {handle.unref();}
 
   stop = () => {
     clearInterval(handle);
@@ -58,5 +58,5 @@ export const startMetricsSampler = () => {
 };
 
 export const stopMetricsSampler = () => {
-  if (stop) stop();
+  if (stop) {stop();}
 };
