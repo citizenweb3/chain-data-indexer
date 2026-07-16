@@ -4,21 +4,24 @@ Next.js App Router Route Handlers. Each `route.ts` exports `GET` (no other verbs
 
 ## Endpoints
 
-| Path | File | Auth | Schema |
-|---|---|---|---|
-| `GET /api/v1/health` | `health/route.ts` | no | runs `SELECT 1` |
-| `GET /api/v1/blocks` | `blocks/route.ts` | yes | query: `BlocksQuerySchema` |
-| `GET /api/v1/blocks/height/{h}` | `blocks/height/[h]/route.ts` | yes | param: `HeightParamSchema` |
-| `GET /api/v1/blocks/stats` | `blocks/stats/route.ts` | yes | — |
-| `GET /api/v1/txs` | `txs/route.ts` | yes | query: `TxsQuerySchema` |
-| `GET /api/v1/txs/{hash}` | `txs/[hash]/route.ts` | yes | param: `HashParamSchema` |
-| `GET /api/v1/txs/{hash}/raw` | `txs/[hash]/raw/route.ts` | yes | param: `HashParamSchema` |
-| `GET /api/v1/txs/stats` | `txs/stats/route.ts` | yes | — |
-| `GET /api/v1/txs/by-address` | `txs/by-address/route.ts` | yes | query: `TxsByAddressQuerySchema` |
-| `GET /api/v1/ibc/transfers` | `ibc/transfers/route.ts` | yes | query: `IbcTransfersQuerySchema` |
-| `GET /api/v1/ibc/transfers/{port}/{channel}/{sequence}` | `ibc/transfers/[port]/[channel]/[sequence]/route.ts` | yes | param: `IbcTransferParamSchema` |
-| `GET /api/v1/staking/delegations` | `staking/delegations/route.ts` | yes | query: `DelegationsQuerySchema` |
-| `GET /api/v1/gov/votes` | `gov/votes/route.ts` | yes | query: `GovVotesQuerySchema` |
+| Path                                                    | File                                                 | Auth | Schema                               |
+| ------------------------------------------------------- | ---------------------------------------------------- | ---- | ------------------------------------ |
+| `GET /api/v1/health`                                    | `health/route.ts`                                    | no   | runs `SELECT 1`                      |
+| `GET /api/v1/coverage`                                  | `coverage/route.ts`                                  | yes  | —                                    |
+| `GET /api/v1/address/earliest-activity`                 | `address/earliest-activity/route.ts`                 | yes  | query: `EarliestActivityQuerySchema` |
+| `GET /api/v1/blocks`                                    | `blocks/route.ts`                                    | yes  | query: `BlocksQuerySchema`           |
+| `GET /api/v1/blocks/height/{h}`                         | `blocks/height/[h]/route.ts`                         | yes  | param: `HeightParamSchema`           |
+| `GET /api/v1/blocks/stats`                              | `blocks/stats/route.ts`                              | yes  | —                                    |
+| `GET /api/v1/txs`                                       | `txs/route.ts`                                       | yes  | query: `TxsQuerySchema`              |
+| `GET /api/v1/txs/{hash}`                                | `txs/[hash]/route.ts`                                | yes  | param: `HashParamSchema`             |
+| `GET /api/v1/txs/{hash}/raw`                            | `txs/[hash]/raw/route.ts`                            | yes  | param: `HashParamSchema`             |
+| `GET /api/v1/txs/stats`                                 | `txs/stats/route.ts`                                 | yes  | —                                    |
+| `GET /api/v1/txs/by-address`                            | `txs/by-address/route.ts`                            | yes  | query: `TxsByAddressQuerySchema`     |
+| `GET /api/v1/ibc/transfers`                             | `ibc/transfers/route.ts`                             | yes  | query: `IbcTransfersQuerySchema`     |
+| `GET /api/v1/ibc/transfers/{port}/{channel}/{sequence}` | `ibc/transfers/[port]/[channel]/[sequence]/route.ts` | yes  | param: `IbcTransferParamSchema`      |
+| `GET /api/v1/staking/delegations`                       | `staking/delegations/route.ts`                       | yes  | query: `DelegationsQuerySchema`      |
+| `GET /api/v1/staking/deltas`                            | `staking/deltas/route.ts`                            | yes  | query: `StakingDeltasQuerySchema`    |
+| `GET /api/v1/gov/votes`                                 | `gov/votes/route.ts`                                 | yes  | query: `GovVotesQuerySchema`         |
 
 ## Standard handler shape
 
@@ -54,7 +57,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ x: strin
 
 ## OpenAPI
 
-Every new route MUST be registered in `src/lib/openapi.ts` via `registry.registerPath`. The Scalar UI at `/docs` reads from `/api/openapi.json` (13 paths registered).
+Every new route MUST be registered in `src/lib/openapi.ts` via `registry.registerPath`. The Scalar UI at `/docs` reads from `/api/openapi.json` (16 paths registered).
 
 ## Adding a new endpoint
 

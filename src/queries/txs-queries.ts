@@ -1,4 +1,5 @@
 import { db } from '@/db/indexer-db';
+import { TEXT_ARRAY_OID } from '@/db/postgres-types';
 
 export interface TxSummaryRow {
   tx_hash: string;
@@ -127,7 +128,7 @@ const buildTxsByAddressFilterFragment = (addresses: string[], filters: TxsByAddr
           FROM core.messages m2
           WHERE m2.height = t.height
             AND m2.tx_hash = t.tx_hash
-            AND m2.type_url = ANY(${db.array(filters.msgTypes)})
+            AND m2.type_url = ANY(${db.array(filters.msgTypes, TEXT_ARRAY_OID)})
         )`
       : db``
   }
@@ -140,7 +141,10 @@ const buildTxsByAddressFilterFragment = (addresses: string[], filters: TxsByAddr
           FROM bank.transfers bf
           WHERE bf.height = t.height
             AND bf.tx_hash = t.tx_hash
-            AND (bf.from_addr = ANY(${db.array(addresses)}) OR bf.to_addr = ANY(${db.array(addresses)}))
+            AND (
+              bf.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+              OR bf.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+            )
             AND bf.denom = ${filters.amountDenom}
             ${filters.minAmount !== undefined ? db`AND bf.amount >= ${filters.minAmount}` : db``}
             ${filters.maxAmount !== undefined ? db`AND bf.amount <= ${filters.maxAmount}` : db``}
@@ -169,7 +173,7 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
       (
         SELECT t.height, t.tx_hash, t.tx_index
         FROM core.transactions t
-        WHERE t.signers && ${db.array(addresses)}
+        WHERE t.signers && ${db.array(addresses, TEXT_ARRAY_OID)}
           ${filterFragment}
           ${cursorFragment}
         ORDER BY t.height DESC, t.tx_index DESC
@@ -181,7 +185,7 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
         FROM bank.transfers candidate_transfer
         JOIN core.transactions t
           ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
-        WHERE candidate_transfer.from_addr = ANY(${db.array(addresses)})
+        WHERE candidate_transfer.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
           ${filterFragment}
           ${cursorFragment}
         ORDER BY t.height DESC, t.tx_index DESC
@@ -193,7 +197,7 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
         FROM bank.transfers candidate_transfer
         JOIN core.transactions t
           ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
-        WHERE candidate_transfer.to_addr = ANY(${db.array(addresses)})
+        WHERE candidate_transfer.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
           ${filterFragment}
           ${cursorFragment}
         ORDER BY t.height DESC, t.tx_index DESC
@@ -239,7 +243,10 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
         FROM bank.transfers b
         WHERE b.height = t.height
           AND b.tx_hash = t.tx_hash
-          AND (b.from_addr = ANY(${db.array(addresses)}) OR b.to_addr = ANY(${db.array(addresses)}))
+          AND (
+            b.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+            OR b.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+          )
         ORDER BY b.msg_index, b.from_addr, b.to_addr, b.denom
         LIMIT 5
       ) transfer_row
@@ -259,21 +266,21 @@ export async function queryTxsByAddressTotal(
     WITH candidates AS (
       SELECT t.height, t.tx_hash
       FROM core.transactions t
-      WHERE t.signers && ${db.array(addresses)}
+      WHERE t.signers && ${db.array(addresses, TEXT_ARRAY_OID)}
         ${filterFragment}
       UNION
       SELECT t.height, t.tx_hash
       FROM bank.transfers candidate_transfer
       JOIN core.transactions t
         ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
-      WHERE candidate_transfer.from_addr = ANY(${db.array(addresses)})
+      WHERE candidate_transfer.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
         ${filterFragment}
       UNION
       SELECT t.height, t.tx_hash
       FROM bank.transfers candidate_transfer
       JOIN core.transactions t
         ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
-      WHERE candidate_transfer.to_addr = ANY(${db.array(addresses)})
+      WHERE candidate_transfer.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
         ${filterFragment}
     )
     SELECT COUNT(*)::bigint AS total
