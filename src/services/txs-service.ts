@@ -8,7 +8,9 @@ import {
   queryTxsList,
   queryTxsStats,
   queryTxsTotal,
+  type TxByAddressSummaryRow,
   type TxSummaryRow,
+  type TxsByAddressFilters,
 } from '@/queries/txs-queries';
 
 const TXS_STATS_TTL_MS = 60_000;
@@ -55,19 +57,30 @@ function parseFee(raw: unknown): Fee | null {
 
 // Shared list-envelope builder: strip the limit+1 probe row, map BigInt→string, build the
 // keyset cursor from the last page row. `total` is always a decimal string.
-function buildTxsResult(rows: TxSummaryRow[], limit: number, total: bigint) {
+const toTxSummaryDto = (row: TxSummaryRow) => ({
+  tx_hash: row.tx_hash,
+  height: row.height.toString(),
+  tx_index: row.tx_index,
+  time: row.time.toISOString(),
+  code: row.code,
+  first_msg_type: row.first_msg_type,
+  fee: { amount: row.fee_amount, denom: row.fee_denom },
+});
+
+const toTxByAddressSummaryDto = (row: TxByAddressSummaryRow) => ({
+  ...toTxSummaryDto(row),
+  transfers: row.transfers,
+});
+
+const buildTxsResult = <TRow extends TxSummaryRow, TDto>(
+  rows: TRow[],
+  limit: number,
+  total: bigint,
+  toDto: (row: TRow) => TDto,
+) => {
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
-
-  const data = page.map((r) => ({
-    tx_hash: r.tx_hash,
-    height: r.height.toString(),
-    tx_index: r.tx_index,
-    time: r.time.toISOString(),
-    code: r.code,
-    first_msg_type: r.first_msg_type,
-    fee: { amount: r.fee_amount, denom: r.fee_denom },
-  }));
+  const data = page.map(toDto);
 
   const last = page.at(-1);
   const cursor =
@@ -76,7 +89,7 @@ function buildTxsResult(rows: TxSummaryRow[], limit: number, total: bigint) {
       : null;
 
   return { data, cursor, has_more: hasMore, total: total.toString() };
-}
+};
 
 export async function listTxs(params: {
   limit: number;
@@ -84,7 +97,7 @@ export async function listTxs(params: {
   beforeIndex?: number;
 }) {
   const [rows, total] = await Promise.all([queryTxsList(params), queryTxsTotal()]);
-  return buildTxsResult(rows, params.limit, total);
+  return buildTxsResult(rows, params.limit, total, toTxSummaryDto);
 }
 
 // Transactions involving one or more addresses. Same envelope as listTxs. `total` is an exact
@@ -97,12 +110,12 @@ export async function listTxsByAddress(params: {
   beforeHeight?: bigint;
   beforeIndex?: number;
   includeCount?: boolean;
-}) {
+} & TxsByAddressFilters) {
   const [rows, total] = await Promise.all([
     queryTxsByAddress(params),
-    params.includeCount === false ? Promise.resolve(BigInt(0)) : queryTxsByAddressTotal(params.addresses),
+    params.includeCount === false ? Promise.resolve(BigInt(0)) : queryTxsByAddressTotal(params),
   ]);
-  return buildTxsResult(rows, params.limit, total);
+  return buildTxsResult(rows, params.limit, total, toTxByAddressSummaryDto);
 }
 
 export async function getTxDetail(hash: string) {

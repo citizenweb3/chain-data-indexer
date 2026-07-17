@@ -1,4 +1,5 @@
 import { db } from '@/db/indexer-db';
+import { TEXT_ARRAY_OID } from '@/db/postgres-types';
 
 export interface TxSummaryRow {
   tx_hash: string;
@@ -9,6 +10,33 @@ export interface TxSummaryRow {
   fee_amount: string | null;
   fee_denom: string | null;
   first_msg_type: string | null;
+}
+
+export interface TxTransferRow {
+  from_addr: string;
+  to_addr: string;
+  denom: string;
+  amount: string;
+}
+
+export interface TxByAddressSummaryRow extends TxSummaryRow {
+  transfers: TxTransferRow[];
+}
+
+export interface TxsByAddressFilters {
+  msgTypes?: string[];
+  fromTime?: string;
+  toTime?: string;
+  minAmount?: string;
+  maxAmount?: string;
+  amountDenom?: string;
+}
+
+export interface TxsByAddressQueryParams extends TxsByAddressFilters {
+  addresses: string[];
+  limit: number;
+  beforeHeight?: bigint;
+  beforeIndex?: number;
 }
 
 export interface TxDetailRow {
@@ -90,42 +118,98 @@ export async function queryTxsList(params: {
   `;
 }
 
-// Transactions involving one or more addresses (the indexer's `signers` is a grab-bag of actor
-// fields: signer/from_address/delegator_address/validator_address/granter/grantee). `&&` (array
-// overlap = "contains ANY of") uses the GIN index idx_txs_signers_gin; `= ANY` would NOT. Pass
-// db.array(addresses) — a bare JS string[] is NOT array-serialized by porsager (it would become a
-// comma-joined scalar). Two static variants (cursor / no-cursor) — no string concat.
-export async function queryTxsByAddress(params: {
-  addresses: string[];
-  limit: number;
-  beforeHeight?: bigint;
-  beforeIndex?: number;
-}): Promise<TxSummaryRow[]> {
-  const { addresses, limit, beforeHeight, beforeIndex } = params;
-  const fetch = limit + 1;
-
-  if (beforeHeight !== undefined && beforeIndex !== undefined) {
-    return db<TxSummaryRow[]>`
-      SELECT
-        t.tx_hash,
-        t.height,
-        t.tx_index,
-        t.time,
-        t.code,
-        t.fee->'amount'->0->>'amount' AS fee_amount,
-        t.fee->'amount'->0->>'denom'  AS fee_denom,
-        m.type_url AS first_msg_type
-      FROM core.transactions t
-      LEFT JOIN core.messages m
-        ON m.height = t.height AND m.tx_hash = t.tx_hash AND m.msg_index = 0
-      WHERE t.signers && ${db.array(addresses)}
-        AND (t.height, t.tx_index) < (${beforeHeight}, ${beforeIndex})
-      ORDER BY t.height DESC, t.tx_index DESC
-      LIMIT ${fetch}
-    `;
+// One safe predicate source is shared by the page and exact-count queries. Nested postgres.js
+// fragments preserve parameterization while omitting absent filters from the generated SQL.
+const buildTxsByAddressFilterFragment = (addresses: string[], filters: TxsByAddressFilters) => db`
+  ${
+    filters.msgTypes !== undefined
+      ? db`AND EXISTS (
+          SELECT 1
+          FROM core.messages m2
+          WHERE m2.height = t.height
+            AND m2.tx_hash = t.tx_hash
+            AND m2.type_url = ANY(${db.array(filters.msgTypes, TEXT_ARRAY_OID)})
+        )`
+      : db``
   }
+  ${filters.fromTime !== undefined ? db`AND t.time >= ${filters.fromTime}` : db``}
+  ${filters.toTime !== undefined ? db`AND t.time <= ${filters.toTime}` : db``}
+  ${
+    filters.amountDenom !== undefined
+      ? db`AND EXISTS (
+          SELECT 1
+          FROM bank.transfers bf
+          WHERE bf.height = t.height
+            AND bf.tx_hash = t.tx_hash
+            AND (
+              bf.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+              OR bf.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+            )
+            AND bf.denom = ${filters.amountDenom}
+            ${filters.minAmount !== undefined ? db`AND bf.amount >= ${filters.minAmount}` : db``}
+            ${filters.maxAmount !== undefined ? db`AND bf.amount <= ${filters.maxAmount}` : db``}
+        )`
+      : db``
+  }
+`;
 
-  return db<TxSummaryRow[]>`
+// Transactions involving one or more addresses. Candidate branches stay index-driven: actors use
+// idx_txs_signers_gin while outgoing/incoming transfers use idx_transfers_from/idx_transfers_to.
+// Every branch applies the same filters and cursor before its bounded top-N probe; transfer
+// branches dedupe transaction keys before LIMIT so repeated transfers cannot consume the window.
+// The LATERAL projection returns only address-relevant transfers and applies a total order before
+// the five-row summary cap.
+export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promise<TxByAddressSummaryRow[]> {
+  const { addresses, limit, beforeHeight, beforeIndex, ...filters } = params;
+  const fetch = limit + 1;
+  const cursorFragment =
+    beforeHeight !== undefined && beforeIndex !== undefined
+      ? db`AND (t.height, t.tx_index) < (${beforeHeight}, ${beforeIndex})`
+      : db``;
+  const filterFragment = buildTxsByAddressFilterFragment(addresses, filters);
+
+  return db<TxByAddressSummaryRow[]>`
+    WITH candidates AS (
+      (
+        SELECT t.height, t.tx_hash, t.tx_index
+        FROM core.transactions t
+        WHERE t.signers && ${db.array(addresses, TEXT_ARRAY_OID)}
+          ${filterFragment}
+          ${cursorFragment}
+        ORDER BY t.height DESC, t.tx_index DESC
+        LIMIT ${fetch}
+      )
+      UNION
+      (
+        SELECT DISTINCT t.height, t.tx_hash, t.tx_index
+        FROM bank.transfers candidate_transfer
+        JOIN core.transactions t
+          ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+        WHERE candidate_transfer.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+          ${filterFragment}
+          ${cursorFragment}
+        ORDER BY t.height DESC, t.tx_index DESC
+        LIMIT ${fetch}
+      )
+      UNION
+      (
+        SELECT DISTINCT t.height, t.tx_hash, t.tx_index
+        FROM bank.transfers candidate_transfer
+        JOIN core.transactions t
+          ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+        WHERE candidate_transfer.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+          ${filterFragment}
+          ${cursorFragment}
+        ORDER BY t.height DESC, t.tx_index DESC
+        LIMIT ${fetch}
+      )
+    ),
+    page_candidates AS (
+      SELECT height, tx_hash, tx_index
+      FROM candidates
+      ORDER BY height DESC, tx_index DESC
+      LIMIT ${fetch}
+    )
     SELECT
       t.tx_hash,
       t.height,
@@ -134,25 +218,73 @@ export async function queryTxsByAddress(params: {
       t.code,
       t.fee->'amount'->0->>'amount' AS fee_amount,
       t.fee->'amount'->0->>'denom'  AS fee_denom,
-      m.type_url AS first_msg_type
-    FROM core.transactions t
+      m.type_url AS first_msg_type,
+      COALESCE(tr.transfers, '[]'::jsonb) AS transfers
+    FROM page_candidates candidate
+    JOIN core.transactions t
+      ON t.height = candidate.height AND t.tx_hash = candidate.tx_hash
     LEFT JOIN core.messages m
       ON m.height = t.height AND m.tx_hash = t.tx_hash AND m.msg_index = 0
-    WHERE t.signers && ${db.array(addresses)}
+    LEFT JOIN LATERAL (
+      SELECT jsonb_agg(transfer_row.payload ORDER BY transfer_row.msg_index, transfer_row.from_addr,
+        transfer_row.to_addr, transfer_row.denom) AS transfers
+      FROM (
+        SELECT
+          b.msg_index,
+          b.from_addr,
+          b.to_addr,
+          b.denom,
+          jsonb_build_object(
+            'from_addr', b.from_addr,
+            'to_addr', b.to_addr,
+            'denom', b.denom,
+            'amount', b.amount::text
+          ) AS payload
+        FROM bank.transfers b
+        WHERE b.height = t.height
+          AND b.tx_hash = t.tx_hash
+          AND (
+            b.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+            OR b.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+          )
+        ORDER BY b.msg_index, b.from_addr, b.to_addr, b.denom
+        LIMIT 5
+      ) transfer_row
+    ) tr ON true
     ORDER BY t.height DESC, t.tx_index DESC
-    LIMIT ${fetch}
   `;
 }
 
-// Exact total over the address(es). An address's involved-tx set is narrow (the GIN bitmap returns
-// few rows), so this COUNT is cheap — unlike the global table count (which uses the reltuples
-// estimate in queryTxsTotal). `&&` matches the list predicate so the count agrees with the page; a
-// tx matching several of the addresses is counted once (natural dedup).
-export async function queryTxsByAddressTotal(addresses: string[]): Promise<bigint> {
+// Exact total over the same unbounded, filtered union used by the page query. UNION deduplicates a
+// transaction that matches several addresses or actor/from/to branches, keeping count/list parity.
+export async function queryTxsByAddressTotal(
+  params: Pick<TxsByAddressQueryParams, 'addresses'> & TxsByAddressFilters,
+): Promise<bigint> {
+  const { addresses, ...filters } = params;
+  const filterFragment = buildTxsByAddressFilterFragment(addresses, filters);
   const rows = await db<[{ total: bigint }]>`
+    WITH candidates AS (
+      SELECT t.height, t.tx_hash
+      FROM core.transactions t
+      WHERE t.signers && ${db.array(addresses, TEXT_ARRAY_OID)}
+        ${filterFragment}
+      UNION
+      SELECT t.height, t.tx_hash
+      FROM bank.transfers candidate_transfer
+      JOIN core.transactions t
+        ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+      WHERE candidate_transfer.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+        ${filterFragment}
+      UNION
+      SELECT t.height, t.tx_hash
+      FROM bank.transfers candidate_transfer
+      JOIN core.transactions t
+        ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+      WHERE candidate_transfer.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+        ${filterFragment}
+    )
     SELECT COUNT(*)::bigint AS total
-    FROM core.transactions
-    WHERE signers && ${db.array(addresses)}
+    FROM candidates
   `;
   return rows[0]?.total ?? BigInt(0);
 }

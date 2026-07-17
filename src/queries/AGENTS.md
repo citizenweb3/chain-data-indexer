@@ -12,7 +12,10 @@ SQL access via `postgres` v3 tagged templates. Single connection pool from `src/
 
 | File | Exports |
 |---|---|
+| `address-queries.ts` | `queryEarliestActivity` |
 | `blocks-queries.ts` | `queryBlocksList`, `queryBlocksTotal`, `queryBlocksStats`, `queryBlockByHeight` |
+| `coverage-queries.ts` | `queryCoverage` |
+| `staking-delta-queries.ts` | `queryStakingDeltas`, `queryStakingDeltaStats` |
 | `txs-queries.ts` | `queryTxsList`, `queryTxsTotal`, `queryTxsStats`, `queryTxByHash`, `queryTxMessages`, `queryTxEvents`, `queryTxRaw` |
 
 ## Pagination pattern
