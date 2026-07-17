@@ -151,26 +151,21 @@ const buildCandidateRelations = (delegator: string, valoper: string) => {
           FROM unsafe_msgexec_keys unsafe
           WHERE unsafe.height = delegation.height
             AND unsafe.tx_hash = delegation.tx_hash
-            AND (unsafe.msg_index = delegation.msg_index OR delegation.msg_index = -1)
+            AND unsafe.msg_index = delegation.msg_index
         )
     ),
     direct_message_candidates AS (
       SELECT message.height, message.tx_hash, message.msg_index, signer_transaction.tx_index,
         signer_transaction.time, message.type_url AS message_type, message.value AS message_value
       FROM direct_signer_transactions signer_transaction
-      JOIN LATERAL (
-        SELECT candidate.height, candidate.tx_hash, candidate.msg_index,
-          candidate.type_url, candidate.value
-        FROM core.messages candidate
-        WHERE candidate.height = signer_transaction.height
-          AND candidate.tx_hash = signer_transaction.tx_hash
-          AND candidate.type_url = ANY(${db.array(CREATE_VALIDATOR_TYPES, TEXT_ARRAY_OID)})
-          AND (
-            candidate.value->>'delegator_address' = ${delegator}
-            OR candidate.value->>'validator_address' = ${valoper}
-          )
-        OFFSET 0
-      ) message ON TRUE
+      JOIN core.messages message
+        ON message.height = signer_transaction.height
+        AND message.tx_hash = signer_transaction.tx_hash
+        AND message.type_url = ANY(${db.array(CREATE_VALIDATOR_TYPES, TEXT_ARRAY_OID)})
+        AND (
+          message.value->>'delegator_address' = ${delegator}
+          OR message.value->>'validator_address' = ${valoper}
+        )
       UNION ALL
       SELECT message.height, message.tx_hash, message.msg_index, transaction.tx_index,
         transaction.time, message.type_url AS message_type, message.value AS message_value

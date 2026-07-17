@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   try {
     const data = await getCoverage();
     if (!data) return errorResponse('not_found', 404);
-    return Response.json({ data }, { headers: { 'Cache-Control': 'private, max-age=300', Vary: 'x-api-key' } });
+    return Response.json({ data }, { headers: { 'Cache-Control': 'private, max-age=3600', Vary: 'x-api-key' } });
   } catch (err) {
     logger.error({ err }, 'coverage query failed');
     return errorResponse('internal_error', 500);
