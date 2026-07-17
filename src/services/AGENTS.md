@@ -14,7 +14,9 @@ Service layer between SQL queries (`src/queries/`) and HTTP route handlers (`src
 
 | File | Functions |
 |---|---|
+| `address-service.ts` | `getCoverage`, `getEarliestActivity` |
 | `blocks-service.ts` | `listBlocks`, `getBlocksStats`, `getBlockByHeight` |
+| `staking-delta-service.ts` | `listStakingDeltas` |
 | `txs-service.ts` | `listTxs`, `getTxsStats`, `getTxDetail`, `getTxRaw` |
 
 ## Caching

@@ -33,10 +33,7 @@ const BlockDetail = registry.register(
   }),
 );
 
-const BlockCursor = registry.register(
-  'BlockCursor',
-  z.object({ next_before_height: z.string() }).nullable(),
-);
+const BlockCursor = registry.register('BlockCursor', z.object({ next_before_height: z.string() }).nullable());
 
 const TxSummary = registry.register(
   'TxSummary',
@@ -48,6 +45,20 @@ const TxSummary = registry.register(
     code: z.number().int(),
     first_msg_type: z.string().nullable(),
     fee: z.object({ amount: z.string().nullable(), denom: z.string().nullable() }).nullable(),
+  }),
+);
+
+const TxByAddressSummary = registry.register(
+  'TxByAddressSummary',
+  TxSummary.extend({
+    transfers: z.array(
+      z.object({
+        from_addr: z.string(),
+        to_addr: z.string(),
+        denom: z.string(),
+        amount: z.string().describe('Transfer amount in base units'),
+      }),
+    ),
   }),
 );
 
@@ -112,6 +123,54 @@ const DelegationEvent = registry.register(
 
 const DelegationsCursor = registry.register(
   'DelegationsCursor',
+  z
+    .object({
+      next_before_height: z.string(),
+      next_before_index: z.number().int(),
+      next_before_msg_index: z.number().int(),
+    })
+    .nullable(),
+);
+
+const Coverage = registry.register(
+  'Coverage',
+  z.object({
+    earliest_height: z.string().describe('Earliest block height available in this indexer'),
+    earliest_time: z.string().datetime().describe('Timestamp of the earliest indexed block'),
+  }),
+);
+
+const EarliestActivity = registry.register(
+  'EarliestActivity',
+  z.object({
+    height: z.string().describe('Earliest indexed transaction height'),
+    tx_index: z.number().int().describe('Transaction index within the block'),
+    tx_hash: z.string(),
+    time: z.string().datetime(),
+    source: z.enum(['actor', 'transfer_out', 'transfer_in']),
+  }),
+);
+
+const StakingDelta = registry.register(
+  'StakingDelta',
+  z.object({
+    height: z.string(),
+    tx_index: z.number().int(),
+    msg_index: z.number().int(),
+    tx_hash: z.string(),
+    time: z.string().datetime(),
+    event_type: z.enum(['delegate', 'redelegate', 'unbond', 'create_validator', 'cancel_unbonding_delegation']),
+    validator_src: z.string().nullable(),
+    validator_dst: z.string().nullable(),
+    denom: z.string(),
+    amount: z.string().describe('Unsigned amount in base units'),
+    sign: z.union([z.literal(1), z.literal(-1), z.literal(0)]),
+    source: z.enum(['event', 'message']),
+  }),
+);
+
+const StakingDeltasCursor = registry.register(
+  'StakingDeltasCursor',
   z
     .object({
       next_before_height: z.string(),
@@ -196,7 +255,12 @@ registry.registerPath({
       description: 'Paginated block list',
       content: {
         'application/json': {
-          schema: z.object({ data: z.array(BlockSummary), cursor: BlockCursor, has_more: z.boolean(), total: z.string() }),
+          schema: z.object({
+            data: z.array(BlockSummary),
+            cursor: BlockCursor,
+            has_more: z.boolean(),
+            total: z.string(),
+          }),
         },
       },
     },
@@ -411,10 +475,7 @@ const GovVote = registry.register(
   z.object({
     proposal_id: z.string().describe('Governance proposal id (uint64 as decimal string)'),
     option: z.enum(['YES', 'NO', 'ABSTAIN', 'VETO', 'UNSPECIFIED']),
-    weight: z
-      .string()
-      .nullable()
-      .describe('Weighted-vote weight for the option, or null for simple votes'),
+    weight: z.string().nullable().describe('Weighted-vote weight for the option, or null for simple votes'),
     height: z.string().describe('Block height of the final vote (uint64 as decimal string)'),
     tx_hash: z.string(),
   }),
@@ -474,6 +535,27 @@ registry.registerPath({
       limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
       before_height: z.string().max(20).optional(),
       before_index: z.coerce.number().int().optional(),
+      msg_type: z.string().optional().describe('Comma-separated list of 1-5 exact Cosmos SDK message type URLs'),
+      from_time: z.string().datetime({ offset: true }).optional().describe('Inclusive lower ISO-8601 timestamp'),
+      to_time: z.string().datetime({ offset: true }).optional().describe('Inclusive upper ISO-8601 timestamp'),
+      min_amount: z
+        .string()
+        .max(80)
+        .regex(/^\d+$/)
+        .optional()
+        .describe('Inclusive minimum transfer amount in base units; requires amount_denom'),
+      max_amount: z
+        .string()
+        .max(80)
+        .regex(/^\d+$/)
+        .optional()
+        .describe('Inclusive maximum transfer amount in base units; requires amount_denom'),
+      amount_denom: z
+        .string()
+        .min(2)
+        .max(128)
+        .optional()
+        .describe('Transfer denomination; requires min_amount or max_amount'),
       count: z
         .enum(['true', 'false'])
         .default('true')
@@ -488,7 +570,92 @@ registry.registerPath({
       description: 'Paginated list of transactions involving the address',
       content: {
         'application/json': {
-          schema: z.object({ data: z.array(TxSummary), cursor: TxCursor, has_more: z.boolean(), total: z.string() }),
+          schema: z.object({
+            data: z.array(TxByAddressSummary),
+            cursor: TxCursor,
+            has_more: z.boolean(),
+            total: z.string(),
+          }),
+        },
+      },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/coverage',
+  summary: 'Get the earliest block covered by this indexer',
+  tags: ['operational'],
+  request: { headers: z.object({ 'x-api-key': z.string() }) },
+  responses: {
+    200: {
+      description: 'Indexer coverage boundary',
+      content: { 'application/json': { schema: z.object({ data: Coverage }) } },
+    },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'No indexed blocks', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/address/earliest-activity',
+  summary: "Get an account's earliest indexed actor or transfer activity",
+  tags: ['address'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    query: z.object({ address: z.string().describe('Account bech32 address') }),
+  },
+  responses: {
+    200: {
+      description: 'Earliest indexed activity plus the indexer coverage boundary',
+      content: {
+        'application/json': {
+          schema: z.object({ data: z.object({ earliest: EarliestActivity.nullable(), coverage: Coverage }) }),
+        },
+      },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'No indexed blocks', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/staking/deltas',
+  summary: "List an account's signed staking deltas",
+  description:
+    'Returns raw delegated-stake facts, not bonded governance voting power. Bonded-status transitions, slashing, and validator exchange-rate drift are not reconstructed. Ambiguous multi-inner MsgExec physical keys are excluded and counted in meta.',
+  tags: ['staking'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    query: z.object({
+      delegator: z.string().describe('Delegator account bech32 address'),
+      limit: z.coerce.number().int().min(1).max(100).default(100).optional(),
+      before_height: z.string().max(20).optional(),
+      before_index: z.coerce.number().int().min(0).optional(),
+      before_msg_index: z.coerce.number().int().min(-1).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'Paginated signed staking facts ordered by height, transaction, and message',
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.array(StakingDelta),
+            cursor: StakingDeltasCursor,
+            has_more: z.boolean(),
+            total: z.string(),
+            meta: z.object({ skipped_ambiguous_msgexec: z.string() }),
+          }),
         },
       },
     },

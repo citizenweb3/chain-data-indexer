@@ -13,6 +13,7 @@
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.4",
     "@scalar/api-reference-react": "^0.7.32",
+    "bech32": "^2.0.0",
     "next": "^16.0.0",
     "pino": "^9.7.0",
     "postgres": "^3.4.7",
