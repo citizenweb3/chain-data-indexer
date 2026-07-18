@@ -703,6 +703,74 @@ registry.registerPath({
   security: [{ apiKey: [] }],
 });
 
+const TransferEntry = registry.register(
+  'TransferEntry',
+  z.object({
+    height: z.string(),
+    tx_hash: z.string(),
+    msg_index: z.number().int(),
+    from_addr: z.string(),
+    to_addr: z.string(),
+    denom: z.string(),
+    amount: z.string().describe('Integer amount in base units'),
+    time: z.string().datetime(),
+  }),
+);
+
+const TransferCursor = registry.register(
+  'TransferCursor',
+  z
+    .object({
+      next_before_height: z.string(),
+      next_before_tx_hash: z.string(),
+      next_before_msg_index: z.number().int(),
+      next_before_from: z.string(),
+      next_before_to: z.string(),
+      next_before_denom: z.string(),
+    })
+    .nullable()
+    .describe('Full-primary-key keyset cursor; resubmit every field as the matching before_* param'),
+);
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/bank/transfers',
+  summary: 'List token transfers involving an address (newest first, keyset cursor)',
+  tags: ['bank'],
+  request: {
+    headers: z.object({ 'x-api-key': z.string() }),
+    query: z.object({
+      address: z
+        .string()
+        .describe('Comma-separated list of 1-5 bech32 addresses; returns transfers where ANY of them is a counterparty'),
+      limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
+      before_height: z.string().max(20).optional(),
+      before_tx_hash: z.string().length(64).optional(),
+      before_msg_index: z.coerce.number().int().optional(),
+      before_from: z.string().optional(),
+      before_to: z.string().optional(),
+      before_denom: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'Paginated list of transfers involving the address',
+      content: {
+        'application/json': {
+          schema: z.object({
+            data: z.array(TransferEntry),
+            cursor: TransferCursor,
+            has_more: z.boolean(),
+          }),
+        },
+      },
+    },
+    400: { description: 'Invalid params', content: { 'application/json': { schema: ErrorResponse } } },
+    401: { description: 'Unauthorized', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+  security: [{ apiKey: [] }],
+});
+
 export function generateOpenApiDocument() {
   const generator = new OpenApiGeneratorV31(registry.definitions);
   return generator.generateDocument({
