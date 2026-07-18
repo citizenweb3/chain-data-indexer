@@ -119,6 +119,7 @@ export const TxTransferSchema = z.object({
 
 export const TxByAddressSummarySchema = TxSummarySchema.extend({
   transfers: z.array(TxTransferSchema),
+  msg_types: z.array(MessageTypeSchema),
 });
 
 const FeeSchema = z.object({
