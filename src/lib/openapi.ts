@@ -51,6 +51,9 @@ const TxSummary = registry.register(
 const TxByAddressSummary = registry.register(
   'TxByAddressSummary',
   TxSummary.extend({
+    msg_types: z
+      .array(z.string())
+      .describe('Distinct transaction message type URLs in deterministic lexical order'),
     transfers: z.array(
       z.object({
         from_addr: z.string(),

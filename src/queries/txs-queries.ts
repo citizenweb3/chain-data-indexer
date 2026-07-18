@@ -21,6 +21,7 @@ export interface TxTransferRow {
 
 export interface TxByAddressSummaryRow extends TxSummaryRow {
   transfers: TxTransferRow[];
+  msg_types: string[];
 }
 
 export interface TxsByAddressFilters {
@@ -219,6 +220,12 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
       t.fee->'amount'->0->>'amount' AS fee_amount,
       t.fee->'amount'->0->>'denom'  AS fee_denom,
       m.type_url AS first_msg_type,
+      COALESCE((
+        SELECT array_agg(DISTINCT message.type_url ORDER BY message.type_url)
+        FROM core.messages message
+        WHERE message.height = t.height
+          AND message.tx_hash = t.tx_hash
+      ), ARRAY[]::text[]) AS msg_types,
       COALESCE(tr.transfers, '[]'::jsonb) AS transfers
     FROM page_candidates candidate
     JOIN core.transactions t

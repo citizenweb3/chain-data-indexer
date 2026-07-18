@@ -70,6 +70,7 @@ const toTxSummaryDto = (row: TxSummaryRow) => ({
 const toTxByAddressSummaryDto = (row: TxByAddressSummaryRow) => ({
   ...toTxSummaryDto(row),
   transfers: row.transfers,
+  msg_types: row.msg_types,
 });
 
 const buildTxsResult = <TRow extends TxSummaryRow, TDto>(
