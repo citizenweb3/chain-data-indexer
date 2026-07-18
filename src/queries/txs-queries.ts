@@ -158,6 +158,8 @@ const buildTxsByAddressFilterFragment = (addresses: string[], filters: TxsByAddr
 // idx_txs_signers_gin while outgoing/incoming transfers use idx_transfers_from/idx_transfers_to.
 // Every branch applies the same filters and cursor before its bounded top-N probe; transfer
 // branches dedupe transaction keys before LIMIT so repeated transfers cannot consume the window.
+// `height + 0` is intentional: it breaks the transaction-position index pathkey so PostgreSQL
+// cannot satisfy LIMIT by scanning ordered transactions and filtering address matches row by row.
 // The LATERAL projection returns only address-relevant transfers and applies a total order before
 // the five-row summary cap.
 export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promise<TxByAddressSummaryRow[]> {
@@ -177,31 +179,37 @@ export async function queryTxsByAddress(params: TxsByAddressQueryParams): Promis
         WHERE t.signers && ${db.array(addresses, TEXT_ARRAY_OID)}
           ${filterFragment}
           ${cursorFragment}
-        ORDER BY t.height DESC, t.tx_index DESC
+        ORDER BY t.height + 0 DESC, t.tx_index DESC
         LIMIT ${fetch}
       )
       UNION
       (
-        SELECT DISTINCT t.height, t.tx_hash, t.tx_index
-        FROM bank.transfers candidate_transfer
-        JOIN core.transactions t
-          ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
-        WHERE candidate_transfer.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
-          ${filterFragment}
-          ${cursorFragment}
-        ORDER BY t.height DESC, t.tx_index DESC
+        SELECT deduped.height, deduped.tx_hash, deduped.tx_index
+        FROM (
+          SELECT DISTINCT t.height, t.tx_hash, t.tx_index
+          FROM bank.transfers candidate_transfer
+          JOIN core.transactions t
+            ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+          WHERE candidate_transfer.from_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+            ${filterFragment}
+            ${cursorFragment}
+        ) deduped
+        ORDER BY deduped.height + 0 DESC, deduped.tx_index DESC
         LIMIT ${fetch}
       )
       UNION
       (
-        SELECT DISTINCT t.height, t.tx_hash, t.tx_index
-        FROM bank.transfers candidate_transfer
-        JOIN core.transactions t
-          ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
-        WHERE candidate_transfer.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
-          ${filterFragment}
-          ${cursorFragment}
-        ORDER BY t.height DESC, t.tx_index DESC
+        SELECT deduped.height, deduped.tx_hash, deduped.tx_index
+        FROM (
+          SELECT DISTINCT t.height, t.tx_hash, t.tx_index
+          FROM bank.transfers candidate_transfer
+          JOIN core.transactions t
+            ON t.height = candidate_transfer.height AND t.tx_hash = candidate_transfer.tx_hash
+          WHERE candidate_transfer.to_addr = ANY(${db.array(addresses, TEXT_ARRAY_OID)})
+            ${filterFragment}
+            ${cursorFragment}
+        ) deduped
+        ORDER BY deduped.height + 0 DESC, deduped.tx_index DESC
         LIMIT ${fetch}
       )
     ),
