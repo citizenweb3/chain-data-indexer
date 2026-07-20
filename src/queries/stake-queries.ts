@@ -20,7 +20,9 @@ interface DelegationTimeCursor {
 }
 
 interface DelegationAmountCursor extends DelegationTimeCursor {
-  beforeAmount: bigint;
+  // Digit string bound with an explicit ::numeric cast — a bigint param would be typed int8
+  // by the driver and overflow for amounts beyond 19 digits (column is NUMERIC(80,0)).
+  beforeAmount: string;
 }
 
 interface DelegationsQueryBase {
@@ -51,8 +53,8 @@ export async function queryDelegationsByValidator(params: DelegationsQuery): Pro
     if (params.sort === 'amount') {
       const { beforeAmount, beforeHeight, beforeIndex, beforeMsgIndex } = params.cursor;
       return isAscending
-        ? db`AND (de.amount, de.height, t.tx_index, de.msg_index) > (${beforeAmount}, ${beforeHeight}, ${beforeIndex}, ${beforeMsgIndex})`
-        : db`AND (de.amount, de.height, t.tx_index, de.msg_index) < (${beforeAmount}, ${beforeHeight}, ${beforeIndex}, ${beforeMsgIndex})`;
+        ? db`AND (de.amount, de.height, t.tx_index, de.msg_index) > (${beforeAmount}::numeric, ${beforeHeight}, ${beforeIndex}, ${beforeMsgIndex})`
+        : db`AND (de.amount, de.height, t.tx_index, de.msg_index) < (${beforeAmount}::numeric, ${beforeHeight}, ${beforeIndex}, ${beforeMsgIndex})`;
     }
 
     const { beforeHeight, beforeIndex, beforeMsgIndex } = params.cursor;

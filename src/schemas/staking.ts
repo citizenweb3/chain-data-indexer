@@ -3,12 +3,13 @@ import { z } from 'zod';
 import { AccountAddressSchema, ValoperAddressSchema } from '@/schemas/common';
 import { BigIntStringSchema } from '@/schemas/pagination';
 
+// Kept as a digit string: the driver types BigInt params as int8, which caps at 19 digits,
+// while amount is NUMERIC(80,0). The query casts the text explicitly.
 const DelegationAmountCursorSchema = z
   .string()
   .min(1)
   .max(80)
-  .regex(/^\d+$/)
-  .transform((value) => BigInt(value));
+  .regex(/^\d+$/);
 
 export const DelegationsQuerySchema = z
   .object({
