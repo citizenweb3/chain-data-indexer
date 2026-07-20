@@ -1,4 +1,4 @@
-import { queryDelegationsByValidator } from '@/queries/stake-queries';
+import { queryDelegationsByValidator, type DelegationsQuery } from '@/queries/stake-queries';
 
 export interface DelegationEventDto {
   delegator_address: string;
@@ -15,6 +15,7 @@ export interface DelegationsCursor {
   next_before_height: string;
   next_before_index: number;
   next_before_msg_index: number;
+  next_before_amount?: string;
 }
 
 export interface DelegationsResult {
@@ -24,13 +25,7 @@ export interface DelegationsResult {
   total: '0';
 }
 
-export async function listDelegations(params: {
-  validator: string;
-  limit: number;
-  beforeHeight?: bigint;
-  beforeIndex?: number;
-  beforeMsgIndex?: number;
-}): Promise<DelegationsResult> {
+export async function listDelegations(params: DelegationsQuery): Promise<DelegationsResult> {
   const rows = await queryDelegationsByValidator(params);
   const hasMore = rows.length > params.limit;
   const page = hasMore ? rows.slice(0, params.limit) : rows;
@@ -47,14 +42,15 @@ export async function listDelegations(params: {
   }));
 
   const last = page.at(-1);
-  const cursor =
-    hasMore && last !== undefined
-      ? {
-          next_before_height: last.height.toString(),
-          next_before_index: last.tx_index,
-          next_before_msg_index: last.msg_index,
-        }
-      : null;
+  let cursor: DelegationsCursor | null = null;
+  if (hasMore && last !== undefined) {
+    const timeCursor = {
+      next_before_height: last.height.toString(),
+      next_before_index: last.tx_index,
+      next_before_msg_index: last.msg_index,
+    };
+    cursor = params.sort === 'amount' ? { ...timeCursor, next_before_amount: last.amount } : timeCursor;
+  }
 
   return { data, cursor, has_more: hasMore, total: '0' };
 }
