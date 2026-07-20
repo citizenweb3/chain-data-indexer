@@ -51,9 +51,7 @@ const TxSummary = registry.register(
 const TxByAddressSummary = registry.register(
   'TxByAddressSummary',
   TxSummary.extend({
-    msg_types: z
-      .array(z.string())
-      .describe('Distinct transaction message type URLs in deterministic lexical order'),
+    msg_types: z.array(z.string()).describe('Distinct transaction message type URLs in deterministic lexical order'),
     transfers: z.array(
       z.object({
         from_addr: z.string(),
@@ -131,6 +129,12 @@ const DelegationsCursor = registry.register(
       next_before_height: z.string(),
       next_before_index: z.number().int(),
       next_before_msg_index: z.number().int(),
+      next_before_amount: z
+        .string()
+        .max(80)
+        .regex(/^\d+$/)
+        .optional()
+        .describe('Present only when sorting by amount; raw base-unit amount as a decimal string'),
     })
     .nullable(),
 );
@@ -556,14 +560,32 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/staking/delegations',
-  summary: 'List successful delegate events for a validator operator address',
+  summary: 'List successful delegate events for a validator operator address with keyset sorting',
   tags: ['staking'],
   request: {
     headers: z.object({ 'x-api-key': z.string() }),
     query: z.object({
       validator: z.string().describe('Validator operator bech32 address, e.g. cosmosvaloper1...'),
       limit: z.coerce.number().int().min(1).max(100).default(20).optional(),
-      before_height: z.string().max(20).optional(),
+      sort: z.enum(['time', 'amount']).default('time').optional().describe('Primary keyset sort'),
+      order: z
+        .enum(['asc', 'desc'])
+        .default('desc')
+        .optional()
+        .describe(
+          'Sort direction. Cursor fields always continue strictly after the supplied row; ascending mode uses greater-than despite the before_ names.',
+        ),
+      before_amount: z
+        .string()
+        .max(80)
+        .regex(/^\d+$/)
+        .optional()
+        .describe('Amount cursor component; required with the three position fields when sort=amount'),
+      before_height: z
+        .string()
+        .max(20)
+        .optional()
+        .describe('Cursor height; continues strictly after the cursor in the selected order'),
       before_index: z.coerce.number().int().min(0).optional(),
       before_msg_index: z.coerce.number().int().min(-1).optional(),
     }),
@@ -742,7 +764,9 @@ registry.registerPath({
     query: z.object({
       address: z
         .string()
-        .describe('Comma-separated list of 1-5 bech32 addresses; returns transfers where ANY of them is a counterparty'),
+        .describe(
+          'Comma-separated list of 1-5 bech32 addresses; returns transfers where ANY of them is a counterparty',
+        ),
       limit: z.coerce.number().int().min(1).max(100).default(50).optional(),
       before_height: z.string().max(20).optional(),
       before_tx_hash: z.string().length(64).optional(),
