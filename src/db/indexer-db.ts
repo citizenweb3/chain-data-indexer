@@ -9,5 +9,9 @@ export const db = postgres(env.DATABASE_URL, {
   types: {
     bigint: postgres.BigInt,
   },
+  connection: {
+    // postgres.js omits falsy StartupMessage values, so this must stay a string rather than false.
+    jit: 'off',
+  },
   prepare: true,
 });
