@@ -16,16 +16,28 @@ export async function GET(req: Request) {
     return errorResponse('invalid_params', 400, parsed.error.flatten().fieldErrors);
   }
 
-  const { validator, limit, before_height, before_index, before_msg_index } = parsed.data;
+  const { validator, limit, sort, order, before_amount, before_height, before_index, before_msg_index } = parsed.data;
+  const timeCursor =
+    before_height !== undefined && before_index !== undefined && before_msg_index !== undefined
+      ? {
+          beforeHeight: before_height,
+          beforeIndex: before_index,
+          beforeMsgIndex: before_msg_index,
+        }
+      : undefined;
 
   try {
-    const result = await listDelegations({
-      validator,
-      limit,
-      beforeHeight: before_height,
-      beforeIndex: before_index,
-      beforeMsgIndex: before_msg_index,
-    });
+    const result =
+      sort === 'amount'
+        ? await listDelegations({
+            validator,
+            limit,
+            sort,
+            order,
+            cursor:
+              timeCursor && before_amount !== undefined ? { ...timeCursor, beforeAmount: before_amount } : undefined,
+          })
+        : await listDelegations({ validator, limit, sort, order, cursor: timeCursor });
     return Response.json(result, {
       headers: { 'Cache-Control': 'private, max-age=6', Vary: 'x-api-key' },
     });

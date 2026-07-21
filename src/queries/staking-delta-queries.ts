@@ -54,6 +54,8 @@ const RELEVANT_INNER_TYPES = [
   ...CANCEL_UNBONDING_TYPES,
 ];
 
+// Filter MsgExec payloads before joining transactions. The post-join materialization is shared by
+// rows and stats so failed transactions cannot inflate skipped_ambiguous_msgexec.
 const buildCandidateRelations = (delegator: string, valoper: string) => {
   const delegatorProbe = { msgs: [{ delegator_address: delegator }] };
   const valoperProbe = { msgs: [{ validator_address: valoper }] };
@@ -65,13 +67,10 @@ const buildCandidateRelations = (delegator: string, valoper: string) => {
       WHERE code = 0
         AND signers && ${db.array([delegator, valoper], TEXT_ARRAY_OID)}
     ),
-    authz_messages AS (
-      SELECT m.height, m.tx_hash, m.msg_index, t.tx_index, t.time, m.value
+    authz_messages AS MATERIALIZED (
+      SELECT m.height, m.tx_hash, m.msg_index, m.value
       FROM core.messages m
-      JOIN core.transactions t
-        ON t.height = m.height AND t.tx_hash = m.tx_hash
-      WHERE t.code = 0
-        AND m.type_url = ANY(${db.array(AUTHZ_EXEC_TYPES, TEXT_ARRAY_OID)})
+      WHERE m.type_url = ANY(${db.array(AUTHZ_EXEC_TYPES, TEXT_ARRAY_OID)})
         AND jsonb_typeof(m.value->'msgs') = 'array'
         AND (
           m.value @> ${db.json(delegatorProbe)}
@@ -83,8 +82,6 @@ const buildCandidateRelations = (delegator: string, valoper: string) => {
         authz.height,
         authz.tx_hash,
         authz.msg_index,
-        authz.tx_index,
-        authz.time,
         inner_message.value AS message_value,
         COALESCE(inner_message.value->>'@type', inner_message.value->>'type_url') AS message_type
       FROM authz_messages authz
@@ -100,9 +97,24 @@ const buildCandidateRelations = (delegator: string, valoper: string) => {
           )
         )
     ),
+    authz_ready AS MATERIALIZED (
+      SELECT
+        inner_message.height,
+        inner_message.tx_hash,
+        inner_message.msg_index,
+        transaction.tx_index,
+        transaction.time,
+        inner_message.message_value,
+        inner_message.message_type
+      FROM authz_inner inner_message
+      JOIN core.transactions transaction
+        ON transaction.height = inner_message.height
+        AND transaction.tx_hash = inner_message.tx_hash
+        AND transaction.code = 0
+    ),
     unsafe_msgexec_keys AS (
       SELECT height, tx_hash, msg_index
-      FROM authz_inner
+      FROM authz_ready
       GROUP BY height, tx_hash, msg_index
       HAVING COUNT(*) > 1
     ),
@@ -184,7 +196,7 @@ const buildCandidateRelations = (delegator: string, valoper: string) => {
       SELECT inner_message.height, inner_message.tx_hash, inner_message.msg_index,
         inner_message.tx_index, inner_message.time, inner_message.message_type,
         inner_message.message_value
-      FROM authz_inner inner_message
+      FROM authz_ready inner_message
       WHERE inner_message.message_type =
         ANY(${db.array([...CREATE_VALIDATOR_TYPES, ...CANCEL_UNBONDING_TYPES], TEXT_ARRAY_OID)})
         AND NOT EXISTS (
