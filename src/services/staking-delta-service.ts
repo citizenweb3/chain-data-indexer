@@ -1,5 +1,3 @@
-import { CHAIN_ACCOUNT_PREFIX } from '@/chain-config';
-import { toValoperAddress } from '@/lib/cosmos-address';
 import {
   queryStakingDeltas,
   queryStakingDeltaStats,
@@ -22,13 +20,10 @@ const toDto = (row: StakingDeltaRow) => ({
   source: row.source,
 });
 
-type ListStakingDeltasParams = Omit<StakingDeltaQueryParams, 'valoper'>;
-
-export const listStakingDeltas = async (params: ListStakingDeltasParams) => {
-  const valoper = toValoperAddress(params.delegator, CHAIN_ACCOUNT_PREFIX);
+export const listStakingDeltas = async (params: StakingDeltaQueryParams) => {
   const [rows, stats] = await Promise.all([
-    queryStakingDeltas({ ...params, valoper }),
-    queryStakingDeltaStats(params.delegator, valoper),
+    queryStakingDeltas(params),
+    queryStakingDeltaStats(params.delegator),
   ]);
   const hasMore = rows.length > params.limit;
   const pageRows = hasMore ? rows.slice(0, params.limit) : rows;
