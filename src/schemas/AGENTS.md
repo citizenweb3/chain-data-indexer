@@ -7,6 +7,7 @@ Zod 4 contract-first schemas. Every public API request/response goes through one
 | File | Purpose |
 |------|---------|
 | `common.ts` | Shared primitives — `DirectionEnum`, `PacketDirectionEnum`, `PeriodEnum`, `PacketStatusEnum`, `PortSchema`, `ChannelSchema`, `BigIntStringSchema`, `IsoDateCoerceSchema`, `IsoDateStringSchema`, `DenomSchema`, `ErrorResponseSchema` |
+| `ibc-aggregation.ts` | Shared aggregate coverage quality/counts and source freshness contracts |
 | `stats.ts` | `/api/v1/stats` query + response |
 | `channels.ts` | `/api/v1/channels` query + response (`ChannelsSortEnum`, `SortOrderEnum`) |
 | `assets.ts` | `/api/v1/assets` query + response (`AssetsSortEnum`) |

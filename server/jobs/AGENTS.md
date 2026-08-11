@@ -13,7 +13,7 @@ Each file exports a single `run<Job>()` function. The dispatcher in `../task-wor
 
 ## `sync-ibc-transfers.ts`
 
-Watermark-based incremental sync. **The watermark is `ibc_packets` itself, not `SyncCursor`.** The job reads `MAX((eventHeight, sequence, channelIdSrc, portIdSrc))` from the mirror at the start of each run via `readLatestPacket()` (Prisma `findFirst` with the matching `orderBy`). `SyncCursor` exists in the schema but `sync-ibc-transfers` neither reads nor writes it — that table is reserved for future jobs that need a watermark divorced from a content table.
+Watermark-based incremental sync. The content watermark is `ibc_packets`: the job reads `MAX((eventHeight, sequence, channelIdSrc, portIdSrc))` from the mirror at the start of each run via `readLatestPacket()` (Prisma `findFirst` with the matching `orderBy`). `SyncCursor` is written after the packet mirror loop and before channel discovery as an observability heartbeat and a copy of the latest tuple; it does not drive pagination or the stopping rule.
 
 ### Algorithm
 
@@ -33,6 +33,11 @@ fetch upstream /ibc/transfers newest-first, paginate via 4-tuple cursor:
     if windowComplete && tuple <= latest: stop       // caught up to the head of the mirror
     upsert by PK (channelIdSrc, portIdSrc, sequence)
   if !has_more or no cursor:           stop
+
+after the packet mirror loop:
+  write SyncCursor heartbeat + latest tuple
+
+insert newly discovered channel placeholders
 ```
 
 Two stopping conditions matter:

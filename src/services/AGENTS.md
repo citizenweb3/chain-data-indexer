@@ -12,6 +12,8 @@ DB-touching read services for the API + RSC pages. Pure functions: take typed pa
 | `timeseries-service.ts` | `/api/v1/timeseries` + chart.js series on dashboard / channel detail |
 | `transfers-service.ts` | `/api/v1/transfers` + `/transfers/[port]/[channel]/[sequence]` |
 | `health-service.ts` | `/api/v1/health` + dashboard last-sync card (`getSyncWatermark` — MAX `event_height` / `event_time` from `ibc_packets`) |
+| `ibc-aggregation-sql.ts` | Canonical delivered lifecycle, resolved-denom, and priced-packet SQL fragments |
+| `ibc-aggregation-coverage.ts` | Pure coverage merging, invariant checks, and public DTO conversion |
 
 ## Imports
 
