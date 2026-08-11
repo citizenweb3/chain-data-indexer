@@ -1,10 +1,7 @@
 import { db } from '@/db';
 import logger from '@/logger';
 import { fetchUpstream } from '../tools/upstream-client';
-import type {
-  IbcTransferDto,
-  IbcTransfersListResponse,
-} from '../tools/upstream-types';
+import type { IbcTransferDto, IbcTransfersListResponse } from '../tools/upstream-types';
 
 const log = logger('sync-ibc-transfers');
 
@@ -19,10 +16,7 @@ type PacketCursor = {
   port: string;
 };
 
-const compareCursor = (
-  candidate: PacketCursor,
-  baseline: PacketCursor,
-): number => {
+const compareCursor = (candidate: PacketCursor, baseline: PacketCursor): number => {
   if (candidate.eventHeight !== baseline.eventHeight) {
     return candidate.eventHeight < baseline.eventHeight ? -1 : 1;
   }
@@ -148,10 +142,7 @@ const upsertPacket = async (chain: string, dto: IbcTransferDto): Promise<boolean
   return true;
 };
 
-const writeCursor = async (
-  chain: string,
-  latest: PacketCursor | null,
-): Promise<void> => {
+const writeCursor = async (chain: string, latest: PacketCursor | null): Promise<void> => {
   await db.syncCursor.upsert({
     where: { chain_key: { chain, key: CURSOR_KEY } },
     create: {
@@ -178,8 +169,7 @@ const syncOneChain = async (chain: string): Promise<void> => {
   const backfillCutoff = new Date(Date.now() - BACKFILL_DAYS * 24 * 60 * 60 * 1000);
   const latest = await readLatestPacket(chain);
   const earliestEventTime = await readEarliestEventTime(chain);
-  const windowComplete =
-    earliestEventTime !== null && earliestEventTime <= backfillCutoff;
+  const windowComplete = earliestEventTime !== null && earliestEventTime <= backfillCutoff;
 
   log.logInfo(`[${chain}] sync-ibc-transfers: state`, {
     hasLatest: latest !== null,
@@ -249,10 +239,8 @@ const syncOneChain = async (chain: string): Promise<void> => {
       if (inserted) newCount++;
       else updatedCount++;
 
-      const hubChannel =
-        dto.direction === 'incoming' ? dto.channel_id_dst : dto.channel_id_src;
-      const hubPort =
-        dto.direction === 'incoming' ? dto.port_id_dst : dto.port_id_src;
+      const hubChannel = dto.direction === 'incoming' ? dto.channel_id_dst : dto.channel_id_src;
+      const hubPort = dto.direction === 'incoming' ? dto.port_id_dst : dto.port_id_src;
       if (hubChannel && hubPort) {
         discoveredChannels.add(`${hubChannel}|${hubPort}`);
       }
@@ -266,8 +254,6 @@ const syncOneChain = async (chain: string): Promise<void> => {
     beforeChannel = response.cursor.next_before_channel;
     beforePort = response.cursor.next_before_port;
   }
-
-  await writeCursor(chain, await readLatestPacket(chain));
 
   let discoveredInserted = 0;
   if (discoveredChannels.size > 0) {
@@ -287,6 +273,8 @@ const syncOneChain = async (chain: string): Promise<void> => {
     });
     discoveredInserted = result.count;
   }
+
+  await writeCursor(chain, await readLatestPacket(chain));
 
   const elapsedMs = Date.now() - startedAt;
   log.logInfo(`[${chain}] sync-ibc-transfers finished`, {

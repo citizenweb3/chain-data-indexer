@@ -6,10 +6,11 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 
 | File | Purpose |
 |------|---------|
-| `schema.prisma` | 8 models — `Chain`, `IbcPacket`, `Asset`, `Price`, `PriceHistory`, `IbcDailyStats`, `IbcChannel`, `SyncCursor` |
+| `schema.prisma` | 9 models — `Chain`, `IbcPacket`, `Asset`, `Price`, `PriceHistory`, `IbcDailyStats`, `IbcAggregateState`, `IbcChannel`, `SyncCursor` |
 | `migrations/20260515075735_init/migration.sql` | Initial DDL — includes hand-patched `NULLS NOT DISTINCT` index |
 | `migrations/20260517120000_add_ibc_channels/migration.sql` | `ibc_channels` lookup table for counterparty chain metadata |
 | `migrations/20260521073429_add_chain_multitenancy/migration.sql` | `chains` registry + `chain` dimension on `ibc_packets`, `ibc_daily_stats`, `ibc_channels`, `sync_cursors` |
+| `migrations/20260811053000_add_ibc_aggregate_coverage/migration.sql` | Nullable daily coverage counters + per-chain aggregate correction state |
 | `seed.ts` | Idempotent upsert of 2 chains, ~57 assets, and 80 IBC channels (see `CHAINS_SEED` + `ASSETS` + `IBC_CHANNELS` arrays) |
 
 `prisma.config.ts` lives in the repo root, **not here**. Prisma 7 mandates it (replaces `datasource.url` in the schema). It loads `DATABASE_URL` via `dotenv/config` and wires the `prisma/seed.ts` runner. Touch it if migration paths or seed command change.
@@ -26,7 +27,9 @@ Prisma schema, migrations, and seed for the meta-indexer Postgres.
 
 `PriceHistory` — daily closing prices from CoinGecko `market_chart`. PK `(assetId, date)`. Upsert by compound PK.
 
-`IbcDailyStats` — pre-aggregated rollup for the API stats/channels/timeseries services. Pre-cube of 4 `GROUPING SETS` levels; see `server/jobs/AGENTS.md`. Schema uses a **synthetic `id` PK + a separate `@@unique(...)` on the dim tuple** — read the rationale below.
+`IbcDailyStats` — pre-aggregated rollup for the API stats/channels/timeseries services. Pre-cube of 4 `GROUPING SETS` levels; see `server/jobs/AGENTS.md`. Coverage counters are nullable because rows older than packet retention cannot be recomputed and remain explicitly legacy. Schema uses a **synthetic `id` PK + a separate `@@unique(...)` on the dim tuple** — read the rationale below.
+
+`IbcAggregateState` — one row per chain recording the aggregate contract version, earliest corrected daily date, and last successful recompute heartbeat. It is updated atomically with daily slice replacement; do not encode this state into packet sync cursor fields.
 
 `IbcChannel` — per-chain lookup of IBC channels to their counterparty chain (chain-registry mainnet). PK `(chain, channelIdSrc, portIdSrc)`. Seeded from `prisma/seed.ts` `IBC_CHANNELS` array, which is generated from `github.com/cosmos/chain-registry` `_IBC/*.json` for every supported chain — do **not** hand-edit individual rows. To regenerate the array, sparse-clone the registry, run the jq pipeline in the working notes, and replace the array verbatim. `counterpartyChainName` is the registry slug (lowercase, no separators); UI is responsible for display casing.
 
