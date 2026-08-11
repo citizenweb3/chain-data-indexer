@@ -1,6 +1,6 @@
 import logger from '@/logger';
 import { errorResponse, okJson, parseSearchParams } from '@/lib/api-helpers';
-import { TimeseriesQuerySchema } from '@/schemas/timeseries';
+import { TimeseriesCombinedQuerySchema } from '@/schemas/timeseries';
 import { getTimeseries, getTimeseriesHourly } from '@/services/timeseries-service';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 const log = logger('api/timeseries');
 
 export const GET = async (request: Request): Promise<Response> => {
-  const parsed = parseSearchParams(TimeseriesQuerySchema, request);
+  const parsed = parseSearchParams(TimeseriesCombinedQuerySchema, request);
   if (!parsed.ok) return parsed.response;
 
   try {

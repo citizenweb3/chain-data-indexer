@@ -1,40 +1,89 @@
 import { Prisma } from '@prisma/client';
 
 import { db } from '@/db';
-import type { ChainName } from '@/lib/chains';
+import { CHAIN_NAMES, getChainMetadata, type ChainMetadata, type ChainName } from '@/lib/chains';
+import type {
+  IbcAggregationFreshness,
+  IbcCoverageQuality,
+  IbcCoverageStatus,
+} from '@/schemas/ibc-aggregation';
+import {
+  mergeIbcCoverageRows,
+  toIbcCoverageStatus,
+  type IbcCoverageCountRow,
+} from '@/services/ibc-aggregation-coverage';
+import {
+  DELIVERED_PACKET_SQL,
+  PRICED_PACKET_SQL,
+  RESOLVED_PACKET_DENOM_SQL,
+} from '@/services/ibc-aggregation-sql';
+import {
+  classifyIbcDailyRange,
+  combineIbcCoverageQualities,
+  getIbcAggregationContext,
+  type IbcSourceState,
+} from '@/services/ibc-aggregation-state';
 import { formatNative } from '@/utils/format-amount';
 
 export type StatsDirection = 'outgoing' | 'incoming' | 'both';
 
 export type StatsWindowCounts = { '24h': number; '7d': number; '30d': number };
 export type StatsWindowAmounts = { '24h': string; '7d': string; '30d': string };
+export type StatsWindowCoverage = {
+  '24h': IbcCoverageStatus;
+  '7d': IbcCoverageStatus;
+  '30d': IbcCoverageStatus;
+};
 
-export type StatsResult = {
+type StatsBaseResult = IbcAggregationFreshness & {
   transfers_count: StatsWindowCounts;
   volume_atom: StatsWindowAmounts;
   volume_usd: StatsWindowAmounts;
+  coverage: StatsWindowCoverage;
   as_of: string;
-  per_chain?: StatsPerChainRow[];
 };
 
-export type StatsPerChainRow = {
+type StatsNativeResult = {
+  volume_native: StatsWindowAmounts;
+  native_denom: string;
+  native_symbol: string;
+  native_decimals: number;
+};
+
+export type StatsPerChainRow = StatsNativeResult & {
   chain: ChainName;
   transfers_count: StatsWindowCounts;
   volume_atom: StatsWindowAmounts;
   volume_usd: StatsWindowAmounts;
+  coverage: StatsWindowCoverage;
 };
+
+export type StatsCombinedResult = StatsBaseResult & {
+  per_chain?: StatsPerChainRow[];
+};
+
+export type StatsChainResult = StatsBaseResult &
+  StatsNativeResult & {
+    per_chain?: never;
+  };
+export type StatsResult = StatsCombinedResult | StatsChainResult;
 
 const ATOM_DENOM = 'uatom';
 const ATOM_DECIMALS = 6;
 const MS_PER_DAY = 86_400_000;
 
 const todayUtcMidnight = (now: Date): Date => {
-  const d = new Date(now);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
+  const date = new Date(now);
+  date.setUTCHours(0, 0, 0, 0);
+  return date;
 };
 
-const directionFilter = (direction: StatsDirection): Prisma.Sql =>
+const packetDirectionFilter = (direction: StatsDirection): Prisma.Sql =>
+  direction === 'both'
+    ? Prisma.sql`p.direction IN ('outgoing','incoming')`
+    : Prisma.sql`p.direction = ${direction}`;
+
+const dailyDirectionFilter = (direction: StatsDirection): Prisma.Sql =>
   direction === 'both'
     ? Prisma.sql`direction IN ('outgoing','incoming')`
     : Prisma.sql`direction = ${direction}`;
@@ -42,18 +91,31 @@ const directionFilter = (direction: StatsDirection): Prisma.Sql =>
 const chainFilterSql = (chain: ChainName | null): Prisma.Sql =>
   chain ? Prisma.sql`AND chain = ${chain}` : Prisma.empty;
 
-type PacketWindowRow = {
+type AggregateWindowRow = IbcCoverageCountRow & {
   transfers_count: bigint;
+  amount_atom: Prisma.Decimal | null;
   amount_native: Prisma.Decimal | null;
   amount_usd: Prisma.Decimal | null;
 };
+
+const emptyAggregateWindow = (): AggregateWindowRow => ({
+  transfers_count: BigInt(0),
+  amount_atom: null,
+  amount_native: null,
+  amount_usd: null,
+  eligible_packets: BigInt(0),
+  priced_packets: BigInt(0),
+  unpriced_packets: BigInt(0),
+  unpriced_denoms: [],
+});
 
 const queryPacketsWindow = async (
   direction: StatsDirection,
   fromTime: Date,
   chain: ChainName | null,
-): Promise<PacketWindowRow> => {
-  const rows = await db.$queryRaw<PacketWindowRow[]>(Prisma.sql`
+  nativeDenom: string,
+): Promise<AggregateWindowRow> => {
+  const rows = await db.$queryRaw<AggregateWindowRow[]>(Prisma.sql`
     WITH daily_spot_prices AS (
       SELECT DISTINCT ON (asset_id, date)
         asset_id,
@@ -65,40 +127,37 @@ const queryPacketsWindow = async (
     SELECT
       COUNT(*)::bigint AS transfers_count,
       COALESCE(SUM(
-        CASE WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM} THEN p.amount END
+        CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${ATOM_DENOM} THEN p.amount END
+      ), 0) AS amount_atom,
+      COALESCE(SUM(
+        CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${nativeDenom} THEN p.amount END
       ), 0) AS amount_native,
       COALESCE(SUM(
-        CASE
-          WHEN a.id IS NOT NULL
-            AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
-          THEN (p.amount / POWER(10::numeric, a.decimals))
-            * COALESCE(ph.usd, dsp.usd)
+        CASE WHEN ${PRICED_PACKET_SQL}
+          THEN (p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)
         END
-      ), 0) AS amount_usd
+      ), 0) AS amount_usd,
+      COUNT(*)::bigint AS eligible_packets,
+      COUNT(*) FILTER (WHERE ${PRICED_PACKET_SQL})::bigint AS priced_packets,
+      COUNT(*) FILTER (WHERE NOT ${PRICED_PACKET_SQL})::bigint AS unpriced_packets,
+      COALESCE(
+        ARRAY_AGG(DISTINCT ${RESOLVED_PACKET_DENOM_SQL})
+          FILTER (WHERE NOT ${PRICED_PACKET_SQL}),
+        ARRAY[]::text[]
+      ) AS unpriced_denoms
     FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
+    LEFT JOIN assets a ON a.native_denom = ${RESOLVED_PACKET_DENOM_SQL}
     LEFT JOIN price_history ph ON ph.asset_id = a.id
       AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
     LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
       AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${fromTime}
-      AND ${directionFilter(direction)}
+      AND ${packetDirectionFilter(direction)}
       ${chain ? Prisma.sql`AND p.chain = ${chain}` : Prisma.empty}
+      AND ${DELIVERED_PACKET_SQL}
   `);
-  return (
-    rows[0] ?? {
-      transfers_count: BigInt(0),
-      amount_native: null,
-      amount_usd: null,
-    }
-  );
-};
-
-type DailyWindowRow = {
-  transfers_count: bigint;
-  amount_native: Prisma.Decimal | null;
-  amount_usd: Prisma.Decimal | null;
+  return rows[0] ?? emptyAggregateWindow();
 };
 
 const queryDailyWindow = async (
@@ -106,160 +165,210 @@ const queryDailyWindow = async (
   fromDate: Date,
   toDateExclusive: Date,
   chain: ChainName | null,
-): Promise<DailyWindowRow> => {
-  const countRows = await db.$queryRaw<{ transfers_count: bigint }[]>(Prisma.sql`
-    SELECT COALESCE(SUM(transfers_count), 0)::bigint AS transfers_count
-    FROM ibc_daily_stats
-    WHERE channel_id_src IS NULL
-      AND denom IS NULL
-      AND date >= ${fromDate}
-      AND date < ${toDateExclusive}
-      AND ${directionFilter(direction)}
-      ${chainFilterSql(chain)}
-  `);
-
-  const volRows = await db.$queryRaw<{
-    amount_native: Prisma.Decimal | null;
-    amount_usd: Prisma.Decimal | null;
-  }[]>(Prisma.sql`
-    SELECT
-      COALESCE(SUM(amount_native) FILTER (WHERE denom = ${ATOM_DENOM}), 0) AS amount_native,
-      COALESCE(SUM(amount_usd) FILTER (WHERE denom IS NOT NULL), 0) AS amount_usd
-    FROM ibc_daily_stats
-    WHERE channel_id_src IS NULL
-      AND denom IS NOT NULL
-      AND date >= ${fromDate}
-      AND date < ${toDateExclusive}
-      AND ${directionFilter(direction)}
-      ${chainFilterSql(chain)}
-  `);
-
-  return {
-    transfers_count: countRows[0]?.transfers_count ?? BigInt(0),
-    amount_native: volRows[0]?.amount_native ?? null,
-    amount_usd: volRows[0]?.amount_usd ?? null,
-  };
-};
-
-type ChainBreakdownRow = {
-  chain: string;
-  transfers_count: bigint;
-  amount_native: Prisma.Decimal | null;
-  amount_usd: Prisma.Decimal | null;
-};
-
-const queryPacketsWindowByChain = async (
-  direction: StatsDirection,
-  fromTime: Date,
-): Promise<ChainBreakdownRow[]> => {
-  return db.$queryRaw<ChainBreakdownRow[]>(Prisma.sql`
-    WITH daily_spot_prices AS (
-      SELECT DISTINCT ON (asset_id, date)
-        asset_id,
-        (created_at AT TIME ZONE 'UTC')::date AS date,
-        usd
-      FROM prices
-      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
+  nativeDenom: string,
+): Promise<AggregateWindowRow> => {
+  const rows = await db.$queryRaw<AggregateWindowRow[]>(Prisma.sql`
+    WITH count_rows AS (
+      SELECT *
+      FROM ibc_daily_stats
+      WHERE channel_id_src IS NULL
+        AND denom IS NULL
+        AND date >= ${fromDate}
+        AND date < ${toDateExclusive}
+        AND ${dailyDirectionFilter(direction)}
+        ${chainFilterSql(chain)}
+    ),
+    volume_rows AS (
+      SELECT *
+      FROM ibc_daily_stats
+      WHERE channel_id_src IS NULL
+        AND denom IS NOT NULL
+        AND date >= ${fromDate}
+        AND date < ${toDateExclusive}
+        AND ${dailyDirectionFilter(direction)}
+        ${chainFilterSql(chain)}
     )
     SELECT
-      p.chain AS chain,
-      COUNT(*)::bigint AS transfers_count,
-      COALESCE(SUM(
-        CASE WHEN resolve_base_denom(p.denom) = ${ATOM_DENOM} THEN p.amount END
-      ), 0) AS amount_native,
-      COALESCE(SUM(
-        CASE
-          WHEN a.id IS NOT NULL
-            AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
-          THEN (p.amount / POWER(10::numeric, a.decimals))
-            * COALESCE(ph.usd, dsp.usd)
-        END
-      ), 0) AS amount_usd
-    FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
-    LEFT JOIN price_history ph ON ph.asset_id = a.id
-      AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
-    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
-      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
-    WHERE p.event_time IS NOT NULL
-      AND p.event_time >= ${fromTime}
-      AND ${directionFilter(direction)}
-    GROUP BY p.chain
+      COALESCE((SELECT SUM(transfers_count) FROM count_rows), 0)::bigint
+        AS transfers_count,
+      COALESCE((SELECT SUM(amount_native) FROM volume_rows WHERE denom = ${ATOM_DENOM}), 0)
+        AS amount_atom,
+      COALESCE((SELECT SUM(amount_native) FROM volume_rows WHERE denom = ${nativeDenom}), 0)
+        AS amount_native,
+      COALESCE((SELECT SUM(amount_usd) FROM volume_rows), 0)
+        AS amount_usd,
+      COALESCE((SELECT SUM(eligible_packets) FROM count_rows), 0)::bigint
+        AS eligible_packets,
+      COALESCE((SELECT SUM(priced_packets) FROM count_rows), 0)::bigint
+        AS priced_packets,
+      COALESCE((SELECT SUM(unpriced_packets) FROM count_rows), 0)::bigint
+        AS unpriced_packets,
+      COALESCE(
+        ARRAY(
+          SELECT DISTINCT unpriced_denom
+          FROM count_rows
+          CROSS JOIN LATERAL UNNEST(unpriced_denoms) AS unpriced_denom
+          ORDER BY unpriced_denom
+        ),
+        ARRAY[]::text[]
+      ) AS unpriced_denoms
   `);
-};
-
-const queryDailyWindowByChain = async (
-  direction: StatsDirection,
-  fromDate: Date,
-  toDateExclusive: Date,
-): Promise<ChainBreakdownRow[]> => {
-  const countRows = await db.$queryRaw<{ chain: string; transfers_count: bigint }[]>(Prisma.sql`
-    SELECT chain, COALESCE(SUM(transfers_count), 0)::bigint AS transfers_count
-    FROM ibc_daily_stats
-    WHERE channel_id_src IS NULL
-      AND denom IS NULL
-      AND date >= ${fromDate}
-      AND date < ${toDateExclusive}
-      AND ${directionFilter(direction)}
-    GROUP BY chain
-  `);
-
-  const volRows = await db.$queryRaw<{
-    chain: string;
-    amount_native: Prisma.Decimal | null;
-    amount_usd: Prisma.Decimal | null;
-  }[]>(Prisma.sql`
-    SELECT
-      chain,
-      COALESCE(SUM(amount_native) FILTER (WHERE denom = ${ATOM_DENOM}), 0) AS amount_native,
-      COALESCE(SUM(amount_usd) FILTER (WHERE denom IS NOT NULL), 0) AS amount_usd
-    FROM ibc_daily_stats
-    WHERE channel_id_src IS NULL
-      AND denom IS NOT NULL
-      AND date >= ${fromDate}
-      AND date < ${toDateExclusive}
-      AND ${directionFilter(direction)}
-    GROUP BY chain
-  `);
-
-  const byChain = new Map<string, ChainBreakdownRow>();
-  for (const r of countRows) {
-    byChain.set(r.chain, {
-      chain: r.chain,
-      transfers_count: r.transfers_count,
-      amount_native: null,
-      amount_usd: null,
-    });
-  }
-  for (const r of volRows) {
-    const existing = byChain.get(r.chain) ?? {
-      chain: r.chain,
-      transfers_count: BigInt(0),
-      amount_native: null,
-      amount_usd: null,
-    };
-    existing.amount_native = r.amount_native;
-    existing.amount_usd = r.amount_usd;
-    byChain.set(r.chain, existing);
-  }
-  return [...byChain.values()];
+  return rows[0] ?? emptyAggregateWindow();
 };
 
 const addDecimal = (
-  a: Prisma.Decimal | null,
-  b: Prisma.Decimal | null,
+  left: Prisma.Decimal | null,
+  right: Prisma.Decimal | null,
 ): Prisma.Decimal | null => {
-  if (a === null && b === null) return null;
-  const left = a ?? new Prisma.Decimal(0);
-  const right = b ?? new Prisma.Decimal(0);
-  return left.add(right);
+  if (left === null && right === null) return null;
+  return (left ?? new Prisma.Decimal(0)).add(right ?? new Prisma.Decimal(0));
 };
 
-const formatAtom = (value: Prisma.Decimal | null): string =>
-  formatNative(value !== null ? value.toFixed(0) : '0', ATOM_DECIMALS) ?? '0';
+const formatAmount = (value: Prisma.Decimal | null, decimals: number): string =>
+  formatNative(value?.toFixed(0) ?? '0', decimals) ?? '0';
 
 const formatUsd = (value: Prisma.Decimal | null): string =>
   value === null ? '0' : value.toFixed(2);
+
+type StatsWindowRows = {
+  last24Hours: AggregateWindowRow;
+  today: AggregateWindowRow;
+  daily7Days: AggregateWindowRow;
+  daily30Days: AggregateWindowRow;
+};
+
+const queryStatsWindows = async (
+  direction: StatsDirection,
+  chain: ChainName | null,
+  nativeDenom: string,
+  now: Date,
+): Promise<StatsWindowRows> => {
+  const midnight = todayUtcMidnight(now);
+  const window24hStart = new Date(now.getTime() - MS_PER_DAY);
+  const window7dDailyFrom = new Date(midnight.getTime() - 6 * MS_PER_DAY);
+  const window30dDailyFrom = new Date(midnight.getTime() - 29 * MS_PER_DAY);
+
+  const [last24Hours, today, daily7Days, daily30Days] = await Promise.all([
+    queryPacketsWindow(direction, window24hStart, chain, nativeDenom),
+    queryPacketsWindow(direction, midnight, chain, nativeDenom),
+    queryDailyWindow(direction, window7dDailyFrom, midnight, chain, nativeDenom),
+    queryDailyWindow(direction, window30dDailyFrom, midnight, chain, nativeDenom),
+  ]);
+  return { last24Hours, today, daily7Days, daily30Days };
+};
+
+const hybridCoverageStatus = (
+  dailyQuality: IbcCoverageQuality,
+  daily: AggregateWindowRow,
+  today: AggregateWindowRow,
+): IbcCoverageStatus => {
+  const quality = combineIbcCoverageQualities([dailyQuality, 'corrected']);
+  if (quality !== 'corrected') return toIbcCoverageStatus(quality);
+  return toIbcCoverageStatus('corrected', mergeIbcCoverageRows([daily, today]));
+};
+
+const buildWindowCoverage = (
+  rows: StatsWindowRows,
+  sourceStates: readonly IbcSourceState[],
+  now: Date,
+): StatsWindowCoverage => {
+  const midnight = todayUtcMidnight(now);
+  const window7dDailyFrom = new Date(midnight.getTime() - 6 * MS_PER_DAY);
+  const window30dDailyFrom = new Date(midnight.getTime() - 29 * MS_PER_DAY);
+
+  return {
+    '24h': toIbcCoverageStatus('corrected', mergeIbcCoverageRows([rows.last24Hours])),
+    '7d': hybridCoverageStatus(
+      classifyIbcDailyRange(window7dDailyFrom, midnight, sourceStates),
+      rows.daily7Days,
+      rows.today,
+    ),
+    '30d': hybridCoverageStatus(
+      classifyIbcDailyRange(window30dDailyFrom, midnight, sourceStates),
+      rows.daily30Days,
+      rows.today,
+    ),
+  };
+};
+
+const buildBaseStats = (
+  rows: StatsWindowRows,
+  sourceStates: readonly IbcSourceState[],
+  freshness: IbcAggregationFreshness,
+  now: Date,
+): StatsBaseResult & { volume_native: StatsWindowAmounts } => {
+  const transfersToday = Number(rows.today.transfers_count);
+  const amountAtom7d = addDecimal(rows.daily7Days.amount_atom, rows.today.amount_atom);
+  const amountAtom30d = addDecimal(rows.daily30Days.amount_atom, rows.today.amount_atom);
+  const amountNative7d = addDecimal(rows.daily7Days.amount_native, rows.today.amount_native);
+  const amountNative30d = addDecimal(rows.daily30Days.amount_native, rows.today.amount_native);
+  const amountUsd7d = addDecimal(rows.daily7Days.amount_usd, rows.today.amount_usd);
+  const amountUsd30d = addDecimal(rows.daily30Days.amount_usd, rows.today.amount_usd);
+
+  return {
+    transfers_count: {
+      '24h': Number(rows.last24Hours.transfers_count),
+      '7d': Number(rows.daily7Days.transfers_count) + transfersToday,
+      '30d': Number(rows.daily30Days.transfers_count) + transfersToday,
+    },
+    volume_atom: {
+      '24h': formatAmount(rows.last24Hours.amount_atom, ATOM_DECIMALS),
+      '7d': formatAmount(amountAtom7d, ATOM_DECIMALS),
+      '30d': formatAmount(amountAtom30d, ATOM_DECIMALS),
+    },
+    volume_native: {
+      '24h': formatAmount(rows.last24Hours.amount_native, ATOM_DECIMALS),
+      '7d': formatAmount(amountNative7d, ATOM_DECIMALS),
+      '30d': formatAmount(amountNative30d, ATOM_DECIMALS),
+    },
+    volume_usd: {
+      '24h': formatUsd(rows.last24Hours.amount_usd),
+      '7d': formatUsd(amountUsd7d),
+      '30d': formatUsd(amountUsd30d),
+    },
+    coverage: buildWindowCoverage(rows, sourceStates, now),
+    as_of: freshness.generated_at,
+    ...freshness,
+  };
+};
+
+const buildPerChainRow = (
+  chain: ChainName,
+  rows: StatsWindowRows,
+  sourceStates: readonly IbcSourceState[],
+  now: Date,
+): StatsPerChainRow => {
+  const metadata = getChainMetadata(chain);
+  const generatedAt = now.toISOString();
+  const base = buildBaseStats(rows, sourceStates, { generated_at: generatedAt, sources: [] }, now);
+  return {
+    chain,
+    transfers_count: base.transfers_count,
+    volume_atom: base.volume_atom,
+    volume_native: {
+      '24h': formatAmount(rows.last24Hours.amount_native, metadata.nativeDecimals),
+      '7d': formatAmount(
+        addDecimal(rows.daily7Days.amount_native, rows.today.amount_native),
+        metadata.nativeDecimals,
+      ),
+      '30d': formatAmount(
+        addDecimal(rows.daily30Days.amount_native, rows.today.amount_native),
+        metadata.nativeDecimals,
+      ),
+    },
+    volume_usd: base.volume_usd,
+    coverage: base.coverage,
+    native_denom: metadata.nativeDenom,
+    native_symbol: metadata.nativeSymbol,
+    native_decimals: metadata.nativeDecimals,
+  };
+};
+
+const nativeMetadataFields = (metadata: ChainMetadata) => ({
+  native_denom: metadata.nativeDenom,
+  native_symbol: metadata.nativeSymbol,
+  native_decimals: metadata.nativeDecimals,
+});
 
 export const getStats = async (params: {
   direction: StatsDirection;
@@ -267,107 +376,52 @@ export const getStats = async (params: {
   breakdown?: 'chain';
 }): Promise<StatsResult> => {
   const now = new Date();
-  const midnight = todayUtcMidnight(now);
-
-  const window24hStart = new Date(now.getTime() - MS_PER_DAY);
-  const window7dDailyFrom = new Date(midnight.getTime() - 6 * MS_PER_DAY);
-  const window30dDailyFrom = new Date(midnight.getTime() - 29 * MS_PER_DAY);
-
-  const [w24h, today, daily7d, daily30d] = await Promise.all([
-    queryPacketsWindow(params.direction, window24hStart, params.chain),
-    queryPacketsWindow(params.direction, midnight, params.chain),
-    queryDailyWindow(params.direction, window7dDailyFrom, midnight, params.chain),
-    queryDailyWindow(params.direction, window30dDailyFrom, midnight, params.chain),
+  const nativeMetadata = params.chain ? getChainMetadata(params.chain) : null;
+  const nativeDenom = nativeMetadata?.nativeDenom ?? ATOM_DENOM;
+  const [rows, context] = await Promise.all([
+    queryStatsWindows(params.direction, params.chain, nativeDenom, now),
+    getIbcAggregationContext(params.chain, now),
   ]);
+  const base = buildBaseStats(rows, context.sourceStates, context.freshness, now);
 
-  const count7d = Number(daily7d.transfers_count) + Number(today.transfers_count);
-  const count30d = Number(daily30d.transfers_count) + Number(today.transfers_count);
-  const count24h = Number(w24h.transfers_count);
-
-  const atom24h = w24h.amount_native;
-  const atom7d = addDecimal(daily7d.amount_native, today.amount_native);
-  const atom30d = addDecimal(daily30d.amount_native, today.amount_native);
-
-  const usd24h = w24h.amount_usd;
-  const usd7d = addDecimal(daily7d.amount_usd, today.amount_usd);
-  const usd30d = addDecimal(daily30d.amount_usd, today.amount_usd);
-
-  const result: StatsResult = {
-    transfers_count: { '24h': count24h, '7d': count7d, '30d': count30d },
-    volume_atom: {
-      '24h': formatAtom(atom24h),
-      '7d': formatAtom(atom7d),
-      '30d': formatAtom(atom30d),
-    },
-    volume_usd: {
-      '24h': formatUsd(usd24h),
-      '7d': formatUsd(usd7d),
-      '30d': formatUsd(usd30d),
-    },
-    as_of: now.toISOString(),
-  };
-
-  if (params.breakdown === 'chain' && params.chain === null) {
-    const [w24hByChain, todayByChain, daily7dByChain, daily30dByChain] = await Promise.all([
-      queryPacketsWindowByChain(params.direction, window24hStart),
-      queryPacketsWindowByChain(params.direction, midnight),
-      queryDailyWindowByChain(params.direction, window7dDailyFrom, midnight),
-      queryDailyWindowByChain(params.direction, window30dDailyFrom, midnight),
-    ]);
-
-    const allChains = new Set<string>();
-    for (const r of w24hByChain) allChains.add(r.chain);
-    for (const r of todayByChain) allChains.add(r.chain);
-    for (const r of daily7dByChain) allChains.add(r.chain);
-    for (const r of daily30dByChain) allChains.add(r.chain);
-
-    const byChain = (rows: ChainBreakdownRow[]): Map<string, ChainBreakdownRow> => {
-      const m = new Map<string, ChainBreakdownRow>();
-      for (const r of rows) m.set(r.chain, r);
-      return m;
+  if (params.chain) {
+    const metadata = getChainMetadata(params.chain);
+    return {
+      ...base,
+      volume_native: {
+        '24h': formatAmount(rows.last24Hours.amount_native, metadata.nativeDecimals),
+        '7d': formatAmount(
+          addDecimal(rows.daily7Days.amount_native, rows.today.amount_native),
+          metadata.nativeDecimals,
+        ),
+        '30d': formatAmount(
+          addDecimal(rows.daily30Days.amount_native, rows.today.amount_native),
+          metadata.nativeDecimals,
+        ),
+      },
+      ...nativeMetadataFields(metadata),
     };
-    const m24 = byChain(w24hByChain);
-    const mToday = byChain(todayByChain);
-    const m7 = byChain(daily7dByChain);
-    const m30 = byChain(daily30dByChain);
-
-    const per_chain: StatsPerChainRow[] = [...allChains].sort().map((name) => {
-      const r24 = m24.get(name);
-      const rToday = mToday.get(name);
-      const r7 = m7.get(name);
-      const r30 = m30.get(name);
-
-      const cToday = rToday ? Number(rToday.transfers_count) : 0;
-      const c24 = r24 ? Number(r24.transfers_count) : 0;
-      const c7 = (r7 ? Number(r7.transfers_count) : 0) + cToday;
-      const c30 = (r30 ? Number(r30.transfers_count) : 0) + cToday;
-
-      const a24 = r24?.amount_native ?? null;
-      const a7 = addDecimal(r7?.amount_native ?? null, rToday?.amount_native ?? null);
-      const a30 = addDecimal(r30?.amount_native ?? null, rToday?.amount_native ?? null);
-
-      const u24 = r24?.amount_usd ?? null;
-      const u7 = addDecimal(r7?.amount_usd ?? null, rToday?.amount_usd ?? null);
-      const u30 = addDecimal(r30?.amount_usd ?? null, rToday?.amount_usd ?? null);
-
-      return {
-        chain: name as ChainName,
-        transfers_count: { '24h': c24, '7d': c7, '30d': c30 },
-        volume_atom: {
-          '24h': formatAtom(a24),
-          '7d': formatAtom(a7),
-          '30d': formatAtom(a30),
-        },
-        volume_usd: {
-          '24h': formatUsd(u24),
-          '7d': formatUsd(u7),
-          '30d': formatUsd(u30),
-        },
-      };
-    });
-
-    result.per_chain = per_chain;
   }
 
-  return result;
+  const combined: StatsCombinedResult = {
+    transfers_count: base.transfers_count,
+    volume_atom: base.volume_atom,
+    volume_usd: base.volume_usd,
+    coverage: base.coverage,
+    as_of: base.as_of,
+    generated_at: base.generated_at,
+    sources: base.sources,
+  };
+  if (params.breakdown !== 'chain') return combined;
+
+  const perChainRows = await Promise.all(
+    CHAIN_NAMES.map(async (chain) => {
+      const metadata = getChainMetadata(chain);
+      const chainRows = await queryStatsWindows(params.direction, chain, metadata.nativeDenom, now);
+      const sourceStates = context.sourceStates.filter((state) => state.chain === chain);
+      return buildPerChainRow(chain, chainRows, sourceStates, now);
+    }),
+  );
+
+  return { ...combined, per_chain: perChainRows };
 };

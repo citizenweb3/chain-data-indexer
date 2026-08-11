@@ -1,7 +1,4 @@
-import {
-  OpenAPIRegistry,
-  OpenApiGeneratorV31,
-} from '@asteasolutions/zod-to-openapi';
+import { OpenAPIRegistry, OpenApiGeneratorV31 } from '@asteasolutions/zod-to-openapi';
 
 import { z } from '@/lib/openapi-zod';
 
@@ -10,10 +7,15 @@ import { ChannelsQuerySchema, ChannelsResponseSchema } from '@/schemas/channels'
 import { ChainParam, ErrorResponseSchema } from '@/schemas/common';
 import {
   StatsCombinedQuerySchema,
+  StatsCombinedResponseSchema,
+  StatsChainResponseSchema,
   StatsQuerySchema,
-  StatsResponseSchema,
 } from '@/schemas/stats';
-import { TimeseriesQuerySchema, TimeseriesResponseSchema } from '@/schemas/timeseries';
+import {
+  TimeseriesChainQuerySchema,
+  TimeseriesCombinedQuerySchema,
+  TimeseriesResponseSchema,
+} from '@/schemas/timeseries';
 import {
   TransferDetailResponseSchema,
   TransferParamSchema,
@@ -41,7 +43,8 @@ const HealthResponseSchema = z
 const registry = new OpenAPIRegistry();
 
 registry.register('ErrorResponse', ErrorResponseSchema);
-registry.register('StatsResponse', StatsResponseSchema);
+registry.register('StatsCombinedResponse', StatsCombinedResponseSchema);
+registry.register('StatsChainResponse', StatsChainResponseSchema);
 registry.register('ChannelsResponse', ChannelsResponseSchema);
 registry.register('TimeseriesResponse', TimeseriesResponseSchema);
 registry.register('TransfersListResponse', TransfersListResponseSchema);
@@ -65,9 +68,7 @@ const error500 = {
   content: { 'application/json': { schema: errorRef } },
 } as const;
 
-const ChainPathParamsSchema = z
-  .object({ chain: ChainParam })
-  .openapi('ChainPathParams');
+const ChainPathParamsSchema = z.object({ chain: ChainParam }).openapi('ChainPathParams');
 
 const TransferChainParamSchema = TransferParamSchema.extend({
   chain: ChainParam,
@@ -94,13 +95,14 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/stats',
-  summary: 'Combined transfer counts and ATOM/USD volume across all chains. Optional ?breakdown=chain adds per-chain split.',
+  summary:
+    'Delivered-packet counts, compatibility ATOM volume, USD volume, coverage, and freshness across all chains. Optional ?breakdown=chain adds chain-native rows.',
   tags: [TAG_COMBINED],
   request: { query: StatsCombinedQuerySchema },
   responses: {
     200: {
       description: 'Stats payload (optionally with per_chain array)',
-      content: { 'application/json': { schema: StatsResponseSchema } },
+      content: { 'application/json': { schema: StatsCombinedResponseSchema } },
     },
     400: error400,
     500: error500,
@@ -142,9 +144,10 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/timeseries',
-  summary: 'Metric series across all chains — daily (default) or hourly (bucket=hour) for transfers / volume_atom / volume_usd',
+  summary:
+    'Delivered-packet metric series with per-bucket coverage and freshness across all chains. volume_atom is retained for v1 compatibility; volume_native is chain-scoped only.',
   tags: [TAG_COMBINED],
-  request: { query: TimeseriesQuerySchema },
+  request: { query: TimeseriesCombinedQuerySchema },
   responses: {
     200: {
       description: 'Time series payload (zero-filled across requested range)',
@@ -158,13 +161,14 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/{chain}/stats',
-  summary: 'Aggregated transfer counts and ATOM/USD volume for a single chain.',
+  summary:
+    'Delivered-packet counts, native volume metadata, compatibility ATOM volume, USD volume, coverage, and freshness for a single chain.',
   tags: [TAG_PER_CHAIN],
   request: { params: ChainPathParamsSchema, query: StatsQuerySchema },
   responses: {
     200: {
       description: 'Stats payload for the given chain',
-      content: { 'application/json': { schema: StatsResponseSchema } },
+      content: { 'application/json': { schema: StatsChainResponseSchema } },
     },
     400: error400,
     404: error404,
@@ -209,9 +213,10 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/{chain}/timeseries',
-  summary: 'Metric series for a single chain — daily (default) or hourly (bucket=hour) for transfers / volume_atom / volume_usd',
+  summary:
+    'Delivered-packet metric series with per-bucket coverage and freshness for a single chain, including volume_native.',
   tags: [TAG_PER_CHAIN],
-  request: { params: ChainPathParamsSchema, query: TimeseriesQuerySchema },
+  request: { params: ChainPathParamsSchema, query: TimeseriesChainQuerySchema },
   responses: {
     200: {
       description: 'Time series payload (zero-filled across requested range)',
