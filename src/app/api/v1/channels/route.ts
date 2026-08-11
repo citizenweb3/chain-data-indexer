@@ -1,6 +1,6 @@
 import logger from '@/logger';
 import { errorResponse, okJson, parseSearchParams } from '@/lib/api-helpers';
-import { ChannelsQuerySchema } from '@/schemas/channels';
+import { ChannelsCombinedQuerySchema } from '@/schemas/channels';
 import { listChannels } from '@/services/channels-service';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 const log = logger('api/channels');
 
 export const GET = async (request: Request): Promise<Response> => {
-  const parsed = parseSearchParams(ChannelsQuerySchema, request);
+  const parsed = parseSearchParams(ChannelsCombinedQuerySchema, request);
   if (!parsed.ok) return parsed.response;
 
   try {

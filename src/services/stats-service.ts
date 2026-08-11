@@ -67,6 +67,9 @@ export type StatsChainResult = StatsBaseResult &
     per_chain?: never;
   };
 export type StatsResult = StatsCombinedResult | StatsChainResult;
+type StatsResultFor<TChain extends ChainName | null> = TChain extends ChainName
+  ? StatsChainResult
+  : StatsCombinedResult;
 
 const ATOM_DENOM = 'uatom';
 const ATOM_DECIMALS = 6;
@@ -370,11 +373,11 @@ const nativeMetadataFields = (metadata: ChainMetadata) => ({
   native_decimals: metadata.nativeDecimals,
 });
 
-export const getStats = async (params: {
+export const getStats = async <TChain extends ChainName | null>(params: {
   direction: StatsDirection;
-  chain: ChainName | null;
+  chain: TChain;
   breakdown?: 'chain';
-}): Promise<StatsResult> => {
+}): Promise<StatsResultFor<TChain>> => {
   const now = new Date();
   const nativeMetadata = params.chain ? getChainMetadata(params.chain) : null;
   const nativeDenom = nativeMetadata?.nativeDenom ?? ATOM_DENOM;
@@ -400,7 +403,7 @@ export const getStats = async (params: {
         ),
       },
       ...nativeMetadataFields(metadata),
-    };
+    } as StatsResultFor<TChain>;
   }
 
   const combined: StatsCombinedResult = {
@@ -412,7 +415,9 @@ export const getStats = async (params: {
     generated_at: base.generated_at,
     sources: base.sources,
   };
-  if (params.breakdown !== 'chain') return combined;
+  if (params.breakdown !== 'chain') {
+    return combined as StatsResultFor<TChain>;
+  }
 
   const perChainRows = await Promise.all(
     CHAIN_NAMES.map(async (chain) => {
@@ -423,5 +428,5 @@ export const getStats = async (params: {
     }),
   );
 
-  return { ...combined, per_chain: perChainRows };
+  return { ...combined, per_chain: perChainRows } as StatsResultFor<TChain>;
 };

@@ -3,7 +3,12 @@ import { OpenAPIRegistry, OpenApiGeneratorV31 } from '@asteasolutions/zod-to-ope
 import { z } from '@/lib/openapi-zod';
 
 import { AssetsBreakdownQuerySchema, AssetsBreakdownResponseSchema } from '@/schemas/assets';
-import { ChannelsQuerySchema, ChannelsResponseSchema } from '@/schemas/channels';
+import {
+  ChannelsChainQuerySchema,
+  ChannelsChainResponseSchema,
+  ChannelsCombinedQuerySchema,
+  ChannelsCombinedResponseSchema,
+} from '@/schemas/channels';
 import { ChainParam, ErrorResponseSchema } from '@/schemas/common';
 import {
   StatsCombinedQuerySchema,
@@ -45,7 +50,8 @@ const registry = new OpenAPIRegistry();
 registry.register('ErrorResponse', ErrorResponseSchema);
 registry.register('StatsCombinedResponse', StatsCombinedResponseSchema);
 registry.register('StatsChainResponse', StatsChainResponseSchema);
-registry.register('ChannelsResponse', ChannelsResponseSchema);
+registry.register('ChannelsCombinedResponse', ChannelsCombinedResponseSchema);
+registry.register('ChannelsChainResponse', ChannelsChainResponseSchema);
 registry.register('TimeseriesResponse', TimeseriesResponseSchema);
 registry.register('TransfersListResponse', TransfersListResponseSchema);
 registry.register('TransferDetailResponse', TransferDetailResponseSchema);
@@ -112,13 +118,16 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/channels',
-  summary: 'List IBC channels across all chains. Each row carries its chain field.',
+  summary:
+    'List IBC channels with delivered-only aggregates, per-window coverage, and freshness across all chains. Native volume sorting is chain-scoped only.',
   tags: [TAG_COMBINED],
-  request: { query: ChannelsQuerySchema },
+  request: { query: ChannelsCombinedQuerySchema },
   responses: {
     200: {
       description: 'Channels listing with pagination envelope',
-      content: { 'application/json': { schema: ChannelsResponseSchema } },
+      content: {
+        'application/json': { schema: ChannelsCombinedResponseSchema },
+      },
     },
     400: error400,
     500: error500,
@@ -128,7 +137,8 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/assets',
-  summary: 'Per-asset breakdown of transfers and volume, aggregated across all chains.',
+  summary:
+    'Delivered-only per-asset breakdown with selected-period pricing coverage and freshness across all chains.',
   tags: [TAG_COMBINED],
   request: { query: AssetsBreakdownQuerySchema },
   responses: {
@@ -179,13 +189,14 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/{chain}/channels',
-  summary: 'List IBC channels for a single chain.',
+  summary:
+    'List IBC channels with delivered-only aggregates, native volume, per-window coverage, and freshness for a single chain.',
   tags: [TAG_PER_CHAIN],
-  request: { params: ChainPathParamsSchema, query: ChannelsQuerySchema },
+  request: { params: ChainPathParamsSchema, query: ChannelsChainQuerySchema },
   responses: {
     200: {
       description: 'Channels listing with pagination envelope',
-      content: { 'application/json': { schema: ChannelsResponseSchema } },
+      content: { 'application/json': { schema: ChannelsChainResponseSchema } },
     },
     400: error400,
     404: error404,
@@ -196,7 +207,8 @@ registry.registerPath({
 registry.registerPath({
   method: 'get',
   path: '/api/v1/{chain}/assets',
-  summary: 'Per-asset breakdown of transfers and volume for a single chain.',
+  summary:
+    'Delivered-only per-asset breakdown with selected-period pricing coverage and freshness for a single chain.',
   tags: [TAG_PER_CHAIN],
   request: { params: ChainPathParamsSchema, query: AssetsBreakdownQuerySchema },
   responses: {

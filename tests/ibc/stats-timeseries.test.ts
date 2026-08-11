@@ -33,12 +33,13 @@ const insertPacket = async (
 ): Promise<void> => {
   await client.query(
     `INSERT INTO ibc_packets (
-       chain, channel_id_src, port_id_src, sequence, status, direction,
+       chain, channel_id_src, port_id_src, channel_id_dst, sequence, status, direction,
        event_height, event_time, denom, amount
-     ) VALUES ($1, $2, 'transfer', $3, $4, $5, $3, $6, $7, $8)`,
+     ) VALUES ($1, $2, 'transfer', $3, $4, $5, $6, $4, $7, $8, $9)`,
     [
       packet.chain,
       packet.channel,
+      packet.direction === 'incoming' ? packet.channel : null,
       packet.sequence,
       packet.status,
       packet.direction,
@@ -61,6 +62,17 @@ const seedFixture = async (client: Client): Promise<void> => {
       ('cosmoshub', 'Cosmos Hub', 'cosmoshub-4'),
       ('atomone', 'AtomOne', 'atomone-1')
     ON CONFLICT (name) DO NOTHING
+  `);
+  await client.query(`
+    INSERT INTO ibc_channels (
+      chain, channel_id_src, port_id_src, counterparty_chain_id,
+      counterparty_chain_name, counterparty_channel_id, updated_at
+    ) VALUES
+      ('cosmoshub', 'channel-0', 'transfer', 'osmosis-1', 'Osmosis', 'channel-100', NOW()),
+      ('cosmoshub', 'channel-1', 'transfer', 'oraichain-1', 'Oraichain', 'channel-101', NOW()),
+      ('cosmoshub', 'channel-2', 'transfer', 'juno-1', 'Juno', 'channel-102', NOW()),
+      ('atomone', 'channel-10', 'transfer', 'cosmoshub-4', 'Cosmos Hub', 'channel-110', NOW()),
+      ('atomone', 'channel-11', 'transfer', 'osmosis-1', 'Osmosis', 'channel-111', NOW())
   `);
 
   const assets = await client.query<{ id: number; native_denom: string }>(`
@@ -190,7 +202,7 @@ const assertCoverageIdentity = (status: {
 };
 
 test(
-  'stats and timeseries expose delivered-only coverage, quality, freshness, and chain-native volume',
+  'all aggregate routes expose delivered-only coverage, freshness, quality, and scoped native volume',
   { timeout: 30_000 },
   async () => {
     await withDisposablePostgres(async ({ databaseUrl, client }) => {
@@ -201,19 +213,39 @@ test(
         { runRecomputeDailyStats },
         { getStats },
         { getTimeseries },
+        { getAssetsBreakdown },
+        { listChannels },
         { StatsChainResponseSchema, StatsCombinedResponseSchema },
         { TimeseriesResponseSchema },
+        { AssetsBreakdownResponseSchema },
+        { ChannelsChainResponseSchema, ChannelsCombinedResponseSchema },
+        combinedStatsRoute,
+        chainStatsRoute,
         combinedTimeseriesRoute,
         chainTimeseriesRoute,
+        combinedAssetsRoute,
+        chainAssetsRoute,
+        combinedChannelsRoute,
+        chainChannelsRoute,
         { db },
       ] = await Promise.all([
         import('../../server/jobs/recompute-daily-stats'),
         import('@/services/stats-service'),
         import('@/services/timeseries-service'),
+        import('@/services/assets-service'),
+        import('@/services/channels-service'),
         import('@/schemas/stats'),
         import('@/schemas/timeseries'),
+        import('@/schemas/assets'),
+        import('@/schemas/channels'),
+        import('@/app/api/v1/stats/route'),
+        import('@/app/api/v1/[chain]/stats/route'),
         import('@/app/api/v1/timeseries/route'),
         import('@/app/api/v1/[chain]/timeseries/route'),
+        import('@/app/api/v1/assets/route'),
+        import('@/app/api/v1/[chain]/assets/route'),
+        import('@/app/api/v1/channels/route'),
+        import('@/app/api/v1/[chain]/channels/route'),
         import('@/db'),
       ]);
 
@@ -339,6 +371,139 @@ test(
         );
         assert.equal(chainNativeResponse.status, 200);
         TimeseriesResponseSchema.parse(await chainNativeResponse.json());
+
+        const combinedStatsResponse = await combinedStatsRoute.GET(
+          new Request('http://localhost/api/v1/stats?breakdown=chain'),
+        );
+        assert.equal(combinedStatsResponse.status, 200);
+        StatsCombinedResponseSchema.parse(await combinedStatsResponse.json());
+
+        const chainStatsResponse = await chainStatsRoute.GET(
+          new Request('http://localhost/api/v1/atomone/stats'),
+          { params: Promise.resolve({ chain: 'atomone' }) },
+        );
+        assert.equal(chainStatsResponse.status, 200);
+        StatsChainResponseSchema.parse(await chainStatsResponse.json());
+
+        const combinedAssets24h = await getAssetsBreakdown({
+          direction: 'both',
+          period: '24h',
+          limit: 50,
+          chain: null,
+        });
+        AssetsBreakdownResponseSchema.parse(combinedAssets24h);
+        assert.equal(combinedAssets24h.totals.transfers_count, 4);
+        assertCoverageIdentity(combinedAssets24h.coverage);
+        assert.equal(combinedAssets24h.coverage.coverage?.eligible_packets, 4);
+        assert.equal(combinedAssets24h.coverage.coverage?.priced_packets, 3);
+        assert.equal(
+          combinedAssets24h.data.some((row) => row.native_denom === 'orai'),
+          false,
+        );
+
+        const cosmosAssets30d = await getAssetsBreakdown({
+          direction: 'both',
+          period: '30d',
+          limit: 50,
+          chain: 'cosmoshub',
+        });
+        AssetsBreakdownResponseSchema.parse(cosmosAssets30d);
+        assertCoverageIdentity(cosmosAssets30d.coverage);
+        assert.equal(
+          cosmosAssets30d.data.find((row) => row.native_denom === 'uatom')?.amount_native,
+          '9000000',
+        );
+        assert.equal(
+          cosmosAssets30d.data.some((row) => row.native_denom === 'orai'),
+          false,
+        );
+
+        const combinedAssets30d = await getAssetsBreakdown({
+          direction: 'both',
+          period: '30d',
+          limit: 50,
+          chain: null,
+        });
+        assert.equal(combinedAssets30d.coverage.quality, 'mixed');
+        assert.equal(combinedAssets30d.coverage.coverage, null);
+
+        const combinedAssetsResponse = await combinedAssetsRoute.GET(
+          new Request('http://localhost/api/v1/assets?period=24h'),
+        );
+        assert.equal(combinedAssetsResponse.status, 200);
+        AssetsBreakdownResponseSchema.parse(await combinedAssetsResponse.json());
+
+        const chainAssetsResponse = await chainAssetsRoute.GET(
+          new Request('http://localhost/api/v1/cosmoshub/assets?period=30d'),
+          { params: Promise.resolve({ chain: 'cosmoshub' }) },
+        );
+        assert.equal(chainAssetsResponse.status, 200);
+        AssetsBreakdownResponseSchema.parse(await chainAssetsResponse.json());
+
+        const atomoneChannels = await listChannels({
+          direction: 'both',
+          period: '7d',
+          sort: 'volume_native',
+          order: 'desc',
+          limit: 50,
+          offset: 0,
+          chain: 'atomone',
+        });
+        ChannelsChainResponseSchema.parse(atomoneChannels);
+        const atomoneChannel10 = atomoneChannels.data.find(
+          (row) => row.channel_id_src === 'channel-10',
+        );
+        assert.equal(atomoneChannel10?.volume_native?.['7d'], '2');
+        assert.equal(atomoneChannel10?.volume_atom['7d'], '4');
+        assertCoverageIdentity(atomoneChannel10!.coverage['24h']);
+        assert.equal(atomoneChannel10?.coverage['24h'].coverage?.eligible_packets, 2);
+        assert.ok(atomoneChannels.sources[0]?.last_successful_sync_at);
+
+        const cosmosChannels = await listChannels({
+          direction: 'both',
+          period: '30d',
+          sort: 'volume_usd',
+          order: 'desc',
+          limit: 50,
+          offset: 0,
+          chain: 'cosmoshub',
+        });
+        const cosmosChannel1 = cosmosChannels.data.find(
+          (row) => row.channel_id_src === 'channel-1',
+        );
+        assert.equal(
+          cosmosChannel1?.denoms.some((denom) => denom.native_denom === 'orai'),
+          false,
+        );
+        assert.equal(cosmosChannel1?.success_rate_30d, 0.5);
+        assert.equal(cosmosChannel1?.coverage['30d'].coverage?.eligible_packets, 1);
+
+        const combinedChannels = await listChannels({
+          direction: 'both',
+          period: '30d',
+          sort: 'volume_usd',
+          order: 'desc',
+          limit: 50,
+          offset: 0,
+          chain: null,
+        });
+        ChannelsCombinedResponseSchema.parse(combinedChannels);
+        assert.equal(
+          combinedChannels.data.some((row) => 'volume_native' in row),
+          false,
+        );
+
+        const combinedNativeSortResponse = await combinedChannelsRoute.GET(
+          new Request('http://localhost/api/v1/channels?sort=volume_native'),
+        );
+        assert.equal(combinedNativeSortResponse.status, 400);
+
+        const chainNativeSortResponse = await chainChannelsRoute.GET(
+          new Request('http://localhost/api/v1/atomone/channels?sort=volume_native'),
+          { params: Promise.resolve({ chain: 'atomone' }) },
+        );
+        assert.equal(chainNativeSortResponse.status, 200);
+        ChannelsChainResponseSchema.parse(await chainNativeSortResponse.json());
       } finally {
         await db.$disconnect();
       }

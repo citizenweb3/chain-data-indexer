@@ -1,7 +1,7 @@
 import logger from '@/logger';
 import { errorResponse, okJson, parseSearchParams } from '@/lib/api-helpers';
 import { isChainName } from '@/lib/chains';
-import { ChannelsQuerySchema } from '@/schemas/channels';
+import { ChannelsChainQuerySchema } from '@/schemas/channels';
 import { listChannels } from '@/services/channels-service';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +15,7 @@ export const GET = async (
   const { chain } = await ctx.params;
   if (!isChainName(chain)) return errorResponse('not_found', 404);
 
-  const parsed = parseSearchParams(ChannelsQuerySchema, request);
+  const parsed = parseSearchParams(ChannelsChainQuerySchema, request);
   if (!parsed.ok) return parsed.response;
 
   try {

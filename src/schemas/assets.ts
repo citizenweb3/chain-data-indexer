@@ -1,6 +1,7 @@
 import { z } from '@/lib/openapi-zod';
 
 import { DirectionEnum, PeriodEnum } from '@/schemas/common';
+import { IbcAggregationFreshnessSchema, IbcCoverageStatusSchema } from '@/schemas/ibc-aggregation';
 
 export const AssetsBreakdownQuerySchema = z.object({
   direction: DirectionEnum.default('both'),
@@ -25,18 +26,21 @@ export const AssetBreakdownRowSchema = z.object({
 
 export type AssetBreakdownRow = z.infer<typeof AssetBreakdownRowSchema>;
 
-export const AssetsBreakdownResponseSchema = z.object({
-  data: z.array(AssetBreakdownRowSchema),
-  totals: z.object({
-    transfers_count: z.number().int().nonnegative(),
-    amount_usd: z.string(),
-  }),
-  page: z.object({
-    total: z.number().int().nonnegative(),
-    limit: z.number().int().positive(),
-    offset: z.number().int().nonnegative(),
-  }),
-  as_of: z.string(),
-});
+export const AssetsBreakdownResponseSchema = z
+  .object({
+    data: z.array(AssetBreakdownRowSchema),
+    totals: z.object({
+      transfers_count: z.number().int().nonnegative(),
+      amount_usd: z.string(),
+    }),
+    page: z.object({
+      total: z.number().int().nonnegative(),
+      limit: z.number().int().positive(),
+      offset: z.number().int().nonnegative(),
+    }),
+    coverage: IbcCoverageStatusSchema,
+    as_of: z.iso.datetime(),
+  })
+  .extend(IbcAggregationFreshnessSchema.shape);
 
 export type AssetsBreakdownResponse = z.infer<typeof AssetsBreakdownResponseSchema>;
