@@ -11,10 +11,15 @@ import {
 } from '@/services/ibc-aggregation-coverage';
 import {
   DELIVERED_PACKET_SQL,
+  PACKET_COVERAGE_SELECT_SQL,
   PRICED_PACKET_SQL,
   RESOLVED_PACKET_DENOM_SQL,
 } from '@/services/ibc-aggregation-sql';
-import { getIbcAggregationContext } from '@/services/ibc-aggregation-state';
+import {
+  classifyIbcDailyRange,
+  getIbcAggregationContext,
+  type IbcSourceState,
+} from '@/services/ibc-aggregation-state';
 import { formatNative } from '@/utils/format-amount';
 import { formatDenomDisplay } from '@/utils/format-denom';
 
@@ -82,8 +87,7 @@ type ChannelsResultFor<TChain extends ChainName | null> = TChain extends ChainNa
   ? ChannelsChainResult
   : ChannelsCombinedResult;
 
-const ATOM_DENOM = 'uatom';
-const ATOM_DECIMALS = 6;
+const ATOM_METADATA = getChainMetadata('cosmoshub');
 const MS_PER_DAY = 86_400_000;
 const TOP_DENOMS_PER_CHANNEL = 3;
 
@@ -183,7 +187,7 @@ const queryWindowAggregates = async (
       ${hubChannelExpr} AS hub_channel,
       COUNT(*)::bigint AS transfers_count,
       COALESCE(SUM(
-        CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${ATOM_DENOM} THEN p.amount END
+        CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${ATOM_METADATA.nativeDenom} THEN p.amount END
       ), 0) AS amount_atom,
       COALESCE(SUM(
         CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${nativeDenom} THEN p.amount END
@@ -193,14 +197,7 @@ const queryWindowAggregates = async (
           THEN (p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)
         END
       ), 0) AS amount_usd,
-      COUNT(*)::bigint AS eligible_packets,
-      COUNT(*) FILTER (WHERE ${PRICED_PACKET_SQL})::bigint AS priced_packets,
-      COUNT(*) FILTER (WHERE NOT ${PRICED_PACKET_SQL})::bigint AS unpriced_packets,
-      COALESCE(
-        ARRAY_AGG(DISTINCT ${RESOLVED_PACKET_DENOM_SQL})
-          FILTER (WHERE NOT ${PRICED_PACKET_SQL}),
-        ARRAY[]::text[]
-      ) AS unpriced_denoms
+      ${PACKET_COVERAGE_SELECT_SQL}
     FROM ibc_packets p
     LEFT JOIN assets a ON a.native_denom = ${RESOLVED_PACKET_DENOM_SQL}
     LEFT JOIN price_history ph ON ph.asset_id = a.id
@@ -247,7 +244,6 @@ const queryChannelDenoms = async (
       FROM ibc_packets p
       WHERE p.event_time IS NOT NULL
         AND p.event_time >= ${thirtyDaysAgo}
-        AND p.denom IS NOT NULL
         AND ${directionFilter(direction)}
         ${chainFilter(chain)}
         AND ${DELIVERED_PACKET_SQL}
@@ -317,6 +313,29 @@ const formatAmount = (value: Prisma.Decimal, decimals: number): string =>
 
 const formatUsd = (value: Prisma.Decimal): string => value.toFixed(2);
 
+const buildChannelCoverage = (
+  chain: ChainName,
+  channelBuckets: ChannelBuckets,
+  periodStarts: Record<ChannelsPeriod, Date>,
+  toExclusive: Date,
+  sourceStates: readonly IbcSourceState[],
+): PeriodCoverage => {
+  const chainStates = sourceStates.filter((source) => source.chain === chain);
+  const toStatus = (period: ChannelsPeriod): IbcCoverageStatus => {
+    const quality = classifyIbcDailyRange(periodStarts[period], toExclusive, chainStates);
+    return toIbcCoverageStatus(
+      quality,
+      quality === 'corrected' ? channelBuckets[period].coverage : undefined,
+    );
+  };
+
+  return {
+    '24h': toStatus('24h'),
+    '7d': toStatus('7d'),
+    '30d': toStatus('30d'),
+  };
+};
+
 type InternalChannelDto = ChannelBaseDto & {
   volume_native: PeriodAmounts;
   native_denom: string;
@@ -382,7 +401,14 @@ export const listChannels = async <TChain extends ChainName | null>(params: {
   const thirtyDaysAgo = new Date(midnight.getTime() - 29 * MS_PER_DAY);
   const sevenDaysAgo = new Date(midnight.getTime() - 6 * MS_PER_DAY);
   const window24hStart = new Date(now.getTime() - MS_PER_DAY);
-  const nativeDenom = params.chain ? getChainMetadata(params.chain).nativeDenom : ATOM_DENOM;
+  const nativeDenom = params.chain
+    ? getChainMetadata(params.chain).nativeDenom
+    : ATOM_METADATA.nativeDenom;
+  const periodStarts: Record<ChannelsPeriod, Date> = {
+    '24h': window24hStart,
+    '7d': sevenDaysAgo,
+    '30d': thirtyDaysAgo,
+  };
 
   const [hubChannels, meta, agg24h, agg7d, agg30d, denomRows, context] = await Promise.all([
     queryHubChannels(params.chain),
@@ -502,9 +528,9 @@ export const listChannels = async <TChain extends ChainName | null>(params: {
         '30d': channelBuckets['30d'].count,
       },
       volume_atom: {
-        '24h': formatAmount(channelBuckets['24h'].atom, ATOM_DECIMALS),
-        '7d': formatAmount(channelBuckets['7d'].atom, ATOM_DECIMALS),
-        '30d': formatAmount(channelBuckets['30d'].atom, ATOM_DECIMALS),
+        '24h': formatAmount(channelBuckets['24h'].atom, ATOM_METADATA.nativeDecimals),
+        '7d': formatAmount(channelBuckets['7d'].atom, ATOM_METADATA.nativeDecimals),
+        '30d': formatAmount(channelBuckets['30d'].atom, ATOM_METADATA.nativeDecimals),
       },
       volume_native: {
         '24h': formatAmount(channelBuckets['24h'].native, metadata.nativeDecimals),
@@ -516,11 +542,13 @@ export const listChannels = async <TChain extends ChainName | null>(params: {
         '7d': formatUsd(channelBuckets['7d'].usd),
         '30d': formatUsd(channelBuckets['30d'].usd),
       },
-      coverage: {
-        '24h': toIbcCoverageStatus('corrected', channelBuckets['24h'].coverage),
-        '7d': toIbcCoverageStatus('corrected', channelBuckets['7d'].coverage),
-        '30d': toIbcCoverageStatus('corrected', channelBuckets['30d'].coverage),
-      },
+      coverage: buildChannelCoverage(
+        chain,
+        channelBuckets,
+        periodStarts,
+        now,
+        context.sourceStates,
+      ),
       native_denom: metadata.nativeDenom,
       native_symbol: metadata.nativeSymbol,
       native_decimals: metadata.nativeDecimals,

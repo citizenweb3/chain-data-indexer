@@ -9,7 +9,9 @@ import {
   type IbcCoverageCountRow,
 } from '@/services/ibc-aggregation-coverage';
 import {
+  dailyCoverageSelectSql,
   DELIVERED_PACKET_SQL,
+  PACKET_COVERAGE_SELECT_SQL,
   PRICED_PACKET_SQL,
   RESOLVED_PACKET_DENOM_SQL,
 } from '@/services/ibc-aggregation-sql';
@@ -87,7 +89,6 @@ const queryPacketsBreakdown = async (
       FROM ibc_packets p
       WHERE p.event_time IS NOT NULL
         AND p.event_time >= ${fromTime}
-        AND p.denom IS NOT NULL
         AND ${packetDirectionFilter(direction)}
         ${chain ? Prisma.sql`AND p.chain = ${chain}` : Prisma.empty}
         AND ${DELIVERED_PACKET_SQL}
@@ -127,14 +128,7 @@ const queryPacketsCoverage = async (
       ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
     )
     SELECT
-      COUNT(*)::bigint AS eligible_packets,
-      COUNT(*) FILTER (WHERE ${PRICED_PACKET_SQL})::bigint AS priced_packets,
-      COUNT(*) FILTER (WHERE NOT ${PRICED_PACKET_SQL})::bigint AS unpriced_packets,
-      COALESCE(
-        ARRAY_AGG(DISTINCT ${RESOLVED_PACKET_DENOM_SQL})
-          FILTER (WHERE NOT ${PRICED_PACKET_SQL}),
-        ARRAY[]::text[]
-      ) AS unpriced_denoms
+      ${PACKET_COVERAGE_SELECT_SQL}
     FROM ibc_packets p
     LEFT JOIN assets a ON a.native_denom = ${RESOLVED_PACKET_DENOM_SQL}
     LEFT JOIN price_history ph ON ph.asset_id = a.id
@@ -200,18 +194,7 @@ const queryDailyCoverage = async (
         ${chain ? Prisma.sql`AND d.chain = ${chain}` : Prisma.empty}
     )
     SELECT
-      COALESCE(SUM(d.eligible_packets), 0)::bigint AS eligible_packets,
-      COALESCE(SUM(d.priced_packets), 0)::bigint AS priced_packets,
-      COALESCE(SUM(d.unpriced_packets), 0)::bigint AS unpriced_packets,
-      COALESCE(
-        ARRAY(
-          SELECT DISTINCT unpriced_denom
-          FROM count_rows d2
-          CROSS JOIN LATERAL UNNEST(d2.unpriced_denoms) AS unpriced_denom
-          ORDER BY unpriced_denom
-        ),
-        ARRAY[]::text[]
-      ) AS unpriced_denoms
+      ${dailyCoverageSelectSql()}
     FROM count_rows d
   `);
   return (

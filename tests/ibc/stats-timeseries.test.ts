@@ -120,7 +120,7 @@ const seedFixture = async (client: Client): Promise<void> => {
     status: 'received',
     direction: 'incoming',
     eventTime: recent,
-    denom: 'ufoo',
+    denom: null,
     amount: '1000000',
   });
   await insertPacket(client, {
@@ -278,7 +278,7 @@ test(
         }
         assert.equal(cosmosStats.coverage['24h'].coverage?.eligible_packets, 2);
         assert.equal(cosmosStats.coverage['24h'].coverage?.priced_packets, 1);
-        assert.deepEqual(cosmosStats.coverage['24h'].coverage?.unpriced_denoms, ['ufoo']);
+        assert.deepEqual(cosmosStats.coverage['24h'].coverage?.unpriced_denoms, ['__unknown__']);
         assert.ok(cosmosStats.sources[0]?.last_successful_sync_at);
         assert.equal(cosmosStats.as_of, cosmosStats.generated_at);
 
@@ -360,6 +360,26 @@ test(
         assert.equal(legacy.data[0]?.quality, 'legacy_unverified');
         assert.equal(legacy.data[0]?.coverage, null);
 
+        const clampedRange = await getTimeseries({
+          metric: 'transfers',
+          direction: 'both',
+          from: utcDate(500),
+          to: today,
+          chain: 'cosmoshub',
+        });
+        assert.equal(clampedRange.data.length, 365);
+        assert.equal(clampedRange.data[0]?.date, utcDate(364).toISOString().slice(0, 10));
+        assert.equal(
+          clampedRange.data.find((point) => point.date === utcDate(30).toISOString().slice(0, 10))
+            ?.quality,
+          'legacy_unverified',
+        );
+        assert.equal(
+          clampedRange.data.find((point) => point.date === utcDate(29).toISOString().slice(0, 10))
+            ?.quality,
+          'corrected',
+        );
+
         const combinedNativeResponse = await combinedTimeseriesRoute.GET(
           new Request('http://localhost/api/v1/timeseries?metric=volume_native'),
         );
@@ -402,6 +422,10 @@ test(
         assertCoverageIdentity(combinedAssets24h.coverage);
         assert.equal(combinedAssets24h.coverage.coverage?.eligible_packets, 4);
         assert.equal(combinedAssets24h.coverage.coverage?.priced_packets, 3);
+        assert.equal(
+          combinedAssets24h.data.some((row) => row.native_denom === '__unknown__'),
+          true,
+        );
         assert.equal(
           combinedAssets24h.data.some((row) => row.native_denom === 'orai'),
           false,
@@ -463,6 +487,8 @@ test(
         assert.equal(atomoneChannel10?.volume_atom['7d'], '4');
         assertCoverageIdentity(atomoneChannel10!.coverage['24h']);
         assert.equal(atomoneChannel10?.coverage['24h'].coverage?.eligible_packets, 2);
+        assert.equal(atomoneChannel10?.coverage['30d'].quality, 'mixed');
+        assert.equal(atomoneChannel10?.coverage['30d'].coverage, null);
         assert.ok(atomoneChannels.sources[0]?.last_successful_sync_at);
 
         const cosmosChannels = await listChannels({
@@ -481,6 +507,10 @@ test(
           cosmosChannel1?.denoms.some((denom) => denom.native_denom === 'orai'),
           false,
         );
+        assert.equal(
+          cosmosChannel1?.denoms.some((denom) => denom.native_denom === '__unknown__'),
+          true,
+        );
         assert.equal(cosmosChannel1?.success_rate_30d, 0.5);
         assert.equal(cosmosChannel1?.coverage['30d'].coverage?.eligible_packets, 1);
 
@@ -498,6 +528,11 @@ test(
           combinedChannels.data.some((row) => 'volume_native' in row),
           false,
         );
+        const combinedAtomoneChannel10 = combinedChannels.data.find(
+          (row) => row.chain === 'atomone' && row.channel_id_src === 'channel-10',
+        );
+        assert.equal(combinedAtomoneChannel10?.coverage['30d'].quality, 'mixed');
+        assert.equal(combinedAtomoneChannel10?.coverage['30d'].coverage, null);
 
         const combinedNativeSortResponse = await combinedChannelsRoute.GET(
           new Request('http://localhost/api/v1/channels?sort=volume_native'),

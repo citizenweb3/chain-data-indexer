@@ -13,7 +13,9 @@ import {
   type IbcCoverageCountRow,
 } from '@/services/ibc-aggregation-coverage';
 import {
+  dailyCoverageSelectSql,
   DELIVERED_PACKET_SQL,
+  PACKET_COVERAGE_SELECT_SQL,
   PRICED_PACKET_SQL,
   RESOLVED_PACKET_DENOM_SQL,
 } from '@/services/ibc-aggregation-sql';
@@ -71,8 +73,7 @@ type StatsResultFor<TChain extends ChainName | null> = TChain extends ChainName
   ? StatsChainResult
   : StatsCombinedResult;
 
-const ATOM_DENOM = 'uatom';
-const ATOM_DECIMALS = 6;
+const ATOM_METADATA = getChainMetadata('cosmoshub');
 const MS_PER_DAY = 86_400_000;
 
 const todayUtcMidnight = (now: Date): Date => {
@@ -130,7 +131,7 @@ const queryPacketsWindow = async (
     SELECT
       COUNT(*)::bigint AS transfers_count,
       COALESCE(SUM(
-        CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${ATOM_DENOM} THEN p.amount END
+        CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${ATOM_METADATA.nativeDenom} THEN p.amount END
       ), 0) AS amount_atom,
       COALESCE(SUM(
         CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${nativeDenom} THEN p.amount END
@@ -140,14 +141,7 @@ const queryPacketsWindow = async (
           THEN (p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)
         END
       ), 0) AS amount_usd,
-      COUNT(*)::bigint AS eligible_packets,
-      COUNT(*) FILTER (WHERE ${PRICED_PACKET_SQL})::bigint AS priced_packets,
-      COUNT(*) FILTER (WHERE NOT ${PRICED_PACKET_SQL})::bigint AS unpriced_packets,
-      COALESCE(
-        ARRAY_AGG(DISTINCT ${RESOLVED_PACKET_DENOM_SQL})
-          FILTER (WHERE NOT ${PRICED_PACKET_SQL}),
-        ARRAY[]::text[]
-      ) AS unpriced_denoms
+      ${PACKET_COVERAGE_SELECT_SQL}
     FROM ibc_packets p
     LEFT JOIN assets a ON a.native_denom = ${RESOLVED_PACKET_DENOM_SQL}
     LEFT JOIN price_history ph ON ph.asset_id = a.id
@@ -194,27 +188,14 @@ const queryDailyWindow = async (
     SELECT
       COALESCE((SELECT SUM(transfers_count) FROM count_rows), 0)::bigint
         AS transfers_count,
-      COALESCE((SELECT SUM(amount_native) FROM volume_rows WHERE denom = ${ATOM_DENOM}), 0)
+      COALESCE((SELECT SUM(amount_native) FROM volume_rows WHERE denom = ${ATOM_METADATA.nativeDenom}), 0)
         AS amount_atom,
       COALESCE((SELECT SUM(amount_native) FROM volume_rows WHERE denom = ${nativeDenom}), 0)
         AS amount_native,
       COALESCE((SELECT SUM(amount_usd) FROM volume_rows), 0)
         AS amount_usd,
-      COALESCE((SELECT SUM(eligible_packets) FROM count_rows), 0)::bigint
-        AS eligible_packets,
-      COALESCE((SELECT SUM(priced_packets) FROM count_rows), 0)::bigint
-        AS priced_packets,
-      COALESCE((SELECT SUM(unpriced_packets) FROM count_rows), 0)::bigint
-        AS unpriced_packets,
-      COALESCE(
-        ARRAY(
-          SELECT DISTINCT unpriced_denom
-          FROM count_rows
-          CROSS JOIN LATERAL UNNEST(unpriced_denoms) AS unpriced_denom
-          ORDER BY unpriced_denom
-        ),
-        ARRAY[]::text[]
-      ) AS unpriced_denoms
+      ${dailyCoverageSelectSql()}
+    FROM count_rows d
   `);
   return rows[0] ?? emptyAggregateWindow();
 };
@@ -299,12 +280,10 @@ const buildBaseStats = (
   sourceStates: readonly IbcSourceState[],
   freshness: IbcAggregationFreshness,
   now: Date,
-): StatsBaseResult & { volume_native: StatsWindowAmounts } => {
+): StatsBaseResult => {
   const transfersToday = Number(rows.today.transfers_count);
   const amountAtom7d = addDecimal(rows.daily7Days.amount_atom, rows.today.amount_atom);
   const amountAtom30d = addDecimal(rows.daily30Days.amount_atom, rows.today.amount_atom);
-  const amountNative7d = addDecimal(rows.daily7Days.amount_native, rows.today.amount_native);
-  const amountNative30d = addDecimal(rows.daily30Days.amount_native, rows.today.amount_native);
   const amountUsd7d = addDecimal(rows.daily7Days.amount_usd, rows.today.amount_usd);
   const amountUsd30d = addDecimal(rows.daily30Days.amount_usd, rows.today.amount_usd);
 
@@ -315,14 +294,9 @@ const buildBaseStats = (
       '30d': Number(rows.daily30Days.transfers_count) + transfersToday,
     },
     volume_atom: {
-      '24h': formatAmount(rows.last24Hours.amount_atom, ATOM_DECIMALS),
-      '7d': formatAmount(amountAtom7d, ATOM_DECIMALS),
-      '30d': formatAmount(amountAtom30d, ATOM_DECIMALS),
-    },
-    volume_native: {
-      '24h': formatAmount(rows.last24Hours.amount_native, ATOM_DECIMALS),
-      '7d': formatAmount(amountNative7d, ATOM_DECIMALS),
-      '30d': formatAmount(amountNative30d, ATOM_DECIMALS),
+      '24h': formatAmount(rows.last24Hours.amount_atom, ATOM_METADATA.nativeDecimals),
+      '7d': formatAmount(amountAtom7d, ATOM_METADATA.nativeDecimals),
+      '30d': formatAmount(amountAtom30d, ATOM_METADATA.nativeDecimals),
     },
     volume_usd: {
       '24h': formatUsd(rows.last24Hours.amount_usd),
@@ -380,7 +354,7 @@ export const getStats = async <TChain extends ChainName | null>(params: {
 }): Promise<StatsResultFor<TChain>> => {
   const now = new Date();
   const nativeMetadata = params.chain ? getChainMetadata(params.chain) : null;
-  const nativeDenom = nativeMetadata?.nativeDenom ?? ATOM_DENOM;
+  const nativeDenom = nativeMetadata?.nativeDenom ?? ATOM_METADATA.nativeDenom;
   const [rows, context] = await Promise.all([
     queryStatsWindows(params.direction, params.chain, nativeDenom, now),
     getIbcAggregationContext(params.chain, now),

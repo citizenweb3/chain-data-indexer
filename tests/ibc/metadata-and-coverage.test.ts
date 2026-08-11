@@ -10,7 +10,9 @@ import {
   toIbcCoverageStatus,
 } from '@/services/ibc-aggregation-coverage';
 import {
+  dailyCoverageSelectSql,
   DELIVERED_PACKET_SQL,
+  PACKET_COVERAGE_SELECT_SQL,
   PRICED_PACKET_SQL,
   UNKNOWN_IBC_DENOM,
 } from '@/services/ibc-aggregation-sql';
@@ -107,6 +109,8 @@ test('coverage identity and wire schema reject contradictory states', () => {
 test('canonical SQL fragments encode delivered and priced predicates', () => {
   const deliveredSql = DELIVERED_PACKET_SQL.strings.join(' ');
   const pricedSql = PRICED_PACKET_SQL.strings.join(' ');
+  const packetCoverageSql = PACKET_COVERAGE_SELECT_SQL.strings.join(' ');
+  const dailyCoverageSql = dailyCoverageSelectSql().strings.join(' ');
 
   assert.match(deliveredSql, /outgoing/);
   assert.match(deliveredSql, /acknowledged/);
@@ -114,6 +118,10 @@ test('canonical SQL fragments encode delivered and priced predicates', () => {
   assert.match(deliveredSql, /received/);
   assert.match(pricedSql, /p\.amount IS NOT NULL/);
   assert.match(pricedSql, /COALESCE\(ph\.usd, dsp\.usd\) IS NOT NULL/);
+  assert.match(packetCoverageSql, /eligible_packets/);
+  assert.match(packetCoverageSql, /unpriced_denoms/);
+  assert.match(dailyCoverageSql, /SUM\(d\.eligible_packets\)/);
+  assert.match(dailyCoverageSql, /FROM count_rows d2/);
 });
 
 test('disposable Postgres fixture deploys the repository migrations', async () => {

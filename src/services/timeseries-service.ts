@@ -9,7 +9,9 @@ import {
   type IbcCoverageCountRow,
 } from '@/services/ibc-aggregation-coverage';
 import {
+  dailyCoverageSelectSql,
   DELIVERED_PACKET_SQL,
+  PACKET_COVERAGE_SELECT_SQL,
   PRICED_PACKET_SQL,
   RESOLVED_PACKET_DENOM_SQL,
 } from '@/services/ibc-aggregation-sql';
@@ -28,8 +30,7 @@ export type TimeseriesResult = IbcAggregationFreshness & {
   data: TimeseriesPoint[];
 };
 
-const ATOM_DENOM = 'uatom';
-const ATOM_DECIMALS = 6;
+const ATOM_METADATA = getChainMetadata('cosmoshub');
 const MS_PER_HOUR = 3_600_000;
 const MS_PER_DAY = 86_400_000;
 const HOURLY_BUCKETS = 24;
@@ -65,7 +66,7 @@ const packetMetricValue = (metric: TimeseriesMetric, nativeDenom: string): Prism
       ), 0)
     `;
   }
-  const denom = metric === 'volume_atom' ? ATOM_DENOM : nativeDenom;
+  const denom = metric === 'volume_atom' ? ATOM_METADATA.nativeDenom : nativeDenom;
   return Prisma.sql`
     COALESCE(SUM(
       CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${denom} THEN p.amount END
@@ -111,14 +112,7 @@ const queryPacketBuckets = async (params: {
     SELECT
       ${bucketSql} AS bucket,
       ${packetMetricValue(params.metric, params.nativeDenom)} AS value,
-      COUNT(*)::bigint AS eligible_packets,
-      COUNT(*) FILTER (WHERE ${PRICED_PACKET_SQL})::bigint AS priced_packets,
-      COUNT(*) FILTER (WHERE NOT ${PRICED_PACKET_SQL})::bigint AS unpriced_packets,
-      COALESCE(
-        ARRAY_AGG(DISTINCT ${RESOLVED_PACKET_DENOM_SQL})
-          FILTER (WHERE NOT ${PRICED_PACKET_SQL}),
-        ARRAY[]::text[]
-      ) AS unpriced_denoms
+      ${PACKET_COVERAGE_SELECT_SQL}
     FROM ibc_packets p
     LEFT JOIN assets a ON a.native_denom = ${RESOLVED_PACKET_DENOM_SQL}
     LEFT JOIN price_history ph ON ph.asset_id = a.id
@@ -152,7 +146,7 @@ const dailyMetricValue = (
       denomClause: Prisma.sql`d.denom IS NOT NULL`,
     };
   }
-  const denom = metric === 'volume_atom' ? ATOM_DENOM : nativeDenom;
+  const denom = metric === 'volume_atom' ? ATOM_METADATA.nativeDenom : nativeDenom;
   return {
     expression: Prisma.sql`COALESCE(SUM(d.amount_native), 0)`,
     denomClause: Prisma.sql`d.denom = ${denom}`,
@@ -189,19 +183,7 @@ const queryDailyStats = async (params: {
     coverage_by_date AS (
       SELECT
         d.date AS bucket,
-        COALESCE(SUM(d.eligible_packets), 0)::bigint AS eligible_packets,
-        COALESCE(SUM(d.priced_packets), 0)::bigint AS priced_packets,
-        COALESCE(SUM(d.unpriced_packets), 0)::bigint AS unpriced_packets,
-        COALESCE(
-          ARRAY(
-            SELECT DISTINCT unpriced_denom
-            FROM count_rows d2
-            CROSS JOIN LATERAL UNNEST(d2.unpriced_denoms) AS unpriced_denom
-            WHERE d2.date = d.date
-            ORDER BY unpriced_denom
-          ),
-          ARRAY[]::text[]
-        ) AS unpriced_denoms
+        ${dailyCoverageSelectSql(Prisma.sql`WHERE d2.date = d.date`)}
       FROM count_rows d
       GROUP BY d.date
     ),
@@ -249,7 +231,9 @@ const formatValue = (
     return typeof value === 'bigint' ? value.toString() : value.toFixed(2);
   }
   const decimals =
-    metric === 'volume_native' && chain ? getChainMetadata(chain).nativeDecimals : ATOM_DECIMALS;
+    metric === 'volume_native' && chain
+      ? getChainMetadata(chain).nativeDecimals
+      : ATOM_METADATA.nativeDecimals;
   const raw = typeof value === 'bigint' ? value.toString() : value.toFixed(0);
   return formatNative(raw, decimals) ?? '0';
 };
@@ -268,7 +252,7 @@ const resolveNativeDenom = (metric: TimeseriesMetric, chain: ChainName | null): 
   if (metric === 'volume_native' && chain === null) {
     throw new Error('volume_native requires a chain-scoped timeseries request');
   }
-  return chain ? getChainMetadata(chain).nativeDenom : ATOM_DENOM;
+  return chain ? getChainMetadata(chain).nativeDenom : ATOM_METADATA.nativeDenom;
 };
 
 export const getTimeseriesHourly = async (params: {

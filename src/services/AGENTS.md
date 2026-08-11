@@ -84,6 +84,8 @@ Corrected coverage always satisfies `eligible_packets = priced_packets + unprice
 
 Every aggregate response includes `generated_at` and per-chain sources with `corrected_from`, `last_successful_sync_at`, `last_recomputed_at`, and `latest_source_event_at`. A successful empty source is proven by sync/recompute heartbeats, not by a packet maximum. Stats/assets retain `as_of` as a generated-time compatibility alias.
 
+Combined channel responses classify each row/window against that row's own chain correction boundary. Packet-backed channel totals are delivered-only, but a window that begins before the retained correction boundary is still `mixed` or `legacy_unverified`: the raw mirror cannot prove that the missing pre-boundary interval was empty.
+
 ## Counterparty chain enrichment
 
 `channels-service.queryChannelsMeta` `LEFT JOIN`s `ibc_channels` on `(channel_id_src, port_id_src)` to surface `counterparty_chain_id` and `counterparty_chain_name` in the `ChannelDto`. The join is left-side: rows from `ibc_packets` without a matching `ibc_channels` row (newer channels, non-seeded ports like `icahost`) still appear in the API output with `null` chain fields — clients must tolerate that. The lookup never widens the result set because `(channel_id_src, port_id_src)` is the PK of `ibc_channels`.
