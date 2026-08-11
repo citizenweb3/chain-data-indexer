@@ -3,19 +3,18 @@ import { z } from '@/lib/openapi-zod';
 import { ChainParam, DirectionEnum, PeriodEnum } from '@/schemas/common';
 import { IbcAggregationFreshnessSchema, IbcCoverageStatusSchema } from '@/schemas/ibc-aggregation';
 
-export const ChannelsCombinedSortEnum = z.enum([
-  'transfers',
-  'volume_atom',
-  'volume_usd',
-  'last_activity',
-]);
-export const ChannelsChainSortEnum = z.enum([
-  'transfers',
-  'volume_atom',
-  'volume_native',
-  'volume_usd',
-  'last_activity',
-]);
+export const ChannelsCombinedSortEnum = z
+  .enum(['transfers', 'volume_atom', 'volume_usd', 'last_activity'])
+  .openapi({
+    description:
+      'volume_atom is deprecated v1 uatom compatibility. Cross-chain volume_native sorting is intentionally unsupported.',
+  });
+export const ChannelsChainSortEnum = z
+  .enum(['transfers', 'volume_atom', 'volume_native', 'volume_usd', 'last_activity'])
+  .openapi({
+    description:
+      'volume_atom is deprecated v1 uatom compatibility; volume_native compares values only within the selected chain.',
+  });
 export const SortOrderEnum = z.enum(['asc', 'desc']);
 
 const makeChannelsQuerySchema = (
@@ -75,7 +74,11 @@ const ChannelBaseDtoSchema = z.object({
   counterparty_chain_id: z.string().nullable(),
   counterparty_chain_name: z.string().nullable(),
   transfers: PeriodCountsSchema,
-  volume_atom: PeriodAmountsSchema,
+  volume_atom: PeriodAmountsSchema.openapi({
+    deprecated: true,
+    description:
+      'Deprecated v1 compatibility field for uatom volume. Use volume_native on per-chain rows.',
+  }),
   volume_usd: PeriodAmountsSchema,
   coverage: PeriodCoverageSchema,
   success_rate_30d: z.number().min(0).max(1).nullable(),

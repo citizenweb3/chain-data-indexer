@@ -68,10 +68,19 @@ export type ChannelChainDto = ChannelBaseDto & {
 };
 export type ChannelDto = ChannelCombinedDto | ChannelChainDto;
 
-export type ChannelsResult = IbcAggregationFreshness & {
-  data: ChannelDto[];
+type ChannelsResultBase = IbcAggregationFreshness & {
   page: { total: number; limit: number; offset: number };
 };
+export type ChannelsCombinedResult = ChannelsResultBase & {
+  data: ChannelCombinedDto[];
+};
+export type ChannelsChainResult = ChannelsResultBase & {
+  data: ChannelChainDto[];
+};
+export type ChannelsResult = ChannelsCombinedResult | ChannelsChainResult;
+type ChannelsResultFor<TChain extends ChainName | null> = TChain extends ChainName
+  ? ChannelsChainResult
+  : ChannelsCombinedResult;
 
 const ATOM_DENOM = 'uatom';
 const ATOM_DECIMALS = 6;
@@ -354,15 +363,15 @@ const toCombinedDto = (dto: InternalChannelDto): ChannelCombinedDto => ({
   denoms: dto.denoms,
 });
 
-export const listChannels = async (params: {
+export const listChannels = async <TChain extends ChainName | null>(params: {
   direction: ChannelsDirection;
   period: ChannelsPeriod;
   sort: ChannelsSort;
   order: SortOrder;
   limit: number;
   offset: number;
-  chain: ChainName | null;
-}): Promise<ChannelsResult> => {
+  chain: TChain;
+}): Promise<ChannelsResultFor<TChain>> => {
   if (params.chain === null && params.sort === 'volume_native') {
     throw new Error('volume_native sorting requires a chain-scoped channels request');
   }
@@ -528,5 +537,5 @@ export const listChannels = async (params: {
     data: params.chain ? sliced : sliced.map(toCombinedDto),
     page: { total, limit: params.limit, offset: params.offset },
     ...context.freshness,
-  };
+  } as ChannelsResultFor<TChain>;
 };

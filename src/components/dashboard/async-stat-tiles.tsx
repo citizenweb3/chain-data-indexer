@@ -1,8 +1,9 @@
-import { getStats } from "@/services/stats-service";
-import { getSyncWatermarks } from "@/services/health-service";
-import type { Direction } from "@/components/dashboard/direction-toggle";
-import type { Period } from "@/components/dashboard/period-tabs";
-import { CHAIN_NAMES } from "@/lib/chains";
+import { getStats } from '@/services/stats-service';
+import { getSyncWatermarks } from '@/services/health-service';
+import type { Direction } from '@/components/dashboard/direction-toggle';
+import type { Period } from '@/components/dashboard/period-tabs';
+import { CHAIN_NAMES } from '@/lib/chains';
+import CoverageDisclosure from '@/components/common/coverage-disclosure';
 
 interface Props {
   direction: Direction;
@@ -21,11 +22,11 @@ const formatUsd = (s: string): string => {
 const formatCount = (n: number): string => {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
-  return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
 };
 
 const formatRelative = (iso: string | null): string => {
-  if (!iso) return "no data";
+  if (!iso) return 'no data';
   const diffSec = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
   if (diffSec < 60) return `${Math.round(diffSec)}s ago`;
   const m = Math.round(diffSec / 60);
@@ -43,12 +44,8 @@ type TileProps = {
 
 const Tile = ({ label, value, sub }: TileProps) => (
   <div className="border-bgSt bg-table_row flex flex-col gap-2 border p-5">
-    <div className="font-sfpro text-[11px] uppercase tracking-[0.18em] text-white/45">
-      {label}
-    </div>
-    <div className="font-handjet text-3xl leading-none tracking-wide text-white">
-      {value}
-    </div>
+    <div className="font-sfpro text-[11px] tracking-[0.18em] text-white/45 uppercase">{label}</div>
+    <div className="font-handjet text-3xl leading-none tracking-wide text-white">{value}</div>
     <div className="font-sfpro text-xs text-white/50">{sub}</div>
   </div>
 );
@@ -75,38 +72,38 @@ export default async function AsyncStatTiles({ direction, period }: Props) {
     latestSyncTimestamp > 0 ? new Date(latestSyncTimestamp).toISOString() : null;
 
   const periodLabel: Record<Period, string> = {
-    "24h": "last 24h",
-    "7d": "last 7 days",
-    "30d": "last 30 days",
+    '24h': 'last 24h',
+    '7d': 'last 7 days',
+    '30d': 'last 30 days',
   };
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Tile
-        label="Volume"
-        value={formatUsd(volume)}
-        sub={`USD · ${periodLabel[period]}`}
-      />
-      <Tile
-        label="Transfers"
-        value={formatCount(transfers)}
-        sub={`packets · ${periodLabel[period]}`}
-      />
-      <Tile
-        label="Chains"
-        value={`${liveChains} / ${totalChains}`}
-        sub={liveChains === totalChains ? "all live" : "indexed"}
-      />
-      <Tile
-        label="Last sync"
-        value={formatRelative(latestSyncIso)}
-        sub={
-          latestSyncIso
-            ? new Date(latestSyncIso).toLocaleString("en-GB", { timeZone: "UTC" }) +
-              " UTC"
-            : "—"
-        }
-      />
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Tile label="Volume" value={formatUsd(volume)} sub={`USD · ${periodLabel[period]}`} />
+        <Tile
+          label="Transfers"
+          value={formatCount(transfers)}
+          sub={`packets · ${periodLabel[period]}`}
+        />
+        <Tile
+          label="Chains"
+          value={`${liveChains} / ${totalChains}`}
+          sub={liveChains === totalChains ? 'all live' : 'indexed'}
+        />
+        <Tile
+          label="Last sync"
+          value={formatRelative(latestSyncIso)}
+          sub={
+            latestSyncIso
+              ? new Date(latestSyncIso).toLocaleString('en-GB', {
+                  timeZone: 'UTC',
+                }) + ' UTC'
+              : '—'
+          }
+        />
+      </div>
+      <CoverageDisclosure status={stats.coverage[period]} sources={stats.sources} />
     </div>
   );
 }

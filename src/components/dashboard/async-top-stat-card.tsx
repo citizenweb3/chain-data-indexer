@@ -1,13 +1,14 @@
-import { getStats } from "@/services/stats-service";
-import Card, { CardSubtext, CardValue } from "@/components/ui/card";
-import type { Direction } from "@/components/dashboard/direction-toggle";
-import type { Period } from "@/components/dashboard/period-tabs";
-import type { ChainName } from "@/lib/chains";
+import { getStats } from '@/services/stats-service';
+import Card, { CardSubtext, CardValue } from '@/components/ui/card';
+import type { Direction } from '@/components/dashboard/direction-toggle';
+import type { Period } from '@/components/dashboard/period-tabs';
+import type { ChainName } from '@/lib/chains';
+import CoverageDisclosure from '@/components/common/coverage-disclosure';
 
 const formatUsd = (s: string) => {
   const n = Number(s);
   if (!Number.isFinite(n)) return s;
-  return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
 };
 
 interface Props {
@@ -22,6 +23,12 @@ export default async function AsyncTopStatCard({ direction, period, chain }: Pro
     <Card>
       <CardValue>${formatUsd(stats.volume_usd[period])}</CardValue>
       <CardSubtext>USD</CardSubtext>
+      <CoverageDisclosure
+        status={stats.coverage[period]}
+        sources={stats.sources}
+        compact
+        className="mt-2"
+      />
     </Card>
   );
 }

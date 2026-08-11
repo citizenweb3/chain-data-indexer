@@ -42,7 +42,11 @@ const StatsPerChainRowSchema = z
   .object({
     chain: ChainParam,
     transfers_count: WindowCountsSchema,
-    volume_atom: WindowAmountsSchema,
+    volume_atom: WindowAmountsSchema.openapi({
+      deprecated: true,
+      description:
+        'Deprecated v1 compatibility field for uatom volume. Use volume_native on per-chain data.',
+    }),
     volume_native: WindowAmountsSchema,
     volume_usd: WindowAmountsSchema,
     coverage: WindowCoverageSchema,
@@ -52,7 +56,11 @@ const StatsPerChainRowSchema = z
 const StatsBaseDataSchema = z
   .object({
     transfers_count: WindowCountsSchema,
-    volume_atom: WindowAmountsSchema,
+    volume_atom: WindowAmountsSchema.openapi({
+      deprecated: true,
+      description:
+        'Deprecated v1 compatibility field for uatom volume. Combined responses intentionally have no volume_native scalar.',
+    }),
     volume_usd: WindowAmountsSchema,
     coverage: WindowCoverageSchema,
     as_of: z.iso.datetime(),

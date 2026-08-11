@@ -40,6 +40,8 @@ Everything else stays server-side so the bundle stays small and pages stream HTM
 - `components/layout/nav.tsx`
 - `components/charts/chart-config.ts` + `components/charts/timeseries-line.tsx`
 
+`components/common/coverage-disclosure.tsx` is a server component. It is the single wording/math source for priced-packet coverage and mixed/legacy correction warnings. Keep aggregate disclosure server-rendered next to the DTO consumer; do not add a client fetch, effect, or parallel coverage endpoint.
+
 If you add a `'use client'` directive, audit whether the parent could pass already-rendered ReactNodes instead (this is how `StatsCards` injects sparkline charts — see `channels/[channel]/page.tsx`).
 
 ## DTOs
@@ -51,6 +53,8 @@ DTO types live next to the component that owns the rendering, **not** in a separ
 - `StatsDto` is exported from `dashboard/stats-cards.tsx`.
 
 Pages import the type from the same file they import the component from. This is deliberate: when the DTO shape changes you only have one file to update, and a row component is the natural owner of "what one record looks like."
+
+Chain-native UI uses `native_symbol`/`native_decimals` from the service contract. Never label an AtomOne native value as ATOM, and never render a combined native scalar. The deprecated `volume_atom` path is compatibility-only.
 
 The `ChannelDto.counterparty_chain_name` field is the registry slug (lowercase, no separators — e.g. `osmosis`, `secretnetwork`, `cryptoorgchain`). Both `ChannelsTableRow` and the `channels/[channel]` page header title-case it on render with a tiny `formatChainName(slug)` helper that capitalises the first letter and accepts that multi-word slugs render as one token. There is no curated display map. When `counterparty_chain_name` is `null` (channel exists in `ibc_packets` but not in `ibc_channels`), the row shows `—` as the primary line and falls back to `channel_id_dst` as the subtext so the cell is never blank.
 

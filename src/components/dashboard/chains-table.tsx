@@ -1,33 +1,33 @@
-import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
-import BaseTable from "@/components/common/table/base-table";
-import BaseTableRow from "@/components/common/table/base-table-row";
-import BaseTableCell from "@/components/common/table/base-table-cell";
-import TableHeaderItem from "@/components/common/table/table-header-item";
-import { getStats } from "@/services/stats-service";
-import { getSyncWatermarks } from "@/services/health-service";
-import type { Direction } from "@/components/dashboard/direction-toggle";
-import type { Period } from "@/components/dashboard/period-tabs";
-import { CHAIN_DISPLAY_NAMES, type ChainName } from "@/lib/chains";
+import Link from 'next/link';
+import { formatDistanceToNow } from 'date-fns';
+import BaseTable from '@/components/common/table/base-table';
+import BaseTableRow from '@/components/common/table/base-table-row';
+import BaseTableCell from '@/components/common/table/base-table-cell';
+import TableHeaderItem from '@/components/common/table/table-header-item';
+import { getStats } from '@/services/stats-service';
+import { getSyncWatermarks } from '@/services/health-service';
+import type { Direction } from '@/components/dashboard/direction-toggle';
+import type { Period } from '@/components/dashboard/period-tabs';
+import { CHAIN_DISPLAY_NAMES, type ChainName } from '@/lib/chains';
+import CoverageDisclosure from '@/components/common/coverage-disclosure';
 
 interface Props {
   direction: Direction;
   period: Period;
 }
 
-const formatCount = (n: number): string =>
-  n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+const formatCount = (n: number): string => n.toLocaleString('en-US', { maximumFractionDigits: 0 });
 
 const formatUsd = (s: string): string => {
   const n = Number(s);
   if (!Number.isFinite(n)) return s;
-  return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
 };
 
 const formatRelative = (iso: string | null): string => {
-  if (!iso) return "—";
+  if (!iso) return '—';
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return '—';
   return formatDistanceToNow(d, { addSuffix: true });
 };
 
@@ -39,7 +39,7 @@ const isHeartbeatStale = (iso: string | null): boolean => {
 
 export default async function ChainsTable({ direction, period }: Props) {
   const [stats, watermarks] = await Promise.all([
-    getStats({ direction, chain: null, breakdown: "chain" }),
+    getStats({ direction, chain: null, breakdown: 'chain' }),
     getSyncWatermarks(),
   ]);
   const wmByChain = new Map(watermarks.map((w) => [w.chain, w]));
@@ -51,7 +51,10 @@ export default async function ChainsTable({ direction, period }: Props) {
         chain: r.chain,
         displayName: CHAIN_DISPLAY_NAMES[r.chain] ?? r.chain,
         transfers: r.transfers_count[period],
+        nativeVolume: r.volume_native[period],
+        nativeSymbol: r.native_symbol,
         volume: r.volume_usd[period],
+        coverage: r.coverage[period],
         lastActivity: w?.last_synced_at ?? null,
         lastSyncAttempt: w?.last_sync_attempt_at ?? null,
       };
@@ -69,7 +72,9 @@ export default async function ChainsTable({ direction, period }: Props) {
           <TableHeaderItem label="#" />
           <TableHeaderItem label="Chain" />
           <TableHeaderItem label="Transfers" />
+          <TableHeaderItem label="Volume (native)" />
           <TableHeaderItem label="Volume (USD)" />
+          <TableHeaderItem label="Pricing" />
           <TableHeaderItem label="Last activity" />
           <TableHeaderItem label="Sync" />
         </tr>
@@ -78,8 +83,8 @@ export default async function ChainsTable({ direction, period }: Props) {
         {rows.length === 0 ? (
           <tr>
             <td
-              colSpan={6}
-              className="bg-table_row py-8 text-center font-sfpro text-sm text-white/50"
+              colSpan={8}
+              className="bg-table_row font-sfpro py-8 text-center text-sm text-white/50"
             >
               No data.
             </td>
@@ -92,12 +97,10 @@ export default async function ChainsTable({ direction, period }: Props) {
               <BaseTableRow key={r.chain}>
                 <BaseTableCell className="py-3">
                   <Link href={link} className="block text-center">
-                    <span className="font-handjet text-lg text-white/40">
-                      {i + 1}
-                    </span>
+                    <span className="font-handjet text-lg text-white/40">{i + 1}</span>
                   </Link>
                 </BaseTableCell>
-                <BaseTableCell className="py-3 hover:text-highlight">
+                <BaseTableCell className="hover:text-highlight py-3">
                   <Link
                     href={link}
                     className="block text-center underline-offset-4 hover:underline"
@@ -107,39 +110,48 @@ export default async function ChainsTable({ direction, period }: Props) {
                 </BaseTableCell>
                 <BaseTableCell className="py-3">
                   <Link href={link} className="block">
-                    <div className="text-center font-handjet text-lg">
+                    <div className="font-handjet text-center text-lg">
                       {formatCount(r.transfers)}
                     </div>
                   </Link>
                 </BaseTableCell>
                 <BaseTableCell className="py-3">
                   <Link href={link} className="block">
-                    <div className="text-center font-handjet text-lg">
-                      ${formatUsd(r.volume)}
+                    <div className="font-handjet text-center text-lg">
+                      {formatUsd(r.nativeVolume)}
+                      <span className="ml-1 text-white/50">{r.nativeSymbol}</span>
                     </div>
                   </Link>
                 </BaseTableCell>
                 <BaseTableCell className="py-3">
                   <Link href={link} className="block">
-                    <div className="text-center font-sfpro text-sm text-white/70">
+                    <div className="font-handjet text-center text-lg">${formatUsd(r.volume)}</div>
+                  </Link>
+                </BaseTableCell>
+                <BaseTableCell className="max-w-[15rem] py-3">
+                  <CoverageDisclosure status={r.coverage} compact className="text-center" />
+                </BaseTableCell>
+                <BaseTableCell className="py-3">
+                  <Link href={link} className="block">
+                    <div className="font-sfpro text-center text-sm text-white/70">
                       {formatRelative(r.lastActivity)}
                     </div>
                   </Link>
                 </BaseTableCell>
                 <BaseTableCell className="py-3">
                   <Link href={link} className="block">
-                    <div className="flex items-center justify-center gap-2 font-sfpro text-sm text-white/70">
+                    <div className="font-sfpro flex items-center justify-center gap-2 text-sm text-white/70">
                       <span
                         aria-hidden
                         title={
                           heartbeatStale
-                            ? "Worker heartbeat is stale (>2 min)"
-                            : "Worker is healthy"
+                            ? 'Worker heartbeat is stale (>2 min)'
+                            : 'Worker is healthy'
                         }
                         className={
                           heartbeatStale
-                            ? "bg-highlight inline-block h-1.5 w-1.5 rounded-full"
-                            : "bg-secondary inline-block h-1.5 w-1.5 rounded-full"
+                            ? 'bg-highlight inline-block h-1.5 w-1.5 rounded-full'
+                            : 'bg-secondary inline-block h-1.5 w-1.5 rounded-full'
                         }
                       />
                       {formatRelative(r.lastSyncAttempt)}

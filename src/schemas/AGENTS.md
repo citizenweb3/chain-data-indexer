@@ -8,10 +8,10 @@ Zod 4 contract-first schemas. Every public API request/response goes through one
 |------|---------|
 | `common.ts` | Shared primitives — `DirectionEnum`, `PacketDirectionEnum`, `PeriodEnum`, `PacketStatusEnum`, `PortSchema`, `ChannelSchema`, `BigIntStringSchema`, `IsoDateCoerceSchema`, `IsoDateStringSchema`, `DenomSchema`, `ErrorResponseSchema` |
 | `ibc-aggregation.ts` | Shared aggregate coverage quality/counts and source freshness contracts |
-| `stats.ts` | `/api/v1/stats` query + response |
-| `channels.ts` | `/api/v1/channels` query + response (`ChannelsSortEnum`, `SortOrderEnum`) |
+| `stats.ts` | Split combined/per-chain stats responses; native values exist only in chain data/per-chain breakdown rows |
+| `channels.ts` | Split combined/per-chain channel queries/responses; only chain queries accept `volume_native` sort |
 | `assets.ts` | `/api/v1/assets` query + response (`AssetsSortEnum`) |
-| `timeseries.ts` | `/api/v1/timeseries` query + response (`TimeseriesMetricEnum`, `TimeseriesBucketEnum`) |
+| `timeseries.ts` | Split combined/per-chain metric queries plus point-level coverage/quality and freshness |
 | `transfers.ts` | `/api/v1/transfers` list query, route params, list/detail responses, cursor |
 
 ## Critical rule: import `z` from `@/lib/openapi-zod`, NOT from `'zod'`
@@ -57,6 +57,8 @@ No manual TS types for API payloads. If you find yourself writing `type Foo = {.
 
 - Wire BigInt / Decimal values are always strings in responses. Look at `IbcTransferDtoSchema` — every numeric chain value (`event_height`, `sequence`, `amount`, `timeout_ts`, etc.) is `z.string()` or `z.string().nullable()`. Do not change this — the entire DB layer hands back `bigint` / `Prisma.Decimal` for a reason and the service layer is responsible for `.toString()` / `.toFixed(0)`.
 - Periods (`24h | 7d | 30d`) are object keys in stats/channels responses, not enum-stringly indexed maps. This shape is intentional for frontend consumers.
+- `IbcCoverageStatusSchema` is discriminated: `corrected` requires exact coverage; `mixed` and `legacy_unverified` require `coverage: null`. Do not replace it with independent nullable fields.
+- Combined schemas reject native-unit comparison. `volume_native` and native sorting are chain-scoped; deprecated `volume_atom` preserves the v1 `uatom` contract.
 
 ## Cursor / keyset schemas
 

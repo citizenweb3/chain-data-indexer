@@ -14,6 +14,7 @@ DB-touching read services for the API + RSC pages. Pure functions: take typed pa
 | `health-service.ts` | `/api/v1/health` + dashboard last-sync card (`getSyncWatermark` — MAX `event_height` / `event_time` from `ibc_packets`) |
 | `ibc-aggregation-sql.ts` | Canonical delivered lifecycle, resolved-denom, and priced-packet SQL fragments |
 | `ibc-aggregation-coverage.ts` | Pure coverage merging, invariant checks, and public DTO conversion |
+| `ibc-aggregation-state.ts` | Per-chain correction boundaries plus generated/sync/recompute/source-event freshness |
 
 ## Imports
 
@@ -55,6 +56,8 @@ The DB has two layers:
 - `queryDailyWindow` for `[midnight-6d, midnight)` (7d) and `[midnight-29d, midnight)` (30d)
 - Sum `today + daily_window` to get the final 7d/30d values
 
+Every aggregate source uses the same delivered predicate: outgoing packets count only when `acknowledged`, and incoming packets count only when `received`. `/transfers` remains the unfiltered lifecycle log. Raw windows are always corrected; daily windows are corrected only on or after each chain's `IbcAggregateState.correctedFrom` boundary. A scope that crosses a boundary is `mixed`, and older data is `legacy_unverified`; both expose null coverage rather than invented packet counts.
+
 Do not query `ibc_packets` for a 30d count. The 30d retention boundary is upstream — older data lives only in `ibc_daily_stats`.
 
 ## `denom IS NULL` vs `denom = 'uatom'` in `ibc_daily_stats`
@@ -62,7 +65,8 @@ Do not query `ibc_packets` for a 30d count. The 30d retention boundary is upstre
 `ibc_daily_stats` is a 4-way `GROUPING SETS` pre-cube. Each row has a `denom` column that is either a real denom value or `NULL`, where `NULL` means "rolled up across all denoms":
 
 - **Counts** (transfer counts): filter `WHERE denom IS NULL` — this is the rollup row that counts every packet regardless of denom, including packets with no denom at all.
-- **Volumes** (volume_atom, volume_usd): filter `WHERE denom = 'uatom'` — volume only makes sense for a specific asset.
+- **Native/compatibility volumes**: filter the denom leaf (`uatom` for deprecated `volume_atom`, or the chain metadata native denom for `volume_native`).
+- **USD volume**: sum `amount_usd` across every `denom IS NOT NULL` leaf. Never read USD from the all-denom rollup, or the value will be double-counted.
 
 Mixing these up will either undercount transfers (by limiting to ATOM packets only) or accidentally double-count volume (by summing the rollup row that itself contains the ATOM sum).
 
@@ -71,6 +75,14 @@ See `stats-service.queryDailyWindow` and `timeseries-service.queryDailyStats` �
 Channel-level uses the same pattern with the extra column: `channel_id_src IS NOT NULL AND denom IS NULL` (channel-rollup row across denoms), or `channel_id_src IS NOT NULL AND denom = 'uatom'` (channel-specific ATOM volume).
 
 For the global (cross-channel) rollup row, filter `channel_id_src IS NULL`.
+
+There is no combined `volume_native` scalar or native sort: ATOM and ATONE are unlike units. Combined stats may return per-chain native rows; per-chain stats/timeseries/channels expose `volume_native` with denom/symbol/decimals metadata. `volume_atom` remains a deprecated `uatom` compatibility field for one v1 release.
+
+## Coverage and freshness
+
+Corrected coverage always satisfies `eligible_packets = priced_packets + unpriced_packets`. Eligibility is every delivered packet, including null denom/amount; a packet is priced only when amount, asset mapping, and event-date price all exist. Unknown/null denoms use `__unknown__` in the unpriced set. Timeseries exposes coverage per point, stats per window/per-chain window, assets at selected-period top level, and channels per row/window.
+
+Every aggregate response includes `generated_at` and per-chain sources with `corrected_from`, `last_successful_sync_at`, `last_recomputed_at`, and `latest_source_event_at`. A successful empty source is proven by sync/recompute heartbeats, not by a packet maximum. Stats/assets retain `as_of` as a generated-time compatibility alias.
 
 ## Counterparty chain enrichment
 

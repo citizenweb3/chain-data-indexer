@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import {
   CategoryScale,
@@ -10,7 +10,7 @@ import {
   PointElement,
   Tooltip,
   type ChartOptions,
-} from "chart.js";
+} from 'chart.js';
 
 let registered = false;
 
@@ -25,53 +25,50 @@ export async function ensureChartRegistered() {
     Tooltip,
     Filler,
   );
-  if (typeof window !== "undefined") {
-    const zoomPlugin = (await import("chartjs-plugin-zoom")).default;
+  if (typeof window !== 'undefined') {
+    const zoomPlugin = (await import('chartjs-plugin-zoom')).default;
     Chart.register(zoomPlugin);
   }
   registered = true;
 }
 
-export type ChartVariant = "full" | "card";
-export type ChartMetric = "transfers" | "volume_atom" | "volume_usd";
+export type ChartVariant = 'full' | 'card';
+export type ChartMetric = 'transfers' | 'volume_atom' | 'volume_native' | 'volume_usd';
 
-const HIGHLIGHT = "#4FB848";
-const HIGHLIGHT_FAINT = "rgba(79, 184, 72, 0.06)";
-const GRID = "rgba(62, 62, 62, 0.5)";
-const TICK = "rgba(255, 255, 255, 0.55)";
+const HIGHLIGHT = '#4FB848';
+const HIGHLIGHT_FAINT = 'rgba(79, 184, 72, 0.06)';
+const GRID = 'rgba(62, 62, 62, 0.5)';
+const TICK = 'rgba(255, 255, 255, 0.55)';
 
 export function formatMetricValue(value: number, metric: ChartMetric) {
-  if (metric === "transfers") {
-    return value.toLocaleString("en-US", { maximumFractionDigits: 0 });
+  if (metric === 'transfers') {
+    return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
   }
-  if (metric === "volume_usd") {
-    return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  if (metric === 'volume_usd') {
+    return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
   }
-  return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
-export function buildOptions(
-  variant: ChartVariant,
-  metric: ChartMetric,
-): ChartOptions<"line"> {
-  const isCard = variant === "card";
+export function buildOptions(variant: ChartVariant, metric: ChartMetric): ChartOptions<'line'> {
+  const isCard = variant === 'card';
 
   return {
     responsive: true,
     maintainAspectRatio: false,
     animation: false,
-    interaction: { mode: "index", intersect: false },
+    interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
       tooltip: {
         enabled: !isCard,
-        backgroundColor: "#1e1e1e",
-        borderColor: "#3e3e3e",
+        backgroundColor: '#1e1e1e',
+        borderColor: '#3e3e3e',
         borderWidth: 1,
         titleColor: HIGHLIGHT,
-        bodyColor: "#ffffff",
-        titleFont: { family: "var(--font-sfpro)", size: 11, weight: 600 },
-        bodyFont: { family: "var(--font-handjet)", size: 14 },
+        bodyColor: '#ffffff',
+        titleFont: { family: 'var(--font-sfpro)', size: 11, weight: 600 },
+        bodyFont: { family: 'var(--font-handjet)', size: 14 },
         padding: 8,
         displayColors: false,
         callbacks: {
@@ -81,11 +78,11 @@ export function buildOptions(
       zoom: isCard
         ? { pan: { enabled: false }, zoom: { wheel: { enabled: false } } }
         : {
-            pan: { enabled: true, mode: "x" },
+            pan: { enabled: true, mode: 'x' },
             zoom: {
               wheel: { enabled: true },
               pinch: { enabled: true },
-              mode: "x",
+              mode: 'x',
             },
           },
     },
@@ -95,7 +92,7 @@ export function buildOptions(
         grid: { display: !isCard, color: GRID },
         ticks: {
           color: TICK,
-          font: { family: "var(--font-sfpro)", size: 11 },
+          font: { family: 'var(--font-sfpro)', size: 11 },
           maxRotation: 0,
           autoSkipPadding: 16,
         },
@@ -106,7 +103,7 @@ export function buildOptions(
         grid: { display: !isCard, color: GRID },
         ticks: {
           color: TICK,
-          font: { family: "var(--font-handjet)", size: 11 },
+          font: { family: 'var(--font-handjet)', size: 11 },
           callback: (value) => formatMetricValue(Number(value), metric),
         },
       },
@@ -122,13 +119,8 @@ export function buildGradient(
   ctx: CanvasRenderingContext2D,
   chartArea: { top: number; bottom: number },
 ) {
-  const gradient = ctx.createLinearGradient(
-    0,
-    chartArea.top,
-    0,
-    chartArea.bottom,
-  );
-  gradient.addColorStop(0, "rgba(79, 184, 72, 0.35)");
+  const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+  gradient.addColorStop(0, 'rgba(79, 184, 72, 0.35)');
   gradient.addColorStop(1, HIGHLIGHT_FAINT);
   return gradient;
 }

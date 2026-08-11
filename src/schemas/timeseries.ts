@@ -7,13 +7,18 @@ import {
   IbcPacketCoverageSchema,
 } from '@/schemas/ibc-aggregation';
 
-export const TimeseriesCombinedMetricEnum = z.enum(['transfers', 'volume_atom', 'volume_usd']);
-export const TimeseriesChainMetricEnum = z.enum([
-  'transfers',
-  'volume_atom',
-  'volume_native',
-  'volume_usd',
-]);
+export const TimeseriesCombinedMetricEnum = z
+  .enum(['transfers', 'volume_atom', 'volume_usd'])
+  .openapi({
+    description:
+      'volume_atom is the deprecated v1 uatom compatibility metric. volume_native is available only on per-chain routes.',
+  });
+export const TimeseriesChainMetricEnum = z
+  .enum(['transfers', 'volume_atom', 'volume_native', 'volume_usd'])
+  .openapi({
+    description:
+      'volume_atom is deprecated v1 uatom compatibility; volume_native uses the selected chain native denom and decimals.',
+  });
 export type TimeseriesCombinedMetric = z.infer<typeof TimeseriesCombinedMetricEnum>;
 export type TimeseriesChainMetric = z.infer<typeof TimeseriesChainMetricEnum>;
 

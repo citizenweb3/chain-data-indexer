@@ -385,6 +385,12 @@ test(
         assert.equal(chainStatsResponse.status, 200);
         StatsChainResponseSchema.parse(await chainStatsResponse.json());
 
+        const unknownChainResponse = await chainStatsRoute.GET(
+          new Request('http://localhost/api/v1/unknown/stats'),
+          { params: Promise.resolve({ chain: 'unknown' }) },
+        );
+        assert.equal(unknownChainResponse.status, 404);
+
         const combinedAssets24h = await getAssetsBreakdown({
           direction: 'both',
           period: '24h',

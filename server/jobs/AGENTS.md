@@ -103,7 +103,7 @@ inside one transaction:
 
 ### Why `COALESCE(denom, '__unknown__')`
 
-Undecoded packets (status `sent`, or never decoded by upstream) have `denom = NULL`. Without coalesce, the L1 grouping set produces a row `(date, channel, direction, NULL)` that would collide on conflict with the L2 rollup row `(date, channel, direction, GROUPING(denom)=NULL)`. The `NULLS NOT DISTINCT` unique index on the conflict target treats them as the same key — Postgres rejects this as `command cannot affect row a second time` (SQLSTATE 21000).
+Even a delivered upstream row can lack a decoded denom. Without coalesce, the L1 grouping set produces a row `(date, channel, direction, NULL)` that would collide on conflict with the L2 rollup row `(date, channel, direction, GROUPING(denom)=NULL)`. The `NULLS NOT DISTINCT` unique index on the conflict target treats them as the same key — Postgres rejects this as `command cannot affect row a second time` (SQLSTATE 21000).
 
 Coalescing to a sentinel string lifts undecoded packets into their own dim slot — they get counted in their own L1 row (`denom = '__unknown__'`), and the rollup L2 (`denom = NULL` from GROUPING) is a distinct conflict key. No collision.
 
@@ -114,7 +114,7 @@ The sentinel is `'__unknown__'` — double-underscored on purpose so it cannot c
 The API services rely on these dim slots:
 - `denom IS NULL` → rollup row over all denoms (used for `transfers_count` totals).
 - `denom = 'uatom'` → ATOM-specific volume rows (used for `volume_atom` / `volume_usd`).
-- `denom = '__unknown__'` → opaque slot, **not surfaced** by the API. The strict `denom = 'uatom'` filter excludes it from volumes; the `denom IS NULL` filter for counts uses rollup rows that already include undecoded packets in their counts.
+- `denom = '__unknown__'` → opaque asset slot and deterministic unpriced-denom sentinel. The strict native-denom filters exclude it from native volume; count rollups still include it, and coverage discloses it as unpriced.
 
 If you add a new asset (say SCRT priced via CoinGecko), the unique index already disambiguates `(..., 'uscrt')` from rollup. No schema change required.
 
