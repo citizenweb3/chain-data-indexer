@@ -87,6 +87,10 @@ Steps in order:
 3. Wrap the success in `okJson(result, cache)`. Only stats / channels / timeseries wrap data in `{ data }` themselves — for those endpoints the wrapping is done by the handler (`okJson({ data }, '...')`); for transfers list the service already returns the full envelope (`{ data, cursor, has_more, total }`).
 4. Catch any throw, log via `logger('<scope>').logError(...)`, return 500 via `errorResponse`. **Never** leak the raw error message to the response body.
 
+Aggregate routes use separate combined/per-chain schemas. Combined timeseries rejects `metric=volume_native`; combined channels rejects `sort=volume_native`. The corresponding per-chain routes accept them and return native denom/symbol/decimals metadata. Do not merge these schemas into a permissive union: unlike native units must never be compared across chains.
+
+Stats, timeseries, assets, and channels return delivered-only values, granular pricing coverage/quality, and source freshness. `/transfers` intentionally remains an unfiltered lifecycle log.
+
 ## 404 — only one place
 
 `/api/v1/transfers/[port]/[channel]/[sequence]` returns 404 when `getTransfer(...)` returns `null`:

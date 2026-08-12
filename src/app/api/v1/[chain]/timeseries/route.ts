@@ -1,7 +1,7 @@
 import logger from '@/logger';
 import { errorResponse, okJson, parseSearchParams } from '@/lib/api-helpers';
 import { isChainName } from '@/lib/chains';
-import { TimeseriesQuerySchema } from '@/schemas/timeseries';
+import { TimeseriesChainQuerySchema } from '@/schemas/timeseries';
 import { getTimeseries, getTimeseriesHourly } from '@/services/timeseries-service';
 
 export const dynamic = 'force-dynamic';
@@ -15,7 +15,7 @@ export const GET = async (
   const { chain } = await ctx.params;
   if (!isChainName(chain)) return errorResponse('not_found', 404);
 
-  const parsed = parseSearchParams(TimeseriesQuerySchema, request);
+  const parsed = parseSearchParams(TimeseriesChainQuerySchema, request);
   if (!parsed.ok) return parsed.response;
 
   try {

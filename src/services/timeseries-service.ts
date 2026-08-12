@@ -1,69 +1,105 @@
 import { Prisma } from '@prisma/client';
 
 import { db } from '@/db';
-import type { ChainName } from '@/lib/chains';
+import { getChainMetadata, type ChainName } from '@/lib/chains';
+import type { IbcAggregationFreshness, IbcCoverageStatus } from '@/schemas/ibc-aggregation';
+import {
+  mergeIbcCoverageRows,
+  toIbcCoverageStatus,
+  type IbcCoverageCountRow,
+} from '@/services/ibc-aggregation-coverage';
+import {
+  dailyCoverageSelectSql,
+  DELIVERED_PACKET_SQL,
+  PACKET_COVERAGE_SELECT_SQL,
+  PRICED_PACKET_SQL,
+  RESOLVED_PACKET_DENOM_SQL,
+} from '@/services/ibc-aggregation-sql';
+import { classifyIbcDailyRange, getIbcAggregationContext } from '@/services/ibc-aggregation-state';
 import { formatNative } from '@/utils/format-amount';
 
-export type TimeseriesMetric = 'transfers' | 'volume_atom' | 'volume_usd';
+export type TimeseriesMetric = 'transfers' | 'volume_atom' | 'volume_native' | 'volume_usd';
 export type TimeseriesDirection = 'outgoing' | 'incoming' | 'both';
 
-export type TimeseriesPoint = { date: string; value: string };
+export type TimeseriesPoint = IbcCoverageStatus & {
+  date: string;
+  value: string;
+};
 
-export type TimeseriesResult = { data: TimeseriesPoint[] };
+export type TimeseriesResult = IbcAggregationFreshness & {
+  data: TimeseriesPoint[];
+};
 
+const ATOM_METADATA = getChainMetadata('cosmoshub');
 const MS_PER_HOUR = 3_600_000;
+const MS_PER_DAY = 86_400_000;
 const HOURLY_BUCKETS = 24;
+const DEFAULT_DAYS = 30;
+const MAX_RANGE_DAYS = 365;
 
-type HourlyRow = { hour: Date; value: Prisma.Decimal | bigint };
+const toUtcDate = (date: Date): Date => {
+  const result = new Date(date);
+  result.setUTCHours(0, 0, 0, 0);
+  return result;
+};
 
-const queryHourly = async (params: {
+const formatYmd = (date: Date): string => date.toISOString().slice(0, 10);
+
+const packetDirectionFilter = (direction: TimeseriesDirection): Prisma.Sql =>
+  direction === 'both'
+    ? Prisma.sql`p.direction IN ('outgoing','incoming')`
+    : Prisma.sql`p.direction = ${direction}`;
+
+const dailyDirectionFilter = (direction: TimeseriesDirection): Prisma.Sql =>
+  direction === 'both'
+    ? Prisma.sql`d.direction IN ('outgoing','incoming')`
+    : Prisma.sql`d.direction = ${direction}`;
+
+const packetMetricValue = (metric: TimeseriesMetric, nativeDenom: string): Prisma.Sql => {
+  if (metric === 'transfers') return Prisma.sql`COUNT(*)::bigint`;
+  if (metric === 'volume_usd') {
+    return Prisma.sql`
+      COALESCE(SUM(
+        CASE WHEN ${PRICED_PACKET_SQL}
+          THEN (p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)
+        END
+      ), 0)
+    `;
+  }
+  const denom = metric === 'volume_atom' ? ATOM_METADATA.nativeDenom : nativeDenom;
+  return Prisma.sql`
+    COALESCE(SUM(
+      CASE WHEN ${RESOLVED_PACKET_DENOM_SQL} = ${denom} THEN p.amount END
+    ), 0)
+  `;
+};
+
+type RawTimeseriesRow = IbcCoverageCountRow & {
+  bucket: Date;
+  value: Prisma.Decimal | bigint;
+};
+
+const queryPacketBuckets = async (params: {
+  bucket: 'hour' | 'day';
   metric: TimeseriesMetric;
   direction: TimeseriesDirection;
   from: Date;
   channelIdSrc?: string;
   chain: ChainName | null;
-}): Promise<HourlyRow[]> => {
-  const spotFrom = new Date(params.from.getTime() - 2 * MS_PER_DAY);
+  nativeDenom: string;
+}): Promise<RawTimeseriesRow[]> => {
+  const bucketSql =
+    params.bucket === 'hour'
+      ? Prisma.sql`date_trunc('hour', p.event_time)`
+      : Prisma.sql`date_trunc('day', p.event_time)`;
   const channelClause =
-    params.channelIdSrc !== undefined
-      ? Prisma.sql`p.channel_id_src = ${params.channelIdSrc}`
-      : Prisma.sql`TRUE`;
-  const chainClause = params.chain
-    ? Prisma.sql`AND p.chain = ${params.chain}`
-    : Prisma.empty;
+    params.channelIdSrc === undefined
+      ? Prisma.sql`TRUE`
+      : Prisma.sql`p.channel_id_src = ${params.channelIdSrc}`;
+  const chainClause = params.chain ? Prisma.sql`AND p.chain = ${params.chain}` : Prisma.empty;
+  const spotFrom = new Date(params.from.getTime() - 2 * MS_PER_DAY);
 
-  if (params.metric === 'transfers') {
-    return db.$queryRaw<HourlyRow[]>(Prisma.sql`
-      SELECT date_trunc('hour', p.event_time) AS hour,
-             COUNT(*)::bigint AS value
-      FROM ibc_packets p
-      WHERE p.event_time IS NOT NULL
-        AND p.event_time >= ${params.from}
-        AND ${channelClause}
-        AND ${directionFilter(params.direction)}
-        ${chainClause}
-      GROUP BY hour
-      ORDER BY hour ASC
-    `);
-  }
-
-  if (params.metric === 'volume_atom') {
-    return db.$queryRaw<HourlyRow[]>(Prisma.sql`
-      SELECT date_trunc('hour', p.event_time) AS hour,
-             COALESCE(SUM(p.amount), 0) AS value
-      FROM ibc_packets p
-      WHERE p.event_time IS NOT NULL
-        AND p.event_time >= ${params.from}
-        AND resolve_base_denom(p.denom) = ${ATOM_DENOM}
-        AND ${channelClause}
-        AND ${directionFilter(params.direction)}
-        ${chainClause}
-      GROUP BY hour
-      ORDER BY hour ASC
-    `);
-  }
-
-  return db.$queryRaw<HourlyRow[]>(Prisma.sql`
+  return db.$queryRaw<RawTimeseriesRow[]>(Prisma.sql`
     WITH daily_spot_prices AS (
       SELECT DISTINCT ON (asset_id, date)
         asset_id,
@@ -73,27 +109,150 @@ const queryHourly = async (params: {
       WHERE created_at >= ${spotFrom}
       ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
     )
-    SELECT date_trunc('hour', p.event_time) AS hour,
-           COALESCE(
-             SUM((p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)),
-             0
-           ) AS value
+    SELECT
+      ${bucketSql} AS bucket,
+      ${packetMetricValue(params.metric, params.nativeDenom)} AS value,
+      ${PACKET_COVERAGE_SELECT_SQL}
     FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
+    LEFT JOIN assets a ON a.native_denom = ${RESOLVED_PACKET_DENOM_SQL}
     LEFT JOIN price_history ph ON ph.asset_id = a.id
       AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
     LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
       AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
     WHERE p.event_time IS NOT NULL
       AND p.event_time >= ${params.from}
-      AND a.id IS NOT NULL
-      AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
       AND ${channelClause}
-      AND ${directionFilter(params.direction)}
+      AND ${packetDirectionFilter(params.direction)}
       ${chainClause}
-    GROUP BY hour
-    ORDER BY hour ASC
+      AND ${DELIVERED_PACKET_SQL}
+    GROUP BY ${bucketSql}
+    ORDER BY ${bucketSql} ASC
   `);
+};
+
+const dailyMetricValue = (
+  metric: TimeseriesMetric,
+  nativeDenom: string,
+): { expression: Prisma.Sql; denomClause: Prisma.Sql } => {
+  if (metric === 'transfers') {
+    return {
+      expression: Prisma.sql`COALESCE(SUM(d.transfers_count), 0)::bigint`,
+      denomClause: Prisma.sql`d.denom IS NULL`,
+    };
+  }
+  if (metric === 'volume_usd') {
+    return {
+      expression: Prisma.sql`COALESCE(SUM(d.amount_usd), 0)`,
+      denomClause: Prisma.sql`d.denom IS NOT NULL`,
+    };
+  }
+  const denom = metric === 'volume_atom' ? ATOM_METADATA.nativeDenom : nativeDenom;
+  return {
+    expression: Prisma.sql`COALESCE(SUM(d.amount_native), 0)`,
+    denomClause: Prisma.sql`d.denom = ${denom}`,
+  };
+};
+
+const queryDailyStats = async (params: {
+  metric: TimeseriesMetric;
+  direction: TimeseriesDirection;
+  from: Date;
+  toExclusive: Date;
+  channelIdSrc?: string;
+  chain: ChainName | null;
+  nativeDenom: string;
+}): Promise<RawTimeseriesRow[]> => {
+  const channelClause =
+    params.channelIdSrc === undefined
+      ? Prisma.sql`d.channel_id_src IS NULL`
+      : Prisma.sql`d.channel_id_src = ${params.channelIdSrc}`;
+  const chainClause = params.chain ? Prisma.sql`AND d.chain = ${params.chain}` : Prisma.empty;
+  const metric = dailyMetricValue(params.metric, params.nativeDenom);
+
+  return db.$queryRaw<RawTimeseriesRow[]>(Prisma.sql`
+    WITH count_rows AS (
+      SELECT d.*
+      FROM ibc_daily_stats d
+      WHERE ${channelClause}
+        AND d.denom IS NULL
+        AND d.date >= ${params.from}
+        AND d.date < ${params.toExclusive}
+        AND ${dailyDirectionFilter(params.direction)}
+        ${chainClause}
+    ),
+    coverage_by_date AS (
+      SELECT
+        d.date AS bucket,
+        ${dailyCoverageSelectSql(Prisma.sql`WHERE d2.date = d.date`)}
+      FROM count_rows d
+      GROUP BY d.date
+    ),
+    value_by_date AS (
+      SELECT d.date AS bucket, ${metric.expression} AS value
+      FROM ibc_daily_stats d
+      WHERE ${channelClause}
+        AND ${metric.denomClause}
+        AND d.date >= ${params.from}
+        AND d.date < ${params.toExclusive}
+        AND ${dailyDirectionFilter(params.direction)}
+        ${chainClause}
+      GROUP BY d.date
+    )
+    SELECT
+      coverage_by_date.bucket,
+      COALESCE(value_by_date.value, 0) AS value,
+      coverage_by_date.eligible_packets,
+      coverage_by_date.priced_packets,
+      coverage_by_date.unpriced_packets,
+      coverage_by_date.unpriced_denoms
+    FROM coverage_by_date
+    LEFT JOIN value_by_date USING (bucket)
+    ORDER BY coverage_by_date.bucket ASC
+  `);
+};
+
+const emptyCoverageRow = (): IbcCoverageCountRow => ({
+  eligible_packets: BigInt(0),
+  priced_packets: BigInt(0),
+  unpriced_packets: BigInt(0),
+  unpriced_denoms: [],
+});
+
+const formatValue = (
+  metric: TimeseriesMetric,
+  value: Prisma.Decimal | bigint | null,
+  chain: ChainName | null,
+): string => {
+  if (value === null) return '0';
+  if (metric === 'transfers') {
+    return typeof value === 'bigint' ? value.toString() : value.toFixed(0);
+  }
+  if (metric === 'volume_usd') {
+    return typeof value === 'bigint' ? value.toString() : value.toFixed(2);
+  }
+  const decimals =
+    metric === 'volume_native' && chain
+      ? getChainMetadata(chain).nativeDecimals
+      : ATOM_METADATA.nativeDecimals;
+  const raw = typeof value === 'bigint' ? value.toString() : value.toFixed(0);
+  return formatNative(raw, decimals) ?? '0';
+};
+
+const correctedPoint = (
+  date: string,
+  value: string,
+  coverageRow: IbcCoverageCountRow,
+): TimeseriesPoint => ({
+  date,
+  value,
+  ...toIbcCoverageStatus('corrected', mergeIbcCoverageRows([coverageRow])),
+});
+
+const resolveNativeDenom = (metric: TimeseriesMetric, chain: ChainName | null): string => {
+  if (metric === 'volume_native' && chain === null) {
+    throw new Error('volume_native requires a chain-scoped timeseries request');
+  }
+  return chain ? getChainMetadata(chain).nativeDenom : ATOM_METADATA.nativeDenom;
 };
 
 export const getTimeseriesHourly = async (params: {
@@ -105,196 +264,37 @@ export const getTimeseriesHourly = async (params: {
   const now = new Date();
   const currentHour = new Date(now);
   currentHour.setUTCMinutes(0, 0, 0);
-  const from = new Date(
-    currentHour.getTime() - (HOURLY_BUCKETS - 1) * MS_PER_HOUR,
-  );
+  const from = new Date(currentHour.getTime() - (HOURLY_BUCKETS - 1) * MS_PER_HOUR);
+  const nativeDenom = resolveNativeDenom(params.metric, params.chain);
+  const [rows, context] = await Promise.all([
+    queryPacketBuckets({
+      bucket: 'hour',
+      metric: params.metric,
+      direction: params.direction,
+      from,
+      channelIdSrc: params.channelIdSrc,
+      chain: params.chain,
+      nativeDenom,
+    }),
+    getIbcAggregationContext(params.chain, now),
+  ]);
 
-  const rows = await queryHourly({
-    metric: params.metric,
-    direction: params.direction,
-    from,
-    channelIdSrc: params.channelIdSrc,
-    chain: params.chain,
-  });
-
-  const byHour = new Map<string, Prisma.Decimal | bigint>();
-  for (const row of rows) {
-    byHour.set(row.hour.toISOString(), row.value);
-  }
-
+  const byHour = new Map(rows.map((row) => [row.bucket.toISOString(), row]));
   const data: TimeseriesPoint[] = [];
-  for (let i = 0; i < HOURLY_BUCKETS; i++) {
-    const t = new Date(from.getTime() + i * MS_PER_HOUR);
-    const key = t.toISOString();
-    const value = byHour.get(key) ?? null;
-    data.push({ date: key, value: formatValue(params.metric, value) });
+  for (let index = 0; index < HOURLY_BUCKETS; index += 1) {
+    const date = new Date(from.getTime() + index * MS_PER_HOUR);
+    const key = date.toISOString();
+    const row = byHour.get(key);
+    data.push(
+      correctedPoint(
+        key,
+        formatValue(params.metric, row?.value ?? null, params.chain),
+        row ?? emptyCoverageRow(),
+      ),
+    );
   }
 
-  return { data };
-};
-
-const ATOM_DENOM = 'uatom';
-const ATOM_DECIMALS = 6;
-const MS_PER_DAY = 86_400_000;
-const DEFAULT_DAYS = 30;
-const MAX_RANGE_DAYS = 365;
-
-const toUtcDate = (d: Date): Date => {
-  const out = new Date(d);
-  out.setUTCHours(0, 0, 0, 0);
-  return out;
-};
-
-const formatYmd = (d: Date): string => d.toISOString().slice(0, 10);
-
-const directionFilter = (direction: TimeseriesDirection): Prisma.Sql =>
-  direction === 'both'
-    ? Prisma.sql`direction IN ('outgoing','incoming')`
-    : Prisma.sql`direction = ${direction}`;
-
-type RawRow = { date: Date; value: Prisma.Decimal | bigint };
-
-const queryDailyStats = async (params: {
-  metric: TimeseriesMetric;
-  direction: TimeseriesDirection;
-  from: Date;
-  toExclusive: Date;
-  channelIdSrc?: string;
-  chain: ChainName | null;
-}): Promise<RawRow[]> => {
-  const channelClause =
-    params.channelIdSrc !== undefined
-      ? Prisma.sql`channel_id_src = ${params.channelIdSrc}`
-      : Prisma.sql`channel_id_src IS NULL`;
-  const chainClause = params.chain
-    ? Prisma.sql`AND chain = ${params.chain}`
-    : Prisma.empty;
-
-  if (params.metric === 'transfers') {
-    return db.$queryRaw<RawRow[]>(Prisma.sql`
-      SELECT date, COALESCE(SUM(transfers_count), 0)::bigint AS value
-      FROM ibc_daily_stats
-      WHERE ${channelClause}
-        AND denom IS NULL
-        AND date >= ${params.from}
-        AND date < ${params.toExclusive}
-        AND ${directionFilter(params.direction)}
-        ${chainClause}
-      GROUP BY date
-      ORDER BY date ASC
-    `);
-  }
-
-  const valueExpr =
-    params.metric === 'volume_atom'
-      ? Prisma.sql`COALESCE(SUM(amount_native), 0)`
-      : Prisma.sql`COALESCE(SUM(amount_usd), 0)`;
-
-  const denomFilter =
-    params.metric === 'volume_atom'
-      ? Prisma.sql`denom = ${ATOM_DENOM}`
-      : Prisma.sql`denom IS NOT NULL`;
-
-  return db.$queryRaw<RawRow[]>(Prisma.sql`
-    SELECT date, ${valueExpr} AS value
-    FROM ibc_daily_stats
-    WHERE ${channelClause}
-      AND ${denomFilter}
-      AND date >= ${params.from}
-      AND date < ${params.toExclusive}
-      AND ${directionFilter(params.direction)}
-      ${chainClause}
-    GROUP BY date
-    ORDER BY date ASC
-  `);
-};
-
-type TodayRow = { value: Prisma.Decimal | bigint };
-
-const queryToday = async (params: {
-  metric: TimeseriesMetric;
-  direction: TimeseriesDirection;
-  midnight: Date;
-  channelIdSrc?: string;
-  chain: ChainName | null;
-}): Promise<Prisma.Decimal | bigint> => {
-  const channelClause =
-    params.channelIdSrc !== undefined
-      ? Prisma.sql`p.channel_id_src = ${params.channelIdSrc}`
-      : Prisma.sql`TRUE`;
-  const chainClause = params.chain
-    ? Prisma.sql`AND p.chain = ${params.chain}`
-    : Prisma.empty;
-
-  if (params.metric === 'transfers') {
-    const rows = await db.$queryRaw<TodayRow[]>(Prisma.sql`
-      SELECT COUNT(*)::bigint AS value
-      FROM ibc_packets p
-      WHERE p.event_time IS NOT NULL
-        AND p.event_time >= ${params.midnight}
-        AND ${channelClause}
-        AND ${directionFilter(params.direction)}
-        ${chainClause}
-    `);
-    return rows[0]?.value ?? BigInt(0);
-  }
-
-  if (params.metric === 'volume_atom') {
-    const rows = await db.$queryRaw<TodayRow[]>(Prisma.sql`
-      SELECT COALESCE(SUM(p.amount), 0) AS value
-      FROM ibc_packets p
-      WHERE p.event_time IS NOT NULL
-        AND p.event_time >= ${params.midnight}
-        AND resolve_base_denom(p.denom) = ${ATOM_DENOM}
-        AND ${channelClause}
-        AND ${directionFilter(params.direction)}
-        ${chainClause}
-    `);
-    return rows[0]?.value ?? new Prisma.Decimal(0);
-  }
-
-  const spotFrom = new Date(params.midnight.getTime() - MS_PER_DAY);
-  const rows = await db.$queryRaw<TodayRow[]>(Prisma.sql`
-    WITH daily_spot_prices AS (
-      SELECT DISTINCT ON (asset_id, date)
-        asset_id,
-        (created_at AT TIME ZONE 'UTC')::date AS date,
-        usd
-      FROM prices
-      WHERE created_at >= ${spotFrom}
-      ORDER BY asset_id, (created_at AT TIME ZONE 'UTC')::date, created_at DESC
-    )
-    SELECT COALESCE(
-      SUM((p.amount / POWER(10::numeric, a.decimals)) * COALESCE(ph.usd, dsp.usd)),
-      0
-    ) AS value
-    FROM ibc_packets p
-    LEFT JOIN assets a ON a.native_denom = resolve_base_denom(p.denom)
-    LEFT JOIN price_history ph ON ph.asset_id = a.id
-      AND ph.date = (p.event_time AT TIME ZONE 'UTC')::date
-    LEFT JOIN daily_spot_prices dsp ON dsp.asset_id = a.id
-      AND dsp.date = (p.event_time AT TIME ZONE 'UTC')::date
-    WHERE p.event_time IS NOT NULL
-      AND p.event_time >= ${params.midnight}
-      AND a.id IS NOT NULL
-      AND COALESCE(ph.usd, dsp.usd) IS NOT NULL
-      AND ${channelClause}
-      AND ${directionFilter(params.direction)}
-      ${chainClause}
-  `);
-  return rows[0]?.value ?? new Prisma.Decimal(0);
-};
-
-const formatValue = (metric: TimeseriesMetric, value: Prisma.Decimal | bigint | null): string => {
-  if (value === null) return '0';
-  if (metric === 'transfers') {
-    return typeof value === 'bigint' ? value.toString() : value.toFixed(0);
-  }
-  if (metric === 'volume_atom') {
-    const raw = typeof value === 'bigint' ? value.toString() : value.toFixed(0);
-    return formatNative(raw, ATOM_DECIMALS) ?? '0';
-  }
-  return typeof value === 'bigint' ? value.toString() : value.toFixed(2);
+  return { data, ...context.freshness };
 };
 
 export const getTimeseries = async (params: {
@@ -307,52 +307,76 @@ export const getTimeseries = async (params: {
 }): Promise<TimeseriesResult> => {
   const now = new Date();
   const midnight = toUtcDate(now);
-
   const toBoundary = params.to ? toUtcDate(params.to) : midnight;
   const fromRaw = params.from
     ? toUtcDate(params.from)
     : new Date(toBoundary.getTime() - (DEFAULT_DAYS - 1) * MS_PER_DAY);
-
-  const earliestFrom = new Date(
-    toBoundary.getTime() - (MAX_RANGE_DAYS - 1) * MS_PER_DAY,
-  );
+  const earliestFrom = new Date(toBoundary.getTime() - (MAX_RANGE_DAYS - 1) * MS_PER_DAY);
   const fromBoundary = fromRaw.getTime() < earliestFrom.getTime() ? earliestFrom : fromRaw;
+  const requestedToExclusive = new Date(toBoundary.getTime() + MS_PER_DAY);
+  const includesToday =
+    fromBoundary.getTime() <= midnight.getTime() && toBoundary.getTime() >= midnight.getTime();
+  const dailyToExclusive = includesToday ? midnight : requestedToExclusive;
+  const nativeDenom = resolveNativeDenom(params.metric, params.chain);
 
-  const toExclusive = new Date(toBoundary.getTime() + MS_PER_DAY);
-
-  const dailyRows = await queryDailyStats({
-    metric: params.metric,
-    direction: params.direction,
-    from: fromBoundary,
-    toExclusive,
-    channelIdSrc: params.channelIdSrc,
-    chain: params.chain,
-  });
-
-  const byDate = new Map<string, Prisma.Decimal | bigint>();
-  for (const row of dailyRows) {
-    byDate.set(formatYmd(row.date), row.value);
-  }
-
-  const includesToday = toBoundary.getTime() >= midnight.getTime();
-  if (includesToday) {
-    const todayKey = formatYmd(midnight);
-    const todayValue = await queryToday({
+  const [dailyRows, todayRows, context] = await Promise.all([
+    queryDailyStats({
       metric: params.metric,
       direction: params.direction,
-      midnight,
+      from: fromBoundary,
+      toExclusive: dailyToExclusive,
       channelIdSrc: params.channelIdSrc,
       chain: params.chain,
-    });
-    byDate.set(todayKey, todayValue);
-  }
+      nativeDenom,
+    }),
+    includesToday
+      ? queryPacketBuckets({
+          bucket: 'day',
+          metric: params.metric,
+          direction: params.direction,
+          from: midnight,
+          channelIdSrc: params.channelIdSrc,
+          chain: params.chain,
+          nativeDenom,
+        })
+      : Promise.resolve([]),
+    getIbcAggregationContext(params.chain, now),
+  ]);
 
+  const dailyByDate = new Map(dailyRows.map((row) => [formatYmd(row.bucket), row]));
+  const todayRow = todayRows[0];
   const data: TimeseriesPoint[] = [];
-  for (let t = fromBoundary.getTime(); t <= toBoundary.getTime(); t += MS_PER_DAY) {
-    const key = formatYmd(new Date(t));
-    const value = byDate.get(key) ?? null;
-    data.push({ date: key, value: formatValue(params.metric, value) });
+
+  for (
+    let timestamp = fromBoundary.getTime();
+    timestamp <= toBoundary.getTime();
+    timestamp += MS_PER_DAY
+  ) {
+    const bucketStart = new Date(timestamp);
+    const key = formatYmd(bucketStart);
+    const isToday = timestamp === midnight.getTime();
+    const row = isToday ? todayRow : dailyByDate.get(key);
+    const value = formatValue(params.metric, row?.value ?? null, params.chain);
+
+    if (isToday) {
+      data.push(correctedPoint(key, value, row ?? emptyCoverageRow()));
+      continue;
+    }
+
+    const quality = classifyIbcDailyRange(
+      bucketStart,
+      new Date(timestamp + MS_PER_DAY),
+      context.sourceStates,
+    );
+    data.push({
+      date: key,
+      value,
+      ...toIbcCoverageStatus(
+        quality,
+        quality === 'corrected' ? mergeIbcCoverageRows([row ?? emptyCoverageRow()]) : undefined,
+      ),
+    });
   }
 
-  return { data };
+  return { data, ...context.freshness };
 };

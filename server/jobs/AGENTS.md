@@ -7,13 +7,13 @@ Each file exports a single `run<Job>()` function. The dispatcher in `../task-wor
 | File | Cron name | Purpose |
 |------|-----------|---------|
 | `sync-ibc-transfers.ts` | `sync-ibc-transfers` | Pull packets from upstream `indexer-ibc-api`, mirror into `ibc_packets` |
-| `recompute-daily-stats.ts` | `recompute-daily-stats` | Aggregate the last 3 days into `ibc_daily_stats` with 4 GROUPING SETS levels |
+| `recompute-daily-stats.ts` | `recompute-daily-stats` | Atomically replace delivered-only daily slices with coverage at 4 GROUPING SETS levels |
 | `get-prices.ts` | `prices` | CoinGecko spot prices for all assets |
 | `get-price-history.ts` | `price-history` | CoinGecko 365-day daily price history backfill |
 
 ## `sync-ibc-transfers.ts`
 
-Watermark-based incremental sync. **The watermark is `ibc_packets` itself, not `SyncCursor`.** The job reads `MAX((eventHeight, sequence, channelIdSrc, portIdSrc))` from the mirror at the start of each run via `readLatestPacket()` (Prisma `findFirst` with the matching `orderBy`). `SyncCursor` exists in the schema but `sync-ibc-transfers` neither reads nor writes it — that table is reserved for future jobs that need a watermark divorced from a content table.
+Watermark-based incremental sync. The content watermark is `ibc_packets`: the job reads `MAX((eventHeight, sequence, channelIdSrc, portIdSrc))` from the mirror at the start of each run via `readLatestPacket()` (Prisma `findFirst` with the matching `orderBy`). `SyncCursor` is written only after packet and discovered-channel writes succeed, as an observability heartbeat and a copy of the latest tuple; it does not drive pagination or the stopping rule.
 
 ### Algorithm
 
@@ -33,6 +33,11 @@ fetch upstream /ibc/transfers newest-first, paginate via 4-tuple cursor:
     if windowComplete && tuple <= latest: stop       // caught up to the head of the mirror
     upsert by PK (channelIdSrc, portIdSrc, sequence)
   if !has_more or no cursor:           stop
+
+insert newly discovered channel placeholders
+
+after packet and discovered-channel writes succeed:
+  write SyncCursor heartbeat + latest tuple
 ```
 
 Two stopping conditions matter:
@@ -70,16 +75,18 @@ There is no `MAX_PAGES` ceiling — the `event_time < cutoff` stop bounds the wa
 
 ## `recompute-daily-stats.ts`
 
-Single raw SQL via `db.$executeRaw`. Builds `ibc_daily_stats` from `ibc_packets` for the last `RECOMPUTE_DAYS = 3` days.
+Builds `ibc_daily_stats` from delivered `ibc_packets`. A versioned per-chain `IbcAggregateState` triggers one retained-range bootstrap; steady state atomically replaces the last `RECOMPUTE_DAYS = 3` days.
 
 ### Structure
 
 ```sql
 WITH base AS (
-  -- packets from last 3 days, denom NULL coalesced to '__unknown__'
+  -- acknowledged outgoing + received incoming packets only
+  -- denom NULL coalesced to '__unknown__'
 ),
 agg AS (
-  SELECT ..., COUNT(*), SUM(amount), SUM(amount * usd / 10^decimals)
+  SELECT ..., COUNT(*), SUM(amount), SUM(priced amount * usd / 10^decimals),
+         eligible/priced/unpriced counts, unpriced denom set
   FROM base LEFT JOIN assets LEFT JOIN price_history
   GROUP BY GROUPING SETS (
     (date, channel, direction, denom),    -- L1: full detail
@@ -88,13 +95,15 @@ agg AS (
     (date, direction)                     -- L4: global per direction
   )
 )
-INSERT INTO ibc_daily_stats SELECT ... FROM agg
-ON CONFLICT (date, channel_id_src, direction, denom) DO UPDATE SET ...
+inside one transaction:
+  DELETE the chain/date slice
+  INSERT the complete replacement from agg
+  update IbcAggregateState + successful recompute heartbeat
 ```
 
 ### Why `COALESCE(denom, '__unknown__')`
 
-Undecoded packets (status `sent`, or never decoded by upstream) have `denom = NULL`. Without coalesce, the L1 grouping set produces a row `(date, channel, direction, NULL)` that would collide on conflict with the L2 rollup row `(date, channel, direction, GROUPING(denom)=NULL)`. The `NULLS NOT DISTINCT` unique index on the conflict target treats them as the same key — Postgres rejects this as `command cannot affect row a second time` (SQLSTATE 21000).
+Even a delivered upstream row can lack a decoded denom. Without coalesce, the L1 grouping set produces a row `(date, channel, direction, NULL)` that would collide on conflict with the L2 rollup row `(date, channel, direction, GROUPING(denom)=NULL)`. The `NULLS NOT DISTINCT` unique index on the conflict target treats them as the same key — Postgres rejects this as `command cannot affect row a second time` (SQLSTATE 21000).
 
 Coalescing to a sentinel string lifts undecoded packets into their own dim slot — they get counted in their own L1 row (`denom = '__unknown__'`), and the rollup L2 (`denom = NULL` from GROUPING) is a distinct conflict key. No collision.
 
@@ -105,13 +114,13 @@ The sentinel is `'__unknown__'` — double-underscored on purpose so it cannot c
 The API services rely on these dim slots:
 - `denom IS NULL` → rollup row over all denoms (used for `transfers_count` totals).
 - `denom = 'uatom'` → ATOM-specific volume rows (used for `volume_atom` / `volume_usd`).
-- `denom = '__unknown__'` → opaque slot, **not surfaced** by the API. The strict `denom = 'uatom'` filter excludes it from volumes; the `denom IS NULL` filter for counts uses rollup rows that already include undecoded packets in their counts.
+- `denom = '__unknown__'` → opaque asset slot and deterministic unpriced-denom sentinel. The strict native-denom filters exclude it from native volume; count rollups still include it, and coverage discloses it as unpriced.
 
 If you add a new asset (say SCRT priced via CoinGecko), the unique index already disambiguates `(..., 'uscrt')` from rollup. No schema change required.
 
-### Idempotency
+### Idempotency and stale-row removal
 
-The `ON CONFLICT ... DO UPDATE` sets every non-key column from `EXCLUDED`. Re-running the job replaces values; the row count of `ibc_daily_stats` stays stable across runs within the 3-day window.
+The job deletes and reinserts the complete chain/date slice in one transaction. Re-running it converges to the same values, and a grouping that disappears from source leaves no stale row. Aggregate correction state and heartbeat advance only if the replacement commits.
 
 ### Why `make_interval(days => 3)` instead of `'3 days'::interval`
 
@@ -119,7 +128,7 @@ The `RECOMPUTE_DAYS` constant is interpolated by Prisma as a parameterized integ
 
 ### Range
 
-Three days back from `NOW()`. This covers late-arriving packets that the upstream rewrote (e.g., a `sent` packet that later got its `acknowledged` event). The window is not tunable per-call — change `RECOMPUTE_DAYS` if needed.
+On aggregate version mismatch or a newly earlier retained packet, rebuild from the earliest packet date and record it as `corrected_from`. Otherwise start three UTC dates back, covering late status rewrites. Rows before `corrected_from` remain legacy because their packets no longer exist.
 
 ## `get-prices.ts`
 

@@ -28,7 +28,7 @@ interface SearchParams {
   p?: string;
 }
 
-type ChannelSort = 'transfers' | 'volume_usd' | 'last_activity';
+type ChannelSort = 'transfers' | 'volume_native' | 'volume_usd' | 'last_activity';
 
 const PAGE_LIMIT = 10;
 
@@ -44,7 +44,7 @@ const isDirection = (v: unknown): v is Direction =>
   v === 'outgoing' || v === 'incoming' || v === 'both';
 
 const isChannelSort = (v: unknown): v is ChannelSort =>
-  v === 'transfers' || v === 'volume_usd' || v === 'last_activity';
+  v === 'transfers' || v === 'volume_native' || v === 'volume_usd' || v === 'last_activity';
 
 const isOrder = (v: unknown): v is 'asc' | 'desc' => v === 'asc' || v === 'desc';
 
@@ -93,11 +93,10 @@ export default async function DashboardPage({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-3">
-          <Subtitle>{chainDisplayName} transfers · {periodLabel[period]}</Subtitle>
-          <Suspense
-            key={`stat-${k}`}
-            fallback={<LoadingBlock height="h-32" />}
-          >
+          <Subtitle>
+            {chainDisplayName} transfers · {periodLabel[period]}
+          </Subtitle>
+          <Suspense key={`stat-${k}`} fallback={<LoadingBlock height="h-32" />}>
             <PendingSwitch fallback={<LoadingBlock height="h-32" />}>
               <AsyncTopStatCard direction={direction} period={period} chain={chain} />
             </PendingSwitch>
@@ -122,10 +121,7 @@ export default async function DashboardPage({
           </span>
         </Subtitle>
         <section className="border-bgSt bg-table_row border p-6">
-          <Suspense
-            key={`volume-${k}`}
-            fallback={<ChartSkeleton variant="full" />}
-          >
+          <Suspense key={`volume-${k}`} fallback={<ChartSkeleton variant="full" />}>
             <PendingSwitch fallback={<ChartSkeleton variant="full" />}>
               <AsyncTimeseries
                 metric="volume_usd"
@@ -147,10 +143,7 @@ export default async function DashboardPage({
           </span>
         </Subtitle>
         <section className="border-bgSt bg-table_row border p-6">
-          <Suspense
-            key={`transfers-${k}`}
-            fallback={<ChartSkeleton variant="full" />}
-          >
+          <Suspense key={`transfers-${k}`} fallback={<ChartSkeleton variant="full" />}>
             <PendingSwitch fallback={<ChartSkeleton variant="full" />}>
               <AsyncTimeseries
                 metric="transfers"
@@ -170,9 +163,7 @@ export default async function DashboardPage({
           key={`assets-${k}`}
           fallback={<LoadingBlock height="h-48" label="loading assets" />}
         >
-          <PendingSwitch
-            fallback={<LoadingBlock height="h-48" label="loading assets" />}
-          >
+          <PendingSwitch fallback={<LoadingBlock height="h-48" label="loading assets" />}>
             <AsyncTopAssets direction={direction} period={period} chain={chain} />
           </PendingSwitch>
         </Suspense>
@@ -184,9 +175,7 @@ export default async function DashboardPage({
           key={`channels-${k}-${sort}-${order}-${pageNum}`}
           fallback={<LoadingBlock height="h-96" label="loading channels" />}
         >
-          <PendingSwitch
-            fallback={<LoadingBlock height="h-96" label="loading channels" />}
-          >
+          <PendingSwitch fallback={<LoadingBlock height="h-96" label="loading channels" />}>
             <AsyncChannelsTable
               direction={direction}
               period={period}

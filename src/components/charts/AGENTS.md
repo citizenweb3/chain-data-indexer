@@ -76,6 +76,8 @@ When you add a new chart type, mirror this two-variant pattern unless the design
 2. Extend `formatMetricValue` with the correct number format (decimals, `$` prefix, etc.).
 3. Pass the new value as the `metric` prop.
 
+The current metric set includes chain-scoped `volume_native` plus deprecated `volume_atom`. `AsyncTimeseries` may request `volume_native` only with a non-null chain and server-renders the summarized coverage disclosure below full charts. The client chart still receives only `date`/`value`; do not push freshness or coverage state into Chart.js.
+
 The Y-axis tick callback automatically picks up the new format because it calls back into `formatMetricValue`. Do not duplicate formatting logic at the call site — fix the formatter.
 
 ## Adding a new chart type

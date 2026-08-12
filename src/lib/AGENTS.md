@@ -9,6 +9,7 @@ Cross-cutting infrastructure shared by the API route handlers, RSC pages, and th
 | `openapi-zod.ts` | Patched `z` export — the **only** place `extendZodWithOpenApi` is called |
 | `openapi.ts` | OpenAPI 3.1 registry + `generateOpenApiDocument()` for `/api/openapi.json` |
 | `api-helpers.ts` | `parseSearchParams` / `parseRouteParams` / `errorResponse` / `okJson` |
+| `chains.ts` | Client/server-safe chain slugs, display names, and canonical native denom/symbol/decimals metadata |
 
 ## `openapi-zod.ts` — the Zod hoisting trick
 

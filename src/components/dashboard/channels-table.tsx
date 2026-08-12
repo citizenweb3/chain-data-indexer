@@ -1,12 +1,10 @@
-import type { FC } from "react";
-import BaseTable from "@/components/common/table/base-table";
-import TableHeaderItem from "@/components/common/table/table-header-item";
-import TablePagination from "@/components/common/table/table-pagination";
-import ChannelsTableRow, {
-  type ChannelDto,
-} from "@/components/dashboard/channels-table-row";
-import type { Period } from "@/components/dashboard/period-tabs";
-import type { ChainName } from "@/lib/chains";
+import type { FC } from 'react';
+import BaseTable from '@/components/common/table/base-table';
+import TableHeaderItem from '@/components/common/table/table-header-item';
+import TablePagination from '@/components/common/table/table-pagination';
+import ChannelsTableRow, { type ChannelDto } from '@/components/dashboard/channels-table-row';
+import type { Period } from '@/components/dashboard/period-tabs';
+import type { ChainName } from '@/lib/chains';
 
 interface ChannelsTableProps {
   channels: ChannelDto[];
@@ -22,7 +20,7 @@ const ChannelsTable: FC<ChannelsTableProps> = ({
   period,
   pageLength,
   currentSearch,
-  pageParam = "p",
+  pageParam = 'p',
   chain,
 }) => {
   return (
@@ -34,11 +32,9 @@ const ChannelsTable: FC<ChannelsTableProps> = ({
             <TableHeaderItem label="Counterparty" />
             <TableHeaderItem label="Denoms" />
             <TableHeaderItem label="Transfers" field="transfers" />
-            <TableHeaderItem
-              label="Volume (USD)"
-              field="volume_usd"
-              defaultSelected
-            />
+            <TableHeaderItem label="Volume (native)" field="volume_native" />
+            <TableHeaderItem label="Volume (USD)" field="volume_usd" defaultSelected />
+            <TableHeaderItem label="Pricing" />
             <TableHeaderItem label="Success (30d)" />
             <TableHeaderItem label="Last activity" field="last_activity" />
           </tr>
@@ -47,8 +43,8 @@ const ChannelsTable: FC<ChannelsTableProps> = ({
           {channels.length === 0 ? (
             <tr>
               <td
-                colSpan={7}
-                className="bg-table_row py-8 text-center font-sfpro text-sm text-white/50"
+                colSpan={9}
+                className="bg-table_row font-sfpro py-8 text-center text-sm text-white/50"
               >
                 No channels for this period and direction.
               </td>

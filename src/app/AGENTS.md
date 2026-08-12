@@ -76,7 +76,7 @@ All UI state that should survive reload, sharing, and back/forward navigation li
 |-------|-------|--------|---------|
 | `period` | `/dashboard`, `/channels/[channel]`, `/assets` | `24h` \| `7d` \| `30d` | `24h` |
 | `direction` | `/dashboard`, `/channels/[channel]`, `/assets`, `/transfers` | `outgoing` \| `incoming` \| `both` | `both` |
-| `sort` | `/dashboard` (channels), `/assets` | dashboard: `transfers` \| `volume_atom` \| `volume_usd` \| `last_activity`; assets: `transfers` \| `volume_usd` \| `share` | dashboard `volume_usd`; assets `volume_usd` |
+| `sort` | `/dashboard` (channels), `/assets` | chain dashboard: `transfers` \| `volume_native` \| `volume_usd` \| `last_activity`; assets: `transfers` \| `volume_usd` \| `share` | dashboard `volume_usd`; assets `volume_usd` |
 | `order` | `/dashboard`, `/assets` | `asc` \| `desc` | `desc` |
 | `p` | `/dashboard`, `/assets` | int ≥ 1 | `1` |
 | `channel` | `/transfers` | `channel-\d+` | (none) |

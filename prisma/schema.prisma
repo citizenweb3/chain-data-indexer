@@ -10,21 +10,22 @@ model Chain {
   name        String   @id
   displayName String   @map("display_name")
   chainId     String   @unique @map("chain_id")
-  createdAt   DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  packets  IbcPacket[]
-  stats    IbcDailyStats[]
-  channels IbcChannel[]
-  cursors  SyncCursor[]
+  packets        IbcPacket[]
+  stats          IbcDailyStats[]
+  channels       IbcChannel[]
+  cursors        SyncCursor[]
+  aggregateState IbcAggregateState?
 
   @@map("chains")
 }
 
 model IbcPacket {
-  chain         String
-  channelIdSrc  String  @map("channel_id_src")
-  portIdSrc     String  @map("port_id_src")
-  sequence      BigInt
+  chain        String
+  channelIdSrc String @map("channel_id_src")
+  portIdSrc    String @map("port_id_src")
+  sequence     BigInt
 
   portIdDst     String?   @map("port_id_dst")
   channelIdDst  String?   @map("channel_id_dst")
@@ -100,8 +101,13 @@ model IbcDailyStats {
   denom        String?
 
   transfersCount BigInt   @map("transfers_count")
-  amountNative   Decimal? @db.Decimal(80, 0) @map("amount_native")
-  amountUsd      Decimal? @db.Decimal(30, 8) @map("amount_usd")
+  amountNative   Decimal? @map("amount_native") @db.Decimal(80, 0)
+  amountUsd      Decimal? @map("amount_usd") @db.Decimal(30, 8)
+
+  eligiblePackets BigInt?  @map("eligible_packets")
+  pricedPackets   BigInt?  @map("priced_packets")
+  unpricedPackets BigInt?  @map("unpriced_packets")
+  unpricedDenoms  String[] @default([]) @map("unpriced_denoms")
 
   recomputedAt DateTime @updatedAt @map("recomputed_at")
 
@@ -110,6 +116,18 @@ model IbcDailyStats {
   @@unique([chain, date, channelIdSrc, direction, denom], map: "ibc_daily_stats_dim_uniq")
   @@index([chain, date])
   @@map("ibc_daily_stats")
+}
+
+model IbcAggregateState {
+  chain            String    @id
+  version          Int       @default(0)
+  correctedFrom    DateTime? @map("corrected_from") @db.Date
+  lastRecomputedAt DateTime? @map("last_recomputed_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  chainRef Chain @relation(fields: [chain], references: [name])
+
+  @@map("ibc_aggregate_states")
 }
 
 model IbcChannel {

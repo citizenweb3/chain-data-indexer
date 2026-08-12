@@ -1,5 +1,7 @@
 # Smoke Test — Task 26
 
+Status: historical Task 26 record. Its aggregate totals and pre-correction behavior are superseded by the Issue 633 S0 rollout addendum below; the original observations remain for audit history.
+
 Date: 2026-05-15 (Asia/Bangkok)
 Branch: `indexer-ibc-api`
 Upstream: `https://indexer.cosmoshub-4.citizenweb3.com/api/v1`
@@ -90,3 +92,106 @@ No `error`/`warn`/`fail` entries in `/tmp/web.log` after startup.
 ## Verdict
 
 Smoke passed. Task 26 ready to complete; Task 27 (module docs) unblocked.
+
+---
+
+# Issue 633 S0 rollout addendum — delivered-only IBC aggregates
+
+Date: 2026-08-11
+
+## Human pre-deployment gate
+
+- [ ] The rollout owner confirms the currently deployed source ref and that the S0 branch is based on the intended deployment line. Do not merge or deploy on an assumed ref.
+- [ ] Capture the current `/api/v1/{stats,timeseries,assets,channels}` combined and per-chain responses for 24h/7d/30d, plus the current failed-ORAI reproduction rows, before changing the database.
+- [ ] Confirm a current database backup and an application rollback artifact exist.
+
+## Migration-first order
+
+1. Pause the indexer worker so an old process cannot write while the new aggregate schema is being deployed.
+2. Run `yarn db:deploy`. Migration `20260811053000_add_ibc_aggregate_coverage` adds nullable daily coverage columns and `ibc_aggregate_states`; it does not rewrite existing daily rows.
+3. Deploy the application and worker from the exact same reviewed ref, then run `yarn db:generate` in the built artifact if generation is not part of the image build.
+4. Start the worker. `recompute-daily-stats` sees aggregate version 2 missing/mismatched and atomically replaces every retained chain/date slice from delivered packets. Pre-retention rows remain untouched and therefore remain `legacy_unverified`.
+5. Do not treat the rollout as corrected until every configured chain has version 2, a non-null `corrected_from` when retained packets exist, and a fresh `last_recomputed_at`.
+
+```sql
+SELECT chain, version, corrected_from, last_recomputed_at
+FROM ibc_aggregate_states
+ORDER BY chain;
+
+SELECT chain, key, updated_at
+FROM sync_cursors
+WHERE key IN ('sync-ibc-transfers', 'recompute-daily-stats')
+ORDER BY chain, key;
+```
+
+A chain with no retained packets may have version 0 and `corrected_from = NULL`; its successful sync/recompute heartbeats distinguish a fresh empty source from a stale source.
+
+## API smoke matrix
+
+All valid requests must return 200 and include `generated_at` plus per-chain `sources`. Corrected coverage must satisfy `eligible_packets = priced_packets + unpriced_packets`; mixed/legacy coverage must be null.
+
+```bash
+curl -fsS 'http://localhost:3000/api/v1/stats?breakdown=chain'
+curl -fsS 'http://localhost:3000/api/v1/cosmoshub/stats'
+curl -fsS 'http://localhost:3000/api/v1/timeseries?metric=volume_usd&from=2025-08-12&to=2026-08-11'
+curl -fsS 'http://localhost:3000/api/v1/atomone/timeseries?metric=volume_native'
+curl -fsS 'http://localhost:3000/api/v1/assets?period=30d'
+curl -fsS 'http://localhost:3000/api/v1/cosmoshub/assets?period=30d'
+curl -fsS 'http://localhost:3000/api/v1/channels?period=30d'
+curl -fsS 'http://localhost:3000/api/v1/atomone/channels?period=30d&sort=volume_native'
+```
+
+These invalid cross-chain native comparisons must return 400; an unknown chain must return 404:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' 'http://localhost:3000/api/v1/timeseries?metric=volume_native'
+curl -sS -o /dev/null -w '%{http_code}\n' 'http://localhost:3000/api/v1/channels?sort=volume_native'
+curl -sS -o /dev/null -w '%{http_code}\n' 'http://localhost:3000/api/v1/unknown/stats'
+```
+
+The `/api/v1/transfers` lifecycle log intentionally remains unfiltered and may still show `sent`, `timeout`, and `failed` packets.
+
+## Independent delivered-row checks
+
+Compare API counts against source rows using the exact successful lifecycle predicate, never a circulating-supply bound:
+
+```sql
+SELECT
+  chain,
+  COUNT(*) AS eligible_packets,
+  COUNT(*) FILTER (WHERE amount IS NOT NULL) AS packets_with_amount
+FROM ibc_packets
+WHERE event_time >= NOW() - INTERVAL '24 hours'
+  AND (
+    (direction = 'outgoing' AND status = 'acknowledged')
+    OR (direction = 'incoming' AND status = 'received')
+  )
+GROUP BY chain
+ORDER BY chain;
+
+SELECT chain, direction, status, resolve_base_denom(denom) AS denom,
+       COUNT(*) AS packets, SUM(amount) AS raw_amount
+FROM ibc_packets
+WHERE resolve_base_denom(denom) = 'orai'
+  AND event_time >= NOW() - INTERVAL '30 days'
+GROUP BY chain, direction, status, resolve_base_denom(denom)
+ORDER BY chain, direction, status;
+```
+
+The failed ORAI ladder must contribute zero to corrected stats, timeseries, assets, and channel USD totals. Acknowledged outgoing and received incoming fixtures contribute once. AtomOne `volume_native` must use `uatone`/ATONE; no combined native scalar exists. Deprecated `volume_atom` remains the v1 `uatom` compatibility field for one release.
+
+## UI and OpenAPI checks
+
+- [ ] Combined and chain dashboards show priced-packet coverage or an explicit mixed/legacy warning with correction boundaries.
+- [ ] AtomOne native cards/channel columns say ATONE, not ATOM.
+- [ ] `/api/openapi.json` has distinct combined/per-chain stats and channel schemas; only per-chain timeseries/channel queries accept `volume_native`.
+- [ ] `volume_atom` fields and metric descriptions are marked deprecated compatibility behavior.
+- [ ] Existing RSC pages still stream through their service calls and Suspense boundaries; there is no client-side API refetch.
+
+## Rollback implications
+
+- Application rollback is safe while the additive columns/table remain. The prior binary ignores them.
+- Do not drop the migration during an incident. A down migration would destroy correction boundaries and coverage evidence.
+- A completed version-2 rebuild has already corrected retained daily rows. Rolling back application code does not and should not restore unsuccessful packets to those rows.
+- If the new worker fails mid-chain rebuild, the transaction rolls back the slice, coverage, state, and heartbeat together. Investigate and rerun; do not hand-edit partial aggregates.
+- Record before/after API captures, aggregate-state rows, worker logs, deployed ref, and final human approval in the release ticket.

@@ -10,10 +10,34 @@ export const CHAIN_NAMES = ['cosmoshub', 'atomone'] as const;
 
 export type ChainName = (typeof CHAIN_NAMES)[number];
 
+export type ChainMetadata = {
+  displayName: string;
+  nativeDenom: string;
+  nativeSymbol: string;
+  nativeDecimals: number;
+};
+
+export const CHAIN_METADATA = {
+  cosmoshub: {
+    displayName: 'Cosmos Hub',
+    nativeDenom: 'uatom',
+    nativeSymbol: 'ATOM',
+    nativeDecimals: 6,
+  },
+  atomone: {
+    displayName: 'AtomOne',
+    nativeDenom: 'uatone',
+    nativeSymbol: 'ATONE',
+    nativeDecimals: 6,
+  },
+} as const satisfies Record<ChainName, ChainMetadata>;
+
 export const CHAIN_DISPLAY_NAMES: Record<ChainName, string> = {
-  cosmoshub: 'Cosmos Hub',
-  atomone: 'AtomOne',
+  cosmoshub: CHAIN_METADATA.cosmoshub.displayName,
+  atomone: CHAIN_METADATA.atomone.displayName,
 };
 
 export const isChainName = (s: string): s is ChainName =>
   (CHAIN_NAMES as readonly string[]).includes(s);
+
+export const getChainMetadata = (chain: ChainName): ChainMetadata => CHAIN_METADATA[chain];
